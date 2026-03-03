@@ -98,6 +98,58 @@ typedef struct {
     volatile int done;
 } DiscoveryJob;
 
+typedef struct {
+    ApiContext *api;
+    char user_id[64];
+    char token[256];
+    ItemList *resume_items;
+    int rc;
+    volatile int done;
+} HomeJob;
+
+typedef struct {
+    ApiContext *api;
+    char user_id[64];
+    char token[256];
+    ApiLibraryList libs;
+    int rc;
+    volatile int done;
+} LibrariesJob;
+
+typedef struct {
+    ApiContext *api;
+    char user_id[64];
+    char token[256];
+    int start;
+    int limit;
+    ItemList items;
+    int rc;
+    volatile int done;
+} BrowseJob;
+
+typedef struct {
+    ApiContext *api;
+    char user_id[64];
+    char item_id[64];
+    char token[256];
+    ApiItemDetail detail;
+    int rc;
+    volatile int done;
+} DetailJob;
+
+typedef struct {
+    ApiContext *api;
+    int rc;
+    volatile int done;
+} ProbeJob;
+
+static void auth_worker_thread(void *arg);
+static void discovery_worker_thread(void *arg);
+static void home_worker_thread(void *arg);
+static void libraries_worker_thread(void *arg);
+static void browse_worker_thread(void *arg);
+static void detail_worker_thread(void *arg);
+static void probe_worker_thread(void *arg);
 static void auth_worker_thread(void *arg);
 static void discovery_worker_thread(void *arg);
 static void draw_loading_frame(const char *base_msg);
@@ -111,6 +163,38 @@ static void auth_worker_thread(void *arg) {
 static void discovery_worker_thread(void *arg) {
     DiscoveryJob *job = (DiscoveryJob *)arg;
     job->rc = api_discover_servers(&job->result);
+    job->done = 1;
+}
+
+static void home_worker_thread(void *arg) {
+    HomeJob *job = (HomeJob *)arg;
+    job->rc = api_get_resume_items(job->api, job->user_id, job->token, &job->resume_items);
+    job->done = 1;
+}
+
+static void libraries_worker_thread(void *arg) {
+    LibrariesJob *job = (LibrariesJob *)arg;
+    job->rc = api_get_libraries(job->api, job->user_id, job->token, &job->libs);
+    job->done = 1;
+}
+
+static void browse_worker_thread(void *arg) {
+    BrowseJob *job = (BrowseJob *)arg;
+    job->rc = api_get_items(job->api, job->user_id, job->token,
+                            job->start, job->limit, &job->items);
+    job->done = 1;
+}
+
+static void detail_worker_thread(void *arg) {
+    DetailJob *job = (DetailJob *)arg;
+    job->rc = api_get_item_detail(job->api, job->user_id, job->item_id,
+                                  job->token, &job->detail);
+    job->done = 1;
+}
+
+static void probe_worker_thread(void *arg) {
+    ProbeJob *job = (ProbeJob *)arg;
+    job->rc = api_probe_server(job->api);
     job->done = 1;
 }
 
@@ -274,10 +358,29 @@ static void handle_state_discover(void) {
                        g_app.config->jellyfin_port);
 
         /* Verify server is reachable before moving to auth/home. */
-        int probe_rc = api_probe_server(g_app.api);
-        if (probe_rc != 0) {
+        ProbeJob probe;
+        memset(&probe, 0, sizeof(probe));
+        probe.api = g_app.api;
+
+        Thread probe_t = threadCreate(probe_worker_thread, &probe, 16 * 1024,
+                                      0x18, -1, false);
+        if (!probe_t) {
+            ui_show_toast(g_app.ui, "Probe thread failed", 2500);
+            return;
+        }
+
+        C3D_FrameEnd(0);
+        while (aptMainLoop() && !probe.done) {
+            hidScanInput();
+            draw_loading_frame("Connecting to server");
+        }
+        threadJoin(probe_t, U64_MAX);
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        threadFree(probe_t);
+
+        if (probe.rc != 0) {
             char err[96];
-            snprintf(err, sizeof(err), "Server unreachable (%d)", probe_rc);
+            snprintf(err, sizeof(err), "Server unreachable (%d)", probe.rc);
             ui_show_toast(g_app.ui, err, 3000);
             return;
         }
@@ -363,9 +466,35 @@ static void handle_state_home(void) {
     u32 keys_down = hidKeysDown();
 
     if (!g_app.ui->home_loaded) {
-        ItemList *resume_items = NULL;
-        api_get_resume_items(g_app.api, g_app.user_id, g_app.token, &resume_items);
-        ui_set_home_items(g_app.ui, resume_items);
+        HomeJob job;
+        memset(&job, 0, sizeof(job));
+        job.api = g_app.api;
+        strncpy(job.user_id, g_app.user_id, sizeof(job.user_id) - 1);
+        strncpy(job.token, g_app.token, sizeof(job.token) - 1);
+
+        Thread t = threadCreate(home_worker_thread, &job, 16 * 1024, 0x18, -1, false);
+        if (!t) {
+            ui_show_toast(g_app.ui, "Home load thread failed", 2500);
+            return;
+        }
+
+        C3D_FrameEnd(0);
+        while (aptMainLoop() && !job.done) {
+            hidScanInput();
+            draw_loading_frame("Loading continue watching");
+        }
+        threadJoin(t, U64_MAX);
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        threadFree(t);
+
+        if (job.rc == 0) {
+            ui_set_home_items(g_app.ui, job.resume_items);
+        } else {
+            char err[64];
+            snprintf(err, sizeof(err), "Home failed (%d)", job.rc);
+            ui_show_toast(g_app.ui, err, 2500);
+            g_app.ui->home_loaded = 1;
+        }
     }
 
     ui_draw_home(g_app.ui, g_app.username);
@@ -382,12 +511,31 @@ static void handle_state_libraries(void) {
     u32 keys_down = hidKeysDown();
 
     if (!g_app.ui->libraries_loaded) {
-        ApiLibraryList libs;
-        int rc = api_get_libraries(g_app.api, g_app.user_id, g_app.token, &libs);
-        if (rc == 0) {
-            ui_set_libraries(g_app.ui, &libs);
+        LibrariesJob job;
+        memset(&job, 0, sizeof(job));
+        job.api = g_app.api;
+        strncpy(job.user_id, g_app.user_id, sizeof(job.user_id) - 1);
+        strncpy(job.token, g_app.token, sizeof(job.token) - 1);
+
+        Thread t = threadCreate(libraries_worker_thread, &job, 16 * 1024, 0x18, -1, false);
+        if (!t) {
+            ui_show_toast(g_app.ui, "Libraries thread failed", 2500);
+            return;
+        }
+
+        C3D_FrameEnd(0);
+        while (aptMainLoop() && !job.done) {
+            hidScanInput();
+            draw_loading_frame("Loading libraries");
+        }
+        threadJoin(t, U64_MAX);
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        threadFree(t);
+
+        if (job.rc == 0) {
+            ui_set_libraries(g_app.ui, &job.libs);
         } else {
-            char err[64]; snprintf(err, sizeof(err), "Libraries failed (%d)", rc);
+            char err[64]; snprintf(err, sizeof(err), "Libraries failed (%d)", job.rc);
             set_error(err);
         }
     }
@@ -410,13 +558,33 @@ static void handle_state_browse(void) {
     u32 keys_down = hidKeysDown();
 
     if (!g_app.ui->browse_loaded) {
-        ItemList items;
-        int rc = api_get_items(g_app.api, g_app.user_id, g_app.token,
-                               g_app.scroll_offset, 20, &items);
-        if (rc == 0) {
-            ui_set_browse_items(g_app.ui, &items);
+        BrowseJob job;
+        memset(&job, 0, sizeof(job));
+        job.api = g_app.api;
+        strncpy(job.user_id, g_app.user_id, sizeof(job.user_id) - 1);
+        strncpy(job.token, g_app.token, sizeof(job.token) - 1);
+        job.start = g_app.scroll_offset;
+        job.limit = 20;
+
+        Thread t = threadCreate(browse_worker_thread, &job, 16 * 1024, 0x18, -1, false);
+        if (!t) {
+            ui_show_toast(g_app.ui, "Browse thread failed", 2500);
+            return;
+        }
+
+        C3D_FrameEnd(0);
+        while (aptMainLoop() && !job.done) {
+            hidScanInput();
+            draw_loading_frame("Loading items");
+        }
+        threadJoin(t, U64_MAX);
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        threadFree(t);
+
+        if (job.rc == 0) {
+            ui_set_browse_items(g_app.ui, &job.items);
         } else {
-            char err[64]; snprintf(err, sizeof(err), "Browse failed (%d)", rc);
+            char err[64]; snprintf(err, sizeof(err), "Browse failed (%d)", job.rc);
             set_error(err);
         }
     }
@@ -464,13 +632,32 @@ static void handle_state_item_detail(void) {
     u32 keys_down = hidKeysDown();
 
     if (!g_app.ui->detail_loaded) {
-        ApiItemDetail detail;
-        int rc = api_get_item_detail(g_app.api, g_app.user_id,
-                                     g_app.selected_item->id, g_app.token, &detail);
-        if (rc == 0) {
-            ui_set_item_detail(g_app.ui, &detail);
+        DetailJob job;
+        memset(&job, 0, sizeof(job));
+        job.api = g_app.api;
+        strncpy(job.user_id, g_app.user_id, sizeof(job.user_id) - 1);
+        strncpy(job.token, g_app.token, sizeof(job.token) - 1);
+        strncpy(job.item_id, g_app.selected_item->id, sizeof(job.item_id) - 1);
+
+        Thread t = threadCreate(detail_worker_thread, &job, 16 * 1024, 0x18, -1, false);
+        if (!t) {
+            ui_show_toast(g_app.ui, "Detail thread failed", 2500);
+            return;
+        }
+
+        C3D_FrameEnd(0);
+        while (aptMainLoop() && !job.done) {
+            hidScanInput();
+            draw_loading_frame("Loading item details");
+        }
+        threadJoin(t, U64_MAX);
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        threadFree(t);
+
+        if (job.rc == 0) {
+            ui_set_item_detail(g_app.ui, &job.detail);
         } else {
-            char err[64]; snprintf(err, sizeof(err), "Item detail failed (%d)", rc);
+            char err[64]; snprintf(err, sizeof(err), "Item detail failed (%d)", job.rc);
             set_error(err);
         }
     }
@@ -520,7 +707,13 @@ static void handle_state_player(void) {
 
         int rc = player_start(g_app.player, stream_url, start_ticks);
         if (rc != 0) {
-            set_error("Failed to start playback.");
+            char err[160];
+            if (g_app.player->error[0]) {
+                snprintf(err, sizeof(err), "Playback start failed (%d): %s", rc, g_app.player->error);
+            } else {
+                snprintf(err, sizeof(err), "Playback start failed (%d)", rc);
+            }
+            set_error(err);
             return;
         }
         g_app.is_playing = 1;

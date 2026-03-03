@@ -26,7 +26,7 @@ typedef enum {
 } PlayerState;
 
 /* How many HLS segments to pre-buffer */
-#define PLAYER_SEGMENT_BUFFER  3
+#define PLAYER_SEGMENT_BUFFER  128
 /* Audio wave buffer count (double-buffering) */
 #define PLAYER_AUDIO_BUFS      2
 /* Audio buffer size: 4096 samples * 2 channels * 2 bytes */
@@ -48,6 +48,13 @@ typedef struct {
     int   seg_head;   /* Next segment to download */
     int   seg_tail;   /* Next segment to decode */
     int   seg_count;
+    uint64_t seg_duration_ticks[PLAYER_SEGMENT_BUFFER];
+    uint64_t seg_timeline_ticks[PLAYER_SEGMENT_BUFFER];
+    int      seg_downloaded[PLAYER_SEGMENT_BUFFER];
+    int      current_segment;
+
+    /* Clocking */
+    u64   playback_clock_ms;
     
     /* Position tracking */
     uint64_t position_ticks;   /* Current playback position (100ns ticks) */
