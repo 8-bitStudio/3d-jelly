@@ -705,7 +705,8 @@ int ui_draw_discovery(UiContext *ctx, Config *config) {
             draw_text(ctx->font, "Manual entry...", 18, y + 8, 0.48f, COL_ACCENT);
         }
     }
-    draw_text(ctx->font, "A:Select  UP/DOWN:Navigate  X:Rescan", 10, 226, 0.35f, COL_TEXT_DIM);
+    draw_text(ctx->font, "A:Select  UP/DOWN:Navigate  X:Rescan", 10, 218, 0.35f, COL_TEXT_DIM);
+    draw_text(ctx->font, "START: Use saved server", 10, 230, 0.35f, COL_TEXT_DIM);
     C2D_TargetClear(ctx->bottom, COL_BG);
     C2D_SceneBegin(ctx->bottom);
     draw_text_centered(ctx->font, "3D Jelly", 30, 320, 0.7f, COL_PRIMARY);
@@ -724,8 +725,9 @@ int ui_draw_discovery(UiContext *ctx, Config *config) {
         ctx->discovery_done = 0;
         ctx->discovery_sel  = 0;
         memset(&ctx->discovery, 0, sizeof(ctx->discovery));
-        api_discover_servers(&ctx->discovery);
-        ctx->discovery_done = 1;
+    }
+    if (keys & KEY_START && config->jellyfin_host[0]) {
+        return 1;
     }
     if (keys & KEY_A) {
         if (ctx->discovery_sel < disc->count) {

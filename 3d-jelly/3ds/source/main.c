@@ -173,18 +173,13 @@ static void app_init(void) {
     /* Give player the UI's top-screen render target (not a new duplicate one) */
     player_set_render_target(g_app.player, g_app.ui->top);
 
-    /* Initial state */
-    if (!g_app.config->setup_complete || !g_app.config->jellyfin_host[0]) {
-        /* First run — go to discovery screen */
-        g_app.state = STATE_DISCOVER;
-    } else if (!g_app.config->token[0]) {
-        g_app.state = STATE_AUTH;
-    } else {
+    /* Initial state: always begin at server picker (Jellyfin-style server selection). */
+    if (g_app.config->token[0]) {
         strncpy(g_app.token,    g_app.config->token,    sizeof(g_app.token) - 1);
         strncpy(g_app.user_id,  g_app.config->user_id,  sizeof(g_app.user_id) - 1);
         strncpy(g_app.username, g_app.config->username, sizeof(g_app.username) - 1);
-        g_app.state = STATE_HOME;
     }
+    g_app.state = STATE_DISCOVER;
 }
 
 /* ── Main Loop ───────────────────────────────────────────────────────────── */
@@ -269,19 +264,27 @@ static void handle_state_discover(void) {
     int done = ui_draw_discovery(g_app.ui, g_app.config);
 
     if (done) {
+        /* Keep auth session only if user picked the same server as before. */
+        int same_server = (strcmp(g_app.config->jellyfin_host, g_app.api->host) == 0) &&
+                          (g_app.config->jellyfin_port == g_app.api->port);
+
         /* Update API context with selected server */
         api_set_server(g_app.api,
                        g_app.config->jellyfin_host,
                        g_app.config->jellyfin_port);
         g_app.config->setup_complete = 1;
-        config_save(g_app.config, CONFIG_PATH);
 
-        /* Clear any cached token — go back to login */
-        memset(g_app.config->token,   0, sizeof(g_app.config->token));
-        memset(g_app.config->user_id, 0, sizeof(g_app.config->user_id));
-        config_save(g_app.config, CONFIG_PATH);
+        if (!same_server) {
+            memset(g_app.token,           0, sizeof(g_app.token));
+            memset(g_app.user_id,         0, sizeof(g_app.user_id));
+            memset(g_app.username,        0, sizeof(g_app.username));
+            memset(g_app.config->token,   0, sizeof(g_app.config->token));
+            memset(g_app.config->user_id, 0, sizeof(g_app.config->user_id));
+            memset(g_app.config->username,0, sizeof(g_app.config->username));
+        }
 
-        transition_to(STATE_AUTH);
+        config_save(g_app.config, CONFIG_PATH);
+        transition_to(g_app.config->token[0] ? STATE_HOME : STATE_AUTH);
     }
 
     /* SELECT on discovery screen goes back to manual entry */
