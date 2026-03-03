@@ -272,6 +272,16 @@ static void handle_state_discover(void) {
         api_set_server(g_app.api,
                        g_app.config->jellyfin_host,
                        g_app.config->jellyfin_port);
+
+        /* Verify server is reachable before moving to auth/home. */
+        int probe_rc = api_probe_server(g_app.api);
+        if (probe_rc != 0) {
+            char err[96];
+            snprintf(err, sizeof(err), "Server unreachable (%d)", probe_rc);
+            ui_show_toast(g_app.ui, err, 3000);
+            return;
+        }
+
         g_app.config->setup_complete = 1;
 
         if (!same_server) {

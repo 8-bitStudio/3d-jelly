@@ -115,6 +115,7 @@ typedef struct {
 ApiContext *api_init(const char *host, int port);
 void        api_free(ApiContext *ctx);
 void        api_set_server(ApiContext *ctx, const char *host, int port);
+int         api_probe_server(ApiContext *ctx);
 
 int api_authenticate(ApiContext *ctx, const char *username,
                      const char *password, ApiAuthResponse *out);
