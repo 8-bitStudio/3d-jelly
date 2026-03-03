@@ -82,6 +82,50 @@ static void handle_state_settings(void);
 static void set_error(const char *msg);
 static void transition_to(AppState new_state);
 
+/* Async network helpers to keep UI responsive while requests are in-flight. */
+typedef struct {
+    ApiContext *api;
+    char username[64];
+    char password[64];
+    ApiAuthResponse auth;
+    int rc;
+    volatile int done;
+} AuthJob;
+
+typedef struct {
+    ServerDiscoveryResult result;
+    int rc;
+    volatile int done;
+} DiscoveryJob;
+
+static void auth_worker_thread(void *arg);
+static void discovery_worker_thread(void *arg);
+static void draw_loading_frame(const char *base_msg);
+
+static void auth_worker_thread(void *arg) {
+    AuthJob *job = (AuthJob *)arg;
+    job->rc = api_authenticate(job->api, job->username, job->password, &job->auth);
+    job->done = 1;
+}
+
+static void discovery_worker_thread(void *arg) {
+    DiscoveryJob *job = (DiscoveryJob *)arg;
+    job->rc = api_discover_servers(&job->result);
+    job->done = 1;
+}
+
+static void draw_loading_frame(const char *base_msg) {
+    char msg[96];
+    u64 now = osGetTime();
+    int dots = (int)((now / 350) % 4);
+    snprintf(msg, sizeof(msg), "%s%.*s", base_msg, dots, "...");
+
+    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+    ui_draw_splash(g_app.ui, msg);
+    ui_render_frame(g_app.ui);
+    C3D_FrameEnd(0);
+}
+
 /* ── Entry Point ─────────────────────────────────────────────────────────── */
 int main(int argc, char *argv[]) {
     (void)argc; (void)argv;
@@ -191,13 +235,33 @@ static void handle_state_discover(void) {
 
     /* Trigger UDP scan on first entry */
     if (!g_app.ui->discovery_done) {
-        ui_draw_splash(g_app.ui, "Scanning for Jellyfin servers...");
-        C3D_FrameEnd(0);
+        DiscoveryJob job;
+        memset(&job, 0, sizeof(job));
 
-        /* Do the actual UDP broadcast scan */
-        api_discover_servers(&g_app.ui->discovery);
-        g_app.ui->discovery_done = 1;
-        g_app.ui->discovery_sel  = 0;
+        Thread t = threadCreate(discovery_worker_thread, &job, 16 * 1024,
+                                0x18, -1, false);
+        if (!t) {
+            ui_show_toast(g_app.ui, "Discovery thread failed", 2500);
+            return;
+        }
+
+        C3D_FrameEnd(0);
+        while (aptMainLoop() && !job.done) {
+            hidScanInput();
+            draw_loading_frame("Scanning for Jellyfin servers");
+        }
+
+        threadJoin(t, U64_MAX);
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        threadFree(t);
+
+        if (job.rc == 0) {
+            g_app.ui->discovery = job.result;
+            g_app.ui->discovery_done = 1;
+            g_app.ui->discovery_sel = 0;
+        } else {
+            ui_show_toast(g_app.ui, "Discovery failed", 2500);
+        }
         return;
     }
 
@@ -240,20 +304,33 @@ static void handle_state_auth(void) {
     }
 
     if (result.done) {
-        /* Draw loading screen BEFORE the blocking HTTP call.
-         * Without this the GPU gets no frames during the request and freezes. */
-        C3D_FrameEnd(0);
-        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-        ui_draw_splash(g_app.ui, "Signing in...");
-        C3D_FrameEnd(0);
-        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        AuthJob job;
+        memset(&job, 0, sizeof(job));
+        job.api = g_app.api;
+        strncpy(job.username, result.username, sizeof(job.username) - 1);
+        strncpy(job.password, result.password, sizeof(job.password) - 1);
 
-        ApiAuthResponse auth;
-        int rc = api_authenticate(g_app.api, result.username, result.password, &auth);
-        if (rc == 0) {
-            strncpy(g_app.token,    auth.token,    sizeof(g_app.token) - 1);
-            strncpy(g_app.user_id,  auth.user_id,  sizeof(g_app.user_id) - 1);
-            strncpy(g_app.username, auth.username, sizeof(g_app.username) - 1);
+        Thread t = threadCreate(auth_worker_thread, &job, 16 * 1024,
+                                0x18, -1, false);
+        if (!t) {
+            ui_show_toast(g_app.ui, "Sign-in thread failed", 2500);
+            return;
+        }
+
+        C3D_FrameEnd(0);
+        while (aptMainLoop() && !job.done) {
+            hidScanInput();
+            draw_loading_frame("Signing in");
+        }
+
+        threadJoin(t, U64_MAX);
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        threadFree(t);
+
+        if (job.rc == 0) {
+            strncpy(g_app.token,    job.auth.token,    sizeof(g_app.token) - 1);
+            strncpy(g_app.user_id,  job.auth.user_id,  sizeof(g_app.user_id) - 1);
+            strncpy(g_app.username, job.auth.username, sizeof(g_app.username) - 1);
 
             strncpy(g_app.config->token,    g_app.token,    sizeof(g_app.config->token) - 1);
             strncpy(g_app.config->user_id,  g_app.user_id,  sizeof(g_app.config->user_id) - 1);
@@ -263,7 +340,7 @@ static void handle_state_auth(void) {
             transition_to(STATE_HOME);
         } else {
             char err[64];
-            snprintf(err, sizeof(err), "Login failed (error %d)", rc);
+            snprintf(err, sizeof(err), "Login failed (error %d)", job.rc);
             ui_show_toast(g_app.ui, err, 3000);
         }
     }
