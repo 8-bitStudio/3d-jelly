@@ -181,9 +181,14 @@ AuthResult ui_draw_auth(UiContext *ctx) {
     u32 pass_col = (s_auth_field == 1) ? COL_SELECTED : COL_SURFACE;
     draw_rounded_rect(60, 150, 280, 35, pass_col);
     draw_text(ctx->font, "Password", 70, 157, 0.38f, COL_TEXT_DIM);
-    /* Show dots for password */
+    /* Show masked password safely.
+     * Avoid UTF-8 bullet concatenation here because each "•" is 3 bytes and can
+     * overflow the fixed 64-byte buffer for longer passwords. */
     char pass_dots[64] = "";
-    for (int i = 0; s_auth_pass[i]; i++) strcat(pass_dots, "•");
+    size_t pass_len = strnlen(s_auth_pass, sizeof(s_auth_pass));
+    size_t mask_len = pass_len < (sizeof(pass_dots) - 1) ? pass_len : (sizeof(pass_dots) - 1);
+    memset(pass_dots, '*', mask_len);
+    pass_dots[mask_len] = '\0';
     draw_text(ctx->font, pass_dots[0] ? pass_dots : "tap to enter...", 70, 170, 0.45f,
               pass_dots[0] ? COL_TEXT : COL_TEXT_DIM);
     
@@ -700,7 +705,8 @@ int ui_draw_discovery(UiContext *ctx, Config *config) {
             draw_text(ctx->font, "Manual entry...", 18, y + 8, 0.48f, COL_ACCENT);
         }
     }
-    draw_text(ctx->font, "A:Select  UP/DOWN:Navigate  X:Rescan", 10, 226, 0.35f, COL_TEXT_DIM);
+    draw_text(ctx->font, "A:Select  UP/DOWN:Navigate  X:Rescan", 10, 218, 0.35f, COL_TEXT_DIM);
+    draw_text(ctx->font, "START: Use saved server", 10, 230, 0.35f, COL_TEXT_DIM);
     C2D_TargetClear(ctx->bottom, COL_BG);
     C2D_SceneBegin(ctx->bottom);
     draw_text_centered(ctx->font, "3D Jelly", 30, 320, 0.7f, COL_PRIMARY);
@@ -719,8 +725,9 @@ int ui_draw_discovery(UiContext *ctx, Config *config) {
         ctx->discovery_done = 0;
         ctx->discovery_sel  = 0;
         memset(&ctx->discovery, 0, sizeof(ctx->discovery));
-        api_discover_servers(&ctx->discovery);
-        ctx->discovery_done = 1;
+    }
+    if (keys & KEY_START && config->jellyfin_host[0]) {
+        return 1;
     }
     if (keys & KEY_A) {
         if (ctx->discovery_sel < disc->count) {

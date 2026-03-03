@@ -227,6 +227,15 @@ void api_set_server(ApiContext *ctx, const char *host, int port) {
     snprintf(ctx->base_url, sizeof(ctx->base_url), "http://%s:%d", host, port);
 }
 
+int api_probe_server(ApiContext *ctx) {
+    char url[512], *resp;
+    size_t resp_len;
+
+    /* Official Jellyfin endpoint for anonymous server metadata. */
+    snprintf(url, sizeof(url), "%s/System/Info/Public", ctx->base_url);
+    return http_get(ctx, url, "", &resp, &resp_len);
+}
+
 /* ── Authentication ──────────────────────────────────────────────────────── */
 /*
  * POST /Users/AuthenticateByName
@@ -235,15 +244,24 @@ void api_set_server(ApiContext *ctx, const char *host, int port) {
  */
 int api_authenticate(ApiContext *ctx, const char *username,
                      const char *password, ApiAuthResponse *out) {
-    char url[512], body[512], *resp;
+    char url[512], *body = NULL, *resp;
     size_t resp_len;
 
     snprintf(url,  sizeof(url),  "%s/Users/AuthenticateByName", ctx->base_url);
-    snprintf(body, sizeof(body), "{\"Username\":\"%s\",\"Pw\":\"%s\"}",
-             username, password);
+
+    /* Build JSON via cJSON so usernames/passwords with quotes or backslashes
+     * are escaped correctly (matches Jellyfin API contract for Username + Pw). */
+    cJSON *req = cJSON_CreateObject();
+    if (!req) return -12;
+    cJSON_AddStringToObject(req, "Username", username ? username : "");
+    cJSON_AddStringToObject(req, "Pw", password ? password : "");
+    body = cJSON_PrintUnformatted(req);
+    cJSON_Delete(req);
+    if (!body) return -13;
 
     /* Auth endpoint uses no token — just the MediaBrowser client header */
     int rc = http_post(ctx, url, "", body, &resp, &resp_len);
+    free(body);
     if (rc != 0) return rc;
 
     cJSON *json = cJSON_Parse(resp);
