@@ -705,7 +705,13 @@ static void handle_state_player(void) {
 
         int rc = player_start(g_app.player, stream_url, start_ticks);
         if (rc != 0) {
-            set_error("Failed to start playback.");
+            char err[160];
+            if (g_app.player->error[0]) {
+                snprintf(err, sizeof(err), "Playback start failed (%d): %s", rc, g_app.player->error);
+            } else {
+                snprintf(err, sizeof(err), "Playback start failed (%d)", rc);
+            }
+            set_error(err);
             return;
         }
         g_app.is_playing = 1;
