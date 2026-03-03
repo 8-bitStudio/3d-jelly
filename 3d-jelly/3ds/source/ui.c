@@ -181,9 +181,14 @@ AuthResult ui_draw_auth(UiContext *ctx) {
     u32 pass_col = (s_auth_field == 1) ? COL_SELECTED : COL_SURFACE;
     draw_rounded_rect(60, 150, 280, 35, pass_col);
     draw_text(ctx->font, "Password", 70, 157, 0.38f, COL_TEXT_DIM);
-    /* Show dots for password */
+    /* Show masked password without overflowing the render buffer */
     char pass_dots[64] = "";
-    for (int i = 0; s_auth_pass[i]; i++) strcat(pass_dots, "•");
+    size_t pass_len = strlen(s_auth_pass);
+    if (pass_len >= sizeof(pass_dots)) {
+        pass_len = sizeof(pass_dots) - 1;
+    }
+    memset(pass_dots, '*', pass_len);
+    pass_dots[pass_len] = '\0';
     draw_text(ctx->font, pass_dots[0] ? pass_dots : "tap to enter...", 70, 170, 0.45f,
               pass_dots[0] ? COL_TEXT : COL_TEXT_DIM);
     
