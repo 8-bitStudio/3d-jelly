@@ -1,0 +1,15 @@
+jellyfin:
+  password: ''
+  url: http://localhost:8096
+  username: admin
+proxy:
+  host: 0.0.0.0
+  port: 8765
+transcoding:
+  audio_bitrate: 64000
+  default_resolution: 240p
+  hls_segment_duration: 4
+  max_resolution: 240p
+  threads: 2
+  video_bitrate_144p: 200000
+  video_bitrate_240p: 500000
