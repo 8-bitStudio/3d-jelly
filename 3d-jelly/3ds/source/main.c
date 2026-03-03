@@ -150,6 +150,8 @@ static void libraries_worker_thread(void *arg);
 static void browse_worker_thread(void *arg);
 static void detail_worker_thread(void *arg);
 static void probe_worker_thread(void *arg);
+static void auth_worker_thread(void *arg);
+static void discovery_worker_thread(void *arg);
 static void draw_loading_frame(const char *base_msg);
 
 static void auth_worker_thread(void *arg) {
