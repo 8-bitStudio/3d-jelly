@@ -94,6 +94,7 @@ Makefile            devkitPro build file
 Planned amd possible future features or changes
 
 - a continue watching and up next
+- auto play
 - translations. 3dJelly only currently supports English
 - Possibly making 3dJelly work on emulators
 - a massive rework on UI including seeing metadata, trailers, libraries displayed better
