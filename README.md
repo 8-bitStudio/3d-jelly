@@ -86,7 +86,8 @@ Makefile            devkitPro build file
 
 ## Known Issues
 
-- Some Jellyfin server transcoding settings may affect playback.
+- Korean/Hangul text is romanized because the default 3DS font does not render Hangul glyphs.
+- Playback may crash, particularly at higher resolutions. Lower quality modes are recommended for stability.
 
 ## Credits
 
