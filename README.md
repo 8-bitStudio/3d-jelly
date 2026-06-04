@@ -9,7 +9,7 @@ The project is early, there will be bugs. 3dJelly is being actively worked on.
 - Username and password login through Jellyfin
 - Saved server, user, and token configuration on the SD card
 - Library and item browsing
-- 144p, 240p, 360p, and 480p quality modes
+- 144p, 240p, and 240HQ available on old Nintendo 3ds systems. 360p and 480p are available on New Nintendo 3ds systems 
 - Experimental New 3DS H.264 hardware decode path
 
 ## Downloads
