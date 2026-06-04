@@ -88,6 +88,20 @@ Makefile            devkitPro build file
 
 - Korean/Hangul text is romanized because the default 3DS font does not render Hangul glyphs.
 - Playback may crash, particularly at higher resolutions. Lower quality modes are recommended for stability.
+- playback may hitch when audio is loud
+
+### Roadmap
+
+Planned amd possible future features or changes
+
+- being able to skip through videos
+- a continue watching and up next
+- translations. 3dJelly only currently supports English
+- Possibly making 3dJelly work on emulators
+- a massive rework on UI including seeing metadata, trailers, libraries displayed better
+- downloading feature to watch offline
+- subtitle support
+- encryption on passwords
 
 ## Credits
 
