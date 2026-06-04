@@ -1978,6 +1978,76 @@ static void mjpeg_free(MjpegPlayer *player)
     }
 }
 
+static bool mjpeg_open_retryable(Result ret, u32 status)
+{
+    if (status == 401 || status == 403) {
+        return false;
+    }
+    if (ret == (Result)HTTPC_RESULTCODE_TIMEDOUT || ret == (Result)0xD9000002) {
+        return true;
+    }
+    if (status == HTTP_STATUS_NONE || status == 0 || status == 404 || status >= 500) {
+        return true;
+    }
+    return R_FAILED(ret);
+}
+
+static void set_mjpeg_open_failure_status(const char *prefix, Result ret, u32 status)
+{
+    if (status == HTTP_STATUS_NONE || status == 0) {
+        set_play_status("%s: no HTTP status result 0x%08lX.", prefix, (unsigned long)ret);
+    } else {
+        set_play_status("%s: HTTP %lu result 0x%08lX.", prefix, (unsigned long)status, (unsigned long)ret);
+    }
+}
+
+static bool open_mjpeg_stream_with_retries(httpcContext *context, char *url, size_t urlsz, bool avi_container, u64 start_time_ticks, const MjpegPlayer *player, Result *ret_out, u32 *status_out)
+{
+    Result ret = 0;
+    u32 status = HTTP_STATUS_NONE;
+
+    for (int attempt = 0; attempt <= MJPEG_STREAM_OPEN_RETRIES; attempt++) {
+        ret = open_stream_context(context, url, &status);
+        if (R_SUCCEEDED(ret)) {
+            if (ret_out) {
+                *ret_out = ret;
+            }
+            if (status_out) {
+                *status_out = status;
+            }
+            return true;
+        }
+
+        if (attempt >= MJPEG_STREAM_OPEN_RETRIES || !mjpeg_open_retryable(ret, status) || app_system_closing()) {
+            break;
+        }
+
+        set_mjpeg_open_failure_status("MJPEG open retry", ret, status);
+        if (!app_system_closing()) {
+            mjpeg_console(player, g_play_status);
+        }
+
+        stop_active_encoding();
+        if (app_wait_or_exit(MJPEG_STREAM_RETRY_SLEEP_NS * (u64)(attempt + 1))) {
+            break;
+        }
+        if (!request_playback_info(start_time_ticks)) {
+            break;
+        }
+        g_stream_switch_serial++;
+        build_mjpeg_stream_url(&g_current, url, urlsz, avi_container, start_time_ticks);
+        copy_safe(g_play_url, sizeof(g_play_url), url);
+    }
+
+    if (ret_out) {
+        *ret_out = ret;
+    }
+    if (status_out) {
+        *status_out = status;
+    }
+    return false;
+}
+
 static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container, u64 start_time_ticks)
 {
     if (!url || !url[0]) {
@@ -2020,10 +2090,12 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     mjpeg_console(&player, "Opening Jellyfin MJPEG stream...");
 
     httpcContext context;
+    char active_url[STREAM_URL_CAP];
+    copy_safe(active_url, sizeof(active_url), url);
     u32 status = HTTP_STATUS_NONE;
-    Result ret = open_stream_context(&context, url, &status);
-    if (R_FAILED(ret)) {
-        set_play_status("MJPEG stream failed: HTTP %lu result 0x%08lX.", (unsigned long)status, (unsigned long)ret);
+    Result ret = 0;
+    if (!open_mjpeg_stream_with_retries(&context, active_url, sizeof(active_url), avi_container, start_time_ticks, &player, &ret, &status)) {
+        set_mjpeg_open_failure_status("MJPEG stream failed", ret, status);
         if (!app_system_closing()) {
             mjpeg_console(&player, g_play_status);
         }
@@ -2210,7 +2282,16 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 continue;
             }
             if (R_FAILED(ret)) {
-                set_play_status("MJPEG read failed: 0x%08lX.", (unsigned long)ret);
+                if (player.frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES) {
+                    g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+                    g_stream_switch_serial++;
+                    set_play_status("MJPEG stream interrupted; reconnecting.");
+                    mjpeg_redraw_last_frame(&player);
+                    mjpeg_console(&player, g_play_status);
+                    result = MJPEG_PLAY_RESTART;
+                } else {
+                    set_play_status("MJPEG read failed: 0x%08lX.", (unsigned long)ret);
+                }
                 break;
             }
             set_play_status("MJPEG reached end of stream.");
