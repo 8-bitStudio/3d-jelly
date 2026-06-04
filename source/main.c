@@ -55,8 +55,13 @@ typedef struct {
     char name[128];
     char type[40];
     char collection_type[40];
+    char location_type[32];
     bool is_folder;
+    bool is_missing;
+    bool is_virtual_item;
+    bool is_place_holder;
     int year;
+    int media_source_count;
     unsigned long long runtime_ticks;
 } MediaItem;
 
@@ -1049,7 +1054,35 @@ static bool json_get_object_range(const char *start, const char *end, const char
     return json_object_range_after(p, end, obj_start, obj_end);
 }
 
-static bool parse_items(const char *json, MediaItem *items, int *count)
+static bool media_item_is_leaf_media_type(const MediaItem *item)
+{
+    if (!item) {
+        return false;
+    }
+    return strcmp(item->type, "Movie") == 0 ||
+           strcmp(item->type, "Episode") == 0 ||
+           strcmp(item->type, "Video") == 0 ||
+           strcmp(item->type, "MusicVideo") == 0;
+}
+
+static bool media_item_is_unowned_placeholder(const MediaItem *item)
+{
+    if (!item) {
+        return true;
+    }
+    if (item->is_missing || item->is_virtual_item || item->is_place_holder) {
+        return true;
+    }
+    if (!item->is_folder && strcmp(item->location_type, "Virtual") == 0) {
+        return true;
+    }
+    if (!item->is_folder && media_item_is_leaf_media_type(item) && item->media_source_count == 0) {
+        return true;
+    }
+    return false;
+}
+
+static bool parse_items(const char *json, MediaItem *items, int *count, bool owned_only)
 {
     const char *end = json + strlen(json);
     const char *p = find_key_range(json, end, "Items");
@@ -1083,15 +1116,21 @@ static bool parse_items(const char *json, MediaItem *items, int *count)
 
         MediaItem item;
         memset(&item, 0, sizeof(item));
+        item.media_source_count = -1;
         json_get_string_range(os, oe, "Id", item.id, sizeof(item.id));
         json_get_string_range(os, oe, "Name", item.name, sizeof(item.name));
         json_get_string_range(os, oe, "Type", item.type, sizeof(item.type));
         json_get_string_range(os, oe, "CollectionType", item.collection_type, sizeof(item.collection_type));
+        json_get_string_range(os, oe, "LocationType", item.location_type, sizeof(item.location_type));
         json_get_bool_range(os, oe, "IsFolder", &item.is_folder);
+        json_get_bool_range(os, oe, "IsMissing", &item.is_missing);
+        json_get_bool_range(os, oe, "IsVirtualItem", &item.is_virtual_item);
+        json_get_bool_range(os, oe, "IsPlaceHolder", &item.is_place_holder);
         json_get_int_range(os, oe, "ProductionYear", &item.year);
+        json_get_int_range(os, oe, "MediaSourceCount", &item.media_source_count);
         json_get_ull_range(os, oe, "RunTimeTicks", &item.runtime_ticks);
 
-        if (item.id[0] && item.name[0]) {
+        if (item.id[0] && item.name[0] && (!owned_only || !media_item_is_unowned_placeholder(&item))) {
             items[n++] = item;
         }
         p = oe;
@@ -1415,7 +1454,7 @@ static bool load_libraries(void)
         return false;
     }
 
-    parse_items(res.body, g_libraries, &g_library_count);
+    parse_items(res.body, g_libraries, &g_library_count, false);
     free_response(&res);
     g_selected = 0;
     g_scroll = 0;
@@ -1429,11 +1468,11 @@ static bool load_libraries(void)
 
 static bool load_items_for_parent(const char *parent_id, const char *title)
 {
-    char path[360];
+    char path[512];
     char enc_parent[160];
     url_encode(parent_id, enc_parent, sizeof(enc_parent));
     snprintf(path, sizeof(path),
-             "/Users/%s/Items?ParentId=%s&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=false",
+             "/Items?UserId=%s&ParentId=%s&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=false&Fields=Path,MediaSources&IsMissing=false&IsUnaired=false",
              g_cfg.user_id, enc_parent, MAX_ITEMS);
 
     HttpResponse res;
@@ -1442,7 +1481,7 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
     if ((R_FAILED(ret) || res.status == HTTP_STATUS_NONE) && parent_id[0]) {
         free_response(&res);
         snprintf(path, sizeof(path),
-                 "/Items?UserId=%s&ParentId=%s&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=false",
+                 "/Users/%s/Items?ParentId=%s&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=false&Fields=Path,MediaSources&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_parent, MAX_ITEMS);
         ret = api_get(path, &res);
     }
@@ -1452,7 +1491,7 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
         return false;
     }
 
-    parse_items(res.body, g_items, &g_item_count);
+    parse_items(res.body, g_items, &g_item_count, true);
     free_response(&res);
     g_selected = 0;
     g_scroll = 0;
@@ -1465,6 +1504,9 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
 
 static bool is_playable(const MediaItem *item)
 {
+    if (media_item_is_unowned_placeholder(item)) {
+        return false;
+    }
     if (strcmp(item->type, "Audio") == 0) {
         return false;
     }
@@ -3066,7 +3108,6 @@ static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
     snprintf(quality, sizeof(quality), "%dP", g_cfg.quality);
 
     bottom_fill_rect(fb, 0, 0, 320, 240, 14, 15, 19);
-    bottom_fill_rect(fb, 0, 0, 320, 4, 55, 206, 224);
 
     bottom_fill_rect(fb, 12, 16, 296, 88, 21, 23, 29);
     bottom_fill_rect(fb, 12, 16, 296, 1, 48, 53, 65);
@@ -3692,6 +3733,7 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
     } else {
         set_play_status("Playing.");
         mjpeg_console(&player, g_play_status);
+        bool paused_osd_was_visible = false;
         while (app_keep_running()) {
             hidScanInput();
             u32 down = hidKeysDown();
@@ -3707,28 +3749,39 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
             }
             if (down & KEY_A) {
                 mjpeg_set_paused(&player, !player.paused);
+                if (!player.paused) {
+                    paused_osd_was_visible = false;
+                }
             }
             if (down & KEY_UP) {
                 audio_change_volume(&audio, VOLUME_STEP_PERCENT);
                 if (player.paused) {
                     mjpeg_redraw_last_frame(&player);
+                    paused_osd_was_visible = audio_volume_osd_visible(&audio);
                 }
             }
             if (down & KEY_DOWN) {
                 audio_change_volume(&audio, -VOLUME_STEP_PERCENT);
                 if (player.paused) {
                     mjpeg_redraw_last_frame(&player);
+                    paused_osd_was_visible = audio_volume_osd_visible(&audio);
                 }
             }
             if (down & KEY_Y) {
                 audio_toggle_mute(&audio);
                 if (player.paused) {
                     mjpeg_redraw_last_frame(&player);
+                    paused_osd_was_visible = audio_volume_osd_visible(&audio);
                 }
                 mjpeg_console(&player, g_play_status);
             }
 
             if (player.paused) {
+                bool osd_visible = audio_volume_osd_visible(&audio);
+                if (osd_visible || paused_osd_was_visible) {
+                    mjpeg_redraw_last_frame(&player);
+                    paused_osd_was_visible = osd_visible;
+                }
                 svcSleepThread(50000000ULL);
                 continue;
             }
@@ -4118,9 +4171,12 @@ static void render(void)
         draw_bottom_help("B back  X play again  L/R quality",
                          g_is_new_3ds ? "New3DS uses Jellyfin TS/H.264 first, then AVI/MJPEG fallback. In MJPEG playback, Y mute/unmute and Up/Down volume."
                                       : "Old3DS defaults to 144p. In MJPEG playback, Y mute/unmute and Up/Down volume.");
+    } else if (g_view == VIEW_LIBRARIES) {
+        draw_bottom_help("A open  X refresh  Y setup",
+                         "");
     } else {
-        draw_bottom_help(g_view == VIEW_LIBRARIES ? "A open  X refresh  Y setup  L/R quality" : "A open/play  B back  X refresh  L/R quality",
-                         "Jellyfin-style native UI using dark, cyan, and purple theme colors from Jellyfin Web.");
+        draw_bottom_help("A open/play  B back  X refresh  L/R quality",
+                         "");
     }
 
     C3D_FrameEnd(0);
