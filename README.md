@@ -101,7 +101,7 @@ Planned amd possible future features or changes
 - a massive rework on UI including seeing metadata, trailers, libraries displayed better
 - downloading feature to watch offline
 - subtitle support
-- encryption on passwords
+- add intro skipper and other plugin support
 
 ## Credits
 
