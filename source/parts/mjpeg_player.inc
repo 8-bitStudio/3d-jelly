@@ -132,6 +132,16 @@ static bool quality_osd_visible(void)
     return g_quality_osd_until_ms && osGetTime() < g_quality_osd_until_ms;
 }
 
+static void seek_show_osd(void)
+{
+    g_seek_osd_until_ms = osGetTime() + SEEK_OSD_MS;
+}
+
+static bool seek_osd_visible(void)
+{
+    return g_seek_osd_until_ms && osGetTime() < g_seek_osd_until_ms;
+}
+
 static u64 clamp_media_ticks(u64 ticks)
 {
     if (g_current.runtime_ticks && ticks > g_current.runtime_ticks) {
@@ -155,6 +165,68 @@ static u64 mjpeg_current_ticks(MjpegPlayer *player)
         player->position_clock_ns = now;
     }
     return player->position_ticks;
+}
+
+static void format_playback_time(u64 ticks, char *out, size_t outsz)
+{
+    if (!out || outsz == 0) {
+        return;
+    }
+
+    u64 seconds = (ticks + TICKS_PER_SECOND / 2) / TICKS_PER_SECOND;
+    u64 hours = seconds / 3600ULL;
+    u64 minutes = (seconds / 60ULL) % 60ULL;
+    u64 secs = seconds % 60ULL;
+    if (hours > 0) {
+        snprintf(out, outsz, "%llu:%02llu:%02llu",
+                 (unsigned long long)hours,
+                 (unsigned long long)minutes,
+                 (unsigned long long)secs);
+    } else {
+        snprintf(out, outsz, "%llu:%02llu",
+                 (unsigned long long)minutes,
+                 (unsigned long long)secs);
+    }
+}
+
+static void format_seek_delta_time(int seconds, char *out, size_t outsz)
+{
+    if (!out || outsz == 0) {
+        return;
+    }
+
+    char sign = seconds < 0 ? '-' : '+';
+    unsigned abs_seconds = (unsigned)(seconds < 0 ? -seconds : seconds);
+    unsigned hours = abs_seconds / 3600U;
+    unsigned minutes = (abs_seconds / 60U) % 60U;
+    unsigned secs = abs_seconds % 60U;
+    if (hours > 0) {
+        snprintf(out, outsz, "%c%u:%02u:%02u", sign, hours, minutes, secs);
+    } else {
+        snprintf(out, outsz, "%c%u:%02u", sign, minutes, secs);
+    }
+}
+
+static int seek_step_seconds_for_hold(u64 held_ms)
+{
+    if (held_ms >= SEEK_FASTER_AFTER_MS) {
+        return SEEK_FASTER_SECONDS;
+    }
+    if (held_ms >= SEEK_FAST_AFTER_MS) {
+        return SEEK_FAST_SECONDS;
+    }
+    return SEEK_STEP_SECONDS;
+}
+
+static u64 seek_repeat_delay_for_hold(u64 held_ms)
+{
+    if (held_ms >= SEEK_FASTER_AFTER_MS) {
+        return SEEK_REPEAT_FASTER_MS;
+    }
+    if (held_ms >= SEEK_FAST_AFTER_MS) {
+        return SEEK_REPEAT_FAST_MS;
+    }
+    return SEEK_REPEAT_DELAY_MS;
 }
 
 static bool audio_can_control(const AudioPlayer *audio)
@@ -437,6 +509,7 @@ static void fb_stroke_rect(u16 *fb, int x, int y, int w, int h, u16 color)
 }
 
 static void draw_quality_osd(const MjpegPlayer *player, u16 *fb);
+static void draw_seek_osd(u16 *fb);
 
 static void draw_volume_osd(const MjpegPlayer *player, u16 *fb)
 {
@@ -529,6 +602,7 @@ static void draw_rgb565_frame(const MjpegPlayer *player, const u16 *pixels, int 
 
         draw_volume_osd(player, fb);
         draw_quality_osd(player, fb);
+        draw_seek_osd(fb);
         gfxFlushBuffers();
         gfxSwapBuffersGpu();
         gspWaitForVBlank();
@@ -547,6 +621,7 @@ static void draw_rgb565_frame(const MjpegPlayer *player, const u16 *pixels, int 
 
     draw_volume_osd(player, fb);
     draw_quality_osd(player, fb);
+    draw_seek_osd(fb);
     gfxFlushBuffers();
     gfxSwapBuffersGpu();
     gspWaitForVBlank();
@@ -603,6 +678,7 @@ static const u8 *bottom_glyph(char ch)
     static const u8 dot[7] = {0, 0, 0, 0, 0, 6, 6};
     static const u8 colon[7] = {0, 4, 4, 0, 4, 4, 0};
     static const u8 dash[7] = {0, 0, 0, 31, 0, 0, 0};
+    static const u8 plus[7] = {0, 4, 4, 31, 4, 4, 0};
     static const u8 slash[7] = {1, 2, 2, 4, 8, 8, 16};
     static const u8 apostrophe[7] = {4, 4, 8, 0, 0, 0, 0};
     static const u8 zero[7] = {14, 17, 19, 21, 25, 17, 14};
@@ -654,6 +730,8 @@ static const u8 *bottom_glyph(char ch)
         return colon;
     case '-':
         return dash;
+    case '+':
+        return plus;
     case '/':
         return slash;
     case '\'':
@@ -933,6 +1011,79 @@ static void draw_quality_osd(const MjpegPlayer *player, u16 *fb)
     fb_draw_text_centered(fb, 200, dock_y + 56, actual_dims, 1, muted, alpha);
 }
 
+static void draw_seek_osd(u16 *fb)
+{
+    if (!fb || !seek_osd_visible()) {
+        return;
+    }
+
+    u64 now = osGetTime();
+    u64 remaining = g_seek_osd_until_ms > now ? g_seek_osd_until_ms - now : 0;
+    int alpha = 220;
+    if (remaining < SEEK_OSD_FADE_MS) {
+        alpha = (int)((remaining * 220ULL) / SEEK_OSD_FADE_MS);
+    }
+    if (alpha <= 0) {
+        return;
+    }
+
+    char at[16];
+    char total[16];
+    char delta[16];
+    char label[64];
+    format_seek_delta_time(g_seek_osd_delta_seconds, delta, sizeof(delta));
+    format_playback_time(g_seek_osd_target_ticks, at, sizeof(at));
+    if (g_current.runtime_ticks) {
+        format_playback_time(g_current.runtime_ticks, total, sizeof(total));
+        snprintf(label, sizeof(label), "%s %s / %s", delta, at, total);
+    } else {
+        snprintf(label, sizeof(label), "%s %s", delta, at);
+    }
+
+    int label_w = bottom_text_width(label, 2);
+    int dock_w = label_w + 48;
+    if (dock_w < 332) {
+        dock_w = 332;
+    }
+    if (dock_w > 372) {
+        dock_w = 372;
+    }
+    int dock_h = 43;
+    int dock_x = (400 - dock_w) / 2;
+    int dock_y = 150;
+    int bar_x = dock_x + 20;
+    int bar_y = dock_y + 28;
+    int bar_w = dock_w - 40;
+    int bar_h = 9;
+
+    u16 shadow = rgb565_from_rgb(0, 0, 0);
+    u16 dock = rgb565_from_rgb(18, 19, 23);
+    u16 track = rgb565_from_rgb(44, 47, 54);
+    u16 track_dark = rgb565_from_rgb(17, 18, 22);
+    u16 fill = rgb565_from_rgb(55, 206, 224);
+    u16 edge = rgb565_from_rgb(104, 111, 126);
+    u16 text = rgb565_from_rgb(246, 250, 255);
+
+    fb_fill_rect_blend(fb, dock_x + 2, dock_y + 3, dock_w, dock_h, shadow, alpha / 2);
+    fb_fill_rect_blend(fb, dock_x, dock_y, dock_w, dock_h, dock, alpha);
+    fb_stroke_rect(fb, dock_x, dock_y, dock_w, dock_h, edge);
+    fb_draw_text_centered(fb, 200, dock_y + 9, label, 2, text, alpha);
+
+    fb_fill_rect(fb, bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, track_dark);
+    fb_fill_rect(fb, bar_x, bar_y, bar_w, bar_h, track);
+    fb_fill_rect_blend(fb, bar_x, bar_y, bar_w, 1, rgb565_from_rgb(92, 98, 112), alpha);
+
+    int filled = 0;
+    if (g_current.runtime_ticks) {
+        filled = (int)((g_seek_osd_target_ticks * (u64)bar_w + g_current.runtime_ticks / 2ULL) / g_current.runtime_ticks);
+    }
+    filled = clamp_int(filled, 0, bar_w);
+    if (filled > 0) {
+        fb_fill_rect(fb, bar_x, bar_y, filled, bar_h, fill);
+        fb_fill_rect_blend(fb, bar_x, bar_y, filled, 2, rgb565_from_rgb(246, 250, 255), 70);
+    }
+}
+
 static void bottom_draw_text(u8 *fb, int x, int y, const char *text, int scale, u8 r, u8 g, u8 b)
 {
     if (!fb || !text || scale <= 0) {
@@ -1109,11 +1260,9 @@ static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
         return;
     }
 
-    char quality[32];
     char quality_label[16];
     const char *state = playback_state_label(player, line);
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-    snprintf(quality, sizeof(quality), "L/R %s", quality_label);
 
     bottom_fill_rect(fb, 0, 0, 320, 240, 14, 15, 19);
 
@@ -1138,9 +1287,10 @@ static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
     bottom_draw_button(fb, 24, 138, 78, 24, paused ? "A RESUME" : "A PAUSE", true);
     bottom_draw_button(fb, 112, 138, 62, 24, "B BACK", false);
     bottom_draw_button(fb, 184, 138, 100, 24, playback_button_y(player ? player->audio : NULL), false);
-    bottom_draw_button(fb, 22, 180, 112, 24, "UP/DOWN VOL", false);
-    bottom_draw_button(fb, 144, 180, 84, 24, quality, true);
-    bottom_draw_button(fb, 238, 180, 60, 24, "START", false);
+    bottom_draw_button(fb, 20, 180, 82, 24, "L/R SEEK", true);
+    bottom_draw_button(fb, 112, 180, 86, 24, "D-PAD Q", false);
+    bottom_draw_button(fb, 208, 180, 92, 24, "UP/DN VOL", false);
+    bottom_draw_text_centered(fb, 155, 212, quality_label, 1, 178, 187, 201);
 }
 
 static void mjpeg_console(const MjpegPlayer *player, const char *line)
@@ -1171,6 +1321,53 @@ static void mjpeg_set_paused(MjpegPlayer *player, bool paused)
     }
     mjpeg_redraw_last_frame(player);
     mjpeg_console(player, g_play_status);
+}
+
+static bool mjpeg_preview_seek(MjpegPlayer *player, int requested_seconds, u64 base_ticks, bool extend_existing)
+{
+    if (!player || requested_seconds == 0) {
+        return false;
+    }
+
+    u64 current = extend_existing ? g_seek_osd_target_ticks : base_ticks;
+    u64 step = (u64)(requested_seconds < 0 ? -requested_seconds : requested_seconds) * TICKS_PER_SECOND;
+    u64 target = current;
+    if (requested_seconds < 0) {
+        target = current > step ? current - step : 0;
+    } else {
+        target = clamp_media_ticks(current + step);
+    }
+
+    u64 diff = target > base_ticks ? target - base_ticks : base_ticks - target;
+    int actual_seconds = (int)((diff + TICKS_PER_SECOND / 2) / TICKS_PER_SECOND);
+    if (target < base_ticks) {
+        actual_seconds = -actual_seconds;
+    }
+
+    g_seek_osd_target_ticks = target;
+    g_seek_osd_delta_seconds = actual_seconds;
+    seek_show_osd();
+
+    char at[16];
+    format_playback_time(target, at, sizeof(at));
+    if (target == current) {
+        set_play_status("Seek boundary at %s.", at);
+        return false;
+    }
+
+    set_play_status("Scrubbing to %s.", at);
+    return true;
+}
+
+static void mjpeg_commit_seek(void)
+{
+    g_mjpeg_resume_ticks = g_seek_osd_target_ticks;
+    g_stream_switch_serial++;
+    g_seek_osd_pending = true;
+
+    char at[16];
+    format_playback_time(g_mjpeg_resume_ticks, at, sizeof(at));
+    set_play_status("Seeking to %s.", at);
 }
 
 static int audio_free_wavebuf(AudioPlayer *audio)
@@ -1788,11 +1985,16 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
         return MJPEG_PLAY_FAILED;
     }
 
-    ui_graphics_exit();
-    gfxInit(GSP_RGB565_OES, GSP_BGR8_OES, false);
-    clear_top_rgb565(0);
-    gfxFlushBuffers();
-    gfxSwapBuffersGpu();
+    bool reuse_graphics = g_playback_restart_in_progress;
+    if (reuse_graphics) {
+        g_playback_restart_in_progress = false;
+    } else {
+        ui_graphics_exit();
+        gfxInit(GSP_RGB565_OES, GSP_BGR8_OES, false);
+        clear_top_rgb565(0);
+        gfxFlushBuffers();
+        gfxSwapBuffersGpu();
+    }
 
     MjpegPlayer player;
     memset(&player, 0, sizeof(player));
@@ -1849,13 +2051,23 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             quality_show_osd();
             g_quality_osd_pending = false;
         }
+        if (g_seek_osd_pending) {
+            seek_show_osd();
+            g_seek_osd_pending = false;
+        }
         set_play_status("Playing.");
         player.position_clock_ns = monotonic_ns();
         mjpeg_console(&player, g_play_status);
         bool paused_osd_was_visible = false;
+        bool seek_commit_pending = false;
+        u64 seek_base_ticks = 0;
+        u64 seek_commit_ready_ms = 0;
+        int seek_hold_dir = 0;
+        u64 seek_hold_start_ms = 0;
         while (app_keep_running()) {
             hidScanInput();
             u32 down = hidKeysDown();
+            u32 held = hidKeysHeld();
             if (down & KEY_START) {
                 g_exit_requested = true;
                 set_play_status("Playback stopped.");
@@ -1894,7 +2106,58 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 }
                 mjpeg_console(&player, g_play_status);
             }
-            if (down & KEY_L) {
+
+            int seek_seconds = 0;
+            u64 now_ms = osGetTime();
+            int seek_dir = 0;
+            if ((down & KEY_L) || ((held & KEY_L) && !(held & KEY_R))) {
+                seek_dir = -1;
+            } else if ((down & KEY_R) || ((held & KEY_R) && !(held & KEY_L))) {
+                seek_dir = 1;
+            }
+
+            if (seek_dir != 0) {
+                if (seek_hold_dir != seek_dir) {
+                    seek_hold_dir = seek_dir;
+                    seek_hold_start_ms = now_ms;
+                    g_seek_repeat_ready_ms = now_ms;
+                }
+                u64 held_ms = now_ms >= seek_hold_start_ms ? now_ms - seek_hold_start_ms : 0;
+                bool pressed_now = (seek_dir < 0 && (down & KEY_L)) || (seek_dir > 0 && (down & KEY_R));
+                if (pressed_now || now_ms >= g_seek_repeat_ready_ms) {
+                    int step_seconds = seek_step_seconds_for_hold(held_ms);
+                    seek_seconds = seek_dir * step_seconds;
+                    g_seek_repeat_ready_ms = now_ms + seek_repeat_delay_for_hold(held_ms);
+                }
+            } else if (!(held & (KEY_L | KEY_R))) {
+                seek_hold_dir = 0;
+                seek_hold_start_ms = 0;
+            }
+
+            if (seek_seconds != 0) {
+                if (!seek_commit_pending) {
+                    seek_base_ticks = mjpeg_current_ticks(&player);
+                    player.position_ticks = seek_base_ticks;
+                    player.position_clock_ns = 0;
+                    player.paused = true;
+                    audio_set_paused(player.audio, true);
+                }
+                seek_commit_ready_ms = now_ms + SEEK_COMMIT_DELAY_MS;
+                bool moved = mjpeg_preview_seek(&player, seek_seconds, seek_base_ticks, seek_commit_pending);
+                seek_commit_pending = seek_commit_pending || moved;
+                mjpeg_redraw_last_frame(&player);
+                mjpeg_console(&player, g_play_status);
+            }
+
+            if (seek_commit_pending && !(held & (KEY_L | KEY_R)) && now_ms >= seek_commit_ready_ms) {
+                mjpeg_commit_seek();
+                mjpeg_redraw_last_frame(&player);
+                mjpeg_console(&player, g_play_status);
+                result = MJPEG_PLAY_RESTART;
+                break;
+            }
+
+            if (down & KEY_DLEFT) {
                 g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
                 change_quality(-1);
                 g_stream_switch_serial++;
@@ -1908,7 +2171,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 result = MJPEG_PLAY_RESTART;
                 break;
             }
-            if (down & KEY_R) {
+            if (down & KEY_DRIGHT) {
                 g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
                 change_quality(1);
                 g_stream_switch_serial++;
@@ -1924,7 +2187,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             }
 
             if (player.paused) {
-                bool osd_visible = audio_volume_osd_visible(&audio);
+                bool osd_visible = audio_volume_osd_visible(&audio) || seek_osd_visible() || quality_osd_visible();
                 if (osd_visible || paused_osd_was_visible) {
                     mjpeg_redraw_last_frame(&player);
                     paused_osd_was_visible = osd_visible;
@@ -1988,13 +2251,17 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     }
     g_playback_restart_in_progress = result == MJPEG_PLAY_RESTART;
     playback_graphics_exit();
-    g_playback_restart_in_progress = false;
     return result;
 }
 
 static bool play_current_item_video(void)
 {
     g_mjpeg_resume_ticks = 0;
+    g_seek_osd_until_ms = 0;
+    g_seek_osd_target_ticks = 0;
+    g_seek_osd_delta_seconds = 0;
+    g_seek_repeat_ready_ms = 0;
+    g_seek_osd_pending = false;
     g_quality_osd_pending = false;
     g_quality_osd_until_ms = 0;
 
@@ -2021,6 +2288,8 @@ static bool play_current_item_video(void)
         if (result == MJPEG_PLAY_RESTART) {
             start_ticks = g_mjpeg_resume_ticks;
             if (!request_playback_info(start_ticks)) {
+                g_playback_restart_in_progress = false;
+                playback_graphics_exit();
                 return false;
             }
             continue;
@@ -2044,6 +2313,8 @@ static bool play_current_item_video(void)
         if (result == MJPEG_PLAY_RESTART) {
             start_ticks = g_mjpeg_resume_ticks;
             if (!request_playback_info(start_ticks)) {
+                g_playback_restart_in_progress = false;
+                playback_graphics_exit();
                 return false;
             }
             continue;
@@ -2076,4 +2347,3 @@ static bool probe_playback(void)
     }
     return true;
 }
-

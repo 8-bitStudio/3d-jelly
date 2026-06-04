@@ -49,6 +49,17 @@
 #define AUDIO_LIMIT_KNEE 24576
 #define AUDIO_LIMIT_HEADROOM (32767 - AUDIO_LIMIT_KNEE)
 #define AUDIO_LOW_WAVEBUFS 2
+#define SEEK_STEP_SECONDS 10
+#define SEEK_FAST_SECONDS 30
+#define SEEK_FASTER_SECONDS 60
+#define SEEK_REPEAT_DELAY_MS 360
+#define SEEK_REPEAT_FAST_MS 260
+#define SEEK_REPEAT_FASTER_MS 180
+#define SEEK_COMMIT_DELAY_MS 140
+#define SEEK_FAST_AFTER_MS 1800
+#define SEEK_FASTER_AFTER_MS 4500
+#define SEEK_OSD_MS 1900
+#define SEEK_OSD_FADE_MS 650
 #define QUALITY_OSD_MS 1900
 #define QUALITY_OSD_FADE_MS 650
 #define TICKS_PER_SECOND 10000000ULL
@@ -144,6 +155,11 @@ static char g_play_status[192];
 static View g_return_view = VIEW_ITEMS;
 static u64 g_mjpeg_resume_ticks;
 static u32 g_stream_switch_serial;
+static u64 g_seek_osd_until_ms;
+static u64 g_seek_osd_target_ticks;
+static int g_seek_osd_delta_seconds;
+static u64 g_seek_repeat_ready_ms;
+static bool g_seek_osd_pending;
 static u64 g_quality_osd_until_ms;
 static bool g_quality_osd_pending;
 static bool g_playback_restart_in_progress;

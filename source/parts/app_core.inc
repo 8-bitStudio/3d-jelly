@@ -49,7 +49,7 @@ static bool app_wait_or_exit(u64 ns)
 
 static void playback_graphics_exit(void)
 {
-    if (!app_system_closing()) {
+    if (!app_system_closing() && !g_playback_restart_in_progress) {
         gfxExit();
     }
     if (!g_exit_requested && !app_system_closing() && !g_playback_restart_in_progress) {
@@ -218,4 +218,3 @@ static void apply_hardware_defaults(void)
         save_config();
     }
 }
-
