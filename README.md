@@ -50,7 +50,6 @@ B      Back or stop playback
 X      Refresh current view
 Y      Setup, or audio mute toggle during MJPEG playback
 L/R    Change quality mode
-SELECT Run test view
 ```
 
 ## Building
