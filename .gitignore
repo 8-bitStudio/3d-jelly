@@ -1,0 +1,19 @@
+# Build outputs
+/build/
+/dist/*
+!/dist/3dJelly.cia
+/3dJelly.3dsx
+/3dJelly.elf
+/3dJelly.smdh
+
+# Local packaging tools
+/tools/makerom.exe
+/tools/makerom-v*/
+/tools/makerom-*.zip
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+/.icon-preview.png
