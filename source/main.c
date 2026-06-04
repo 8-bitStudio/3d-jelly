@@ -2,6 +2,9 @@
 #include <citro2d.h>
 #include "picojpeg.h"
 
+#include <mbedtls/aes.h>
+#include <mbedtls/sha256.h>
+
 #include <ctype.h>
 #include <inttypes.h>
 #include <stdarg.h>

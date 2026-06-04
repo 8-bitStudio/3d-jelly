@@ -364,6 +364,320 @@ static bool starts_with_http(const char *s)
     return strncmp(s, "http://", 7) == 0 || strncmp(s, "https://", 8) == 0;
 }
 
+static bool hex_write_bytes(const unsigned char *bytes, size_t len, char *out, size_t outsz, size_t *w)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    if (!bytes || !out || !w) {
+        return false;
+    }
+    if (*w + len * 2 >= outsz) {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        out[(*w)++] = hex[bytes[i] >> 4];
+        out[(*w)++] = hex[bytes[i] & 0x0F];
+    }
+    out[*w] = 0;
+    return true;
+}
+
+static bool hex_read_bytes(const char *hex, unsigned char *out, size_t out_len)
+{
+    if (!hex || !out) {
+        return false;
+    }
+    for (size_t i = 0; i < out_len; i++) {
+        int hi = hex_value(hex[i * 2]);
+        int lo = hex_value(hex[i * 2 + 1]);
+        if (hi < 0 || lo < 0) {
+            return false;
+        }
+        out[i] = (unsigned char)((hi << 4) | lo);
+    }
+    return true;
+}
+
+static bool hex_read_u64_fixed(const char *hex, size_t digits, u64 *out)
+{
+    if (!hex || !out || digits > 16) {
+        return false;
+    }
+    u64 v = 0;
+    for (size_t i = 0; i < digits; i++) {
+        int n = hex_value(hex[i]);
+        if (n < 0) {
+            return false;
+        }
+        v = (v << 4) | (u64)n;
+    }
+    *out = v;
+    return true;
+}
+
+static void sha256_update_string(mbedtls_sha256_context *ctx, const char *s)
+{
+    if (s && s[0]) {
+        mbedtls_sha256_update_ret(ctx, (const unsigned char *)s, strlen(s));
+    }
+    const unsigned char zero = 0;
+    mbedtls_sha256_update_ret(ctx, &zero, 1);
+}
+
+static void sha256_update_u64(mbedtls_sha256_context *ctx, u64 v)
+{
+    unsigned char b[8];
+    for (int i = 0; i < 8; i++) {
+        b[7 - i] = (unsigned char)(v & 0xFF);
+        v >>= 8;
+    }
+    mbedtls_sha256_update_ret(ctx, b, sizeof(b));
+}
+
+static u64 config_console_unique_hash(void)
+{
+    static bool tried;
+    static u64 cached;
+
+    if (!tried) {
+        tried = true;
+        u64 hash = 0;
+        if (R_SUCCEEDED(cfguInit())) {
+            if (R_SUCCEEDED(CFGU_GenHashConsoleUnique(0x334A4C59, &hash))) {
+                cached = hash;
+            }
+            cfguExit();
+        }
+        if (!cached) {
+            cached = 0x33444A656C6C7931ULL;
+        }
+    }
+
+    return cached;
+}
+
+static bool config_secret_digest(const char *field, u64 nonce, const char *purpose, int version, bool bind_identity, unsigned char out[32])
+{
+    const char *salt = version >= 2 ? "3dJelly config secret v2" : "3dJelly config secret v1";
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+
+    bool ok = mbedtls_sha256_starts_ret(&ctx, 0) == 0;
+    if (ok) {
+        ok = mbedtls_sha256_update_ret(&ctx, (const unsigned char *)salt, strlen(salt)) == 0;
+    }
+    if (ok) {
+        sha256_update_u64(&ctx, config_console_unique_hash());
+        sha256_update_u64(&ctx, nonce);
+        sha256_update_string(&ctx, purpose);
+        sha256_update_string(&ctx, field);
+        sha256_update_string(&ctx, g_cfg.device_id);
+        if (bind_identity) {
+            sha256_update_string(&ctx, g_cfg.server);
+            sha256_update_string(&ctx, g_cfg.username);
+        }
+        ok = mbedtls_sha256_finish_ret(&ctx, out) == 0;
+    }
+
+    mbedtls_sha256_free(&ctx);
+    return ok;
+}
+
+static u64 config_secret_nonce(const char *field, const char *plain, int version, bool bind_identity)
+{
+    unsigned char digest[32];
+    u64 nonce = osGetTime() ^ ((u64)g_frame_counter << 32);
+    if (config_secret_digest(field, nonce, "nonce", version, bind_identity, digest)) {
+        for (int i = 0; i < 8; i++) {
+            nonce = (nonce << 8) ^ digest[i] ^ (u64)digest[i + 8];
+        }
+    }
+    for (size_t i = 0; plain && plain[i]; i++) {
+        nonce = (nonce * 1099511628211ULL) ^ (unsigned char)plain[i];
+    }
+    return nonce ? nonce : 0x33444A656C6C7931ULL;
+}
+
+static bool config_secret_tag(const char *field, u64 nonce, const unsigned char *cipher, size_t cipher_len, int version, bool bind_identity, unsigned char tag[16])
+{
+    unsigned char auth_key[32];
+    unsigned char digest[32];
+    if (!config_secret_digest(field, nonce, "auth", version, bind_identity, auth_key)) {
+        return false;
+    }
+
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    bool ok = mbedtls_sha256_starts_ret(&ctx, 0) == 0;
+    if (ok) {
+        ok = mbedtls_sha256_update_ret(&ctx, auth_key, sizeof(auth_key)) == 0;
+    }
+    if (ok) {
+        sha256_update_u64(&ctx, nonce);
+        sha256_update_string(&ctx, field);
+        ok = mbedtls_sha256_update_ret(&ctx, cipher, cipher_len) == 0;
+    }
+    if (ok) {
+        ok = mbedtls_sha256_finish_ret(&ctx, digest) == 0;
+    }
+    mbedtls_sha256_free(&ctx);
+
+    if (ok) {
+        memcpy(tag, digest, 16);
+    }
+    memset(auth_key, 0, sizeof(auth_key));
+    memset(digest, 0, sizeof(digest));
+    return ok;
+}
+
+static bool config_secret_crypt(const char *field, u64 nonce, const unsigned char *in, unsigned char *out, size_t len, int version, bool bind_identity)
+{
+    unsigned char key[32];
+    unsigned char iv_digest[32];
+    unsigned char nonce_counter[16];
+    unsigned char stream_block[16];
+    size_t nc_off = 0;
+
+    if (!config_secret_digest(field, nonce, "aes-key", version, bind_identity, key) ||
+        !config_secret_digest(field, nonce, "aes-ctr", version, bind_identity, iv_digest)) {
+        memset(key, 0, sizeof(key));
+        memset(iv_digest, 0, sizeof(iv_digest));
+        return false;
+    }
+    memcpy(nonce_counter, iv_digest, sizeof(nonce_counter));
+    memset(stream_block, 0, sizeof(stream_block));
+
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    bool ok = mbedtls_aes_setkey_enc(&aes, key, 256) == 0 &&
+              mbedtls_aes_crypt_ctr(&aes, len, &nc_off, nonce_counter, stream_block, in, out) == 0;
+    mbedtls_aes_free(&aes);
+
+    memset(key, 0, sizeof(key));
+    memset(iv_digest, 0, sizeof(iv_digest));
+    memset(nonce_counter, 0, sizeof(nonce_counter));
+    memset(stream_block, 0, sizeof(stream_block));
+    return ok;
+}
+
+static bool config_encrypt_secret(const char *field, const char *plain, char *out, size_t outsz)
+{
+    if (!out || outsz == 0) {
+        return false;
+    }
+    out[0] = 0;
+    if (!plain || !plain[0]) {
+        return true;
+    }
+
+    size_t len = strlen(plain);
+    if (len > 255 || outsz < 4 + 16 + 1 + 32 + 1 + len * 2 + 1) {
+        return false;
+    }
+
+    unsigned char cipher[256];
+    unsigned char tag[16];
+    int version = 2;
+    bool bind_identity = false;
+    u64 nonce = config_secret_nonce(field, plain, version, bind_identity);
+    if (!config_secret_crypt(field, nonce, (const unsigned char *)plain, cipher, len, version, bind_identity) ||
+        !config_secret_tag(field, nonce, cipher, len, version, bind_identity, tag)) {
+        memset(cipher, 0, sizeof(cipher));
+        return false;
+    }
+
+    int prefix = snprintf(out, outsz, "v%d:%016" PRIX64 ":", version, (uint64_t)nonce);
+    if (prefix < 0 || (size_t)prefix >= outsz) {
+        memset(cipher, 0, sizeof(cipher));
+        return false;
+    }
+    size_t w = (size_t)prefix;
+    bool ok = hex_write_bytes(tag, sizeof(tag), out, outsz, &w) &&
+              append_char(out, outsz, &w, ':') &&
+              hex_write_bytes(cipher, len, out, outsz, &w);
+
+    memset(cipher, 0, sizeof(cipher));
+    memset(tag, 0, sizeof(tag));
+    return ok;
+}
+
+static bool config_decrypt_secret(const char *field, const char *enc, char *out, size_t outsz)
+{
+    if (!out || outsz == 0) {
+        return false;
+    }
+    out[0] = 0;
+    if (!enc || !enc[0]) {
+        return true;
+    }
+    int version = 0;
+    bool bind_identity = false;
+    if (strncmp(enc, "v1:", 3) == 0) {
+        version = 1;
+        bind_identity = true;
+    } else if (strncmp(enc, "v2:", 3) == 0) {
+        version = 2;
+        bind_identity = false;
+    } else {
+        return false;
+    }
+
+    const char *nonce_hex = enc + 3;
+    const char *tag_hex = nonce_hex + 16;
+    if (*tag_hex != ':') {
+        return false;
+    }
+    tag_hex++;
+    const char *cipher_hex = tag_hex + 32;
+    if (*cipher_hex != ':') {
+        return false;
+    }
+    cipher_hex++;
+
+    size_t cipher_hex_len = strlen(cipher_hex);
+    if ((cipher_hex_len & 1) != 0) {
+        return false;
+    }
+    size_t len = cipher_hex_len / 2;
+    if (len >= outsz || len > 255) {
+        return false;
+    }
+
+    u64 nonce = 0;
+    unsigned char expected_tag[16];
+    unsigned char actual_tag[16];
+    unsigned char cipher[256];
+    unsigned char plain[256];
+    if (!hex_read_u64_fixed(nonce_hex, 16, &nonce) ||
+        !hex_read_bytes(tag_hex, expected_tag, sizeof(expected_tag)) ||
+        !hex_read_bytes(cipher_hex, cipher, len) ||
+        !config_secret_tag(field, nonce, cipher, len, version, bind_identity, actual_tag)) {
+        return false;
+    }
+
+    bool ok = memcmp(expected_tag, actual_tag, sizeof(expected_tag)) == 0 &&
+              config_secret_crypt(field, nonce, cipher, plain, len, version, bind_identity);
+    if (ok) {
+        memcpy(out, plain, len);
+        out[len] = 0;
+    }
+
+    memset(expected_tag, 0, sizeof(expected_tag));
+    memset(actual_tag, 0, sizeof(actual_tag));
+    memset(cipher, 0, sizeof(cipher));
+    memset(plain, 0, sizeof(plain));
+    return ok;
+}
+
+static void save_config_secret(FILE *f, const char *key, const char *field, const char *value)
+{
+    char enc[512];
+    if (value && value[0] && config_encrypt_secret(field, value, enc, sizeof(enc))) {
+        fprintf(f, "%s_enc=%s\n", key, enc);
+    } else {
+        fprintf(f, "%s_enc=\n", key);
+    }
+}
+
 static void ensure_defaults(void)
 {
     if (!g_cfg.server[0]) {
@@ -392,8 +706,8 @@ static void save_config(void)
 
     fprintf(f, "server=%s\n", g_cfg.server);
     fprintf(f, "username=%s\n", g_cfg.username);
-    fprintf(f, "password=%s\n", g_cfg.password);
-    fprintf(f, "token=%s\n", g_cfg.token);
+    save_config_secret(f, "password", "password", g_cfg.password);
+    save_config_secret(f, "token", "token", g_cfg.token);
     fprintf(f, "user_id=%s\n", g_cfg.user_id);
     fprintf(f, "device_id=%s\n", g_cfg.device_id);
     fprintf(f, "quality=%d\n", g_cfg.quality);
@@ -411,7 +725,9 @@ static void load_config(void)
         return;
     }
 
-    char line[384];
+    char password_enc[512] = "";
+    char token_enc[512] = "";
+    char line[768];
     while (fgets(line, sizeof(line), f)) {
         trim_newline(line);
         char *eq = strchr(line, '=');
@@ -425,8 +741,12 @@ static void load_config(void)
             copy_safe(g_cfg.username, sizeof(g_cfg.username), eq);
         } else if (strcmp(line, "password") == 0) {
             copy_safe(g_cfg.password, sizeof(g_cfg.password), eq);
+        } else if (strcmp(line, "password_enc") == 0) {
+            copy_safe(password_enc, sizeof(password_enc), eq);
         } else if (strcmp(line, "token") == 0) {
             copy_safe(g_cfg.token, sizeof(g_cfg.token), eq);
+        } else if (strcmp(line, "token_enc") == 0) {
+            copy_safe(token_enc, sizeof(token_enc), eq);
         } else if (strcmp(line, "user_id") == 0) {
             copy_safe(g_cfg.user_id, sizeof(g_cfg.user_id), eq);
         } else if (strcmp(line, "device_id") == 0) {
@@ -439,6 +759,25 @@ static void load_config(void)
     }
     fclose(f);
     ensure_defaults();
+
+    char decrypted[192];
+    bool decrypt_failed = false;
+    if (password_enc[0] && config_decrypt_secret("password", password_enc, decrypted, sizeof(g_cfg.password))) {
+        copy_safe(g_cfg.password, sizeof(g_cfg.password), decrypted);
+    } else if (password_enc[0]) {
+        decrypt_failed = true;
+    }
+    if (token_enc[0] && config_decrypt_secret("token", token_enc, decrypted, sizeof(g_cfg.token))) {
+        copy_safe(g_cfg.token, sizeof(g_cfg.token), decrypted);
+    } else if (token_enc[0]) {
+        decrypt_failed = true;
+        g_cfg.token[0] = 0;
+        g_cfg.user_id[0] = 0;
+    }
+    memset(decrypted, 0, sizeof(decrypted));
+    if (decrypt_failed) {
+        set_status("Saved credentials could not be decrypted. Re-enter password.");
+    }
 }
 
 static void json_escape(const char *in, char *out, size_t outsz)
@@ -717,4 +1056,3 @@ static bool json_get_object_range(const char *start, const char *end, const char
     }
     return json_object_range_after(p, end, obj_start, obj_end);
 }
-
