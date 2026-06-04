@@ -67,6 +67,24 @@ typedef struct {
     bool paused;
 } MjpegPlayer;
 
+typedef struct {
+    httpcContext *context;
+    Thread thread;
+    LightLock lock;
+    CondVar can_read;
+    CondVar can_write;
+    u8 *storage;
+    u8 *buffers[STREAM_READER_BUFFER_COUNT];
+    u32 sizes[STREAM_READER_BUFFER_COUNT];
+    int read_index;
+    int write_index;
+    int count;
+    volatile bool stop;
+    bool finished;
+    bool started;
+    Result terminal_result;
+} StreamReader;
+
 static int min_int(int a, int b)
 {
     return a < b ? a : b;
@@ -541,6 +559,15 @@ static void fb_stroke_rect(u16 *fb, int x, int y, int w, int h, u16 color)
     fb_fill_rect(fb, x + w - 1, y, 1, h, color);
 }
 
+static void flush_top_video_frame(u16 *fb)
+{
+    if (fb) {
+        GSPGPU_FlushDataCache(fb, 400 * 240 * sizeof(u16));
+    }
+    gfxSwapBuffersGpu();
+    gspWaitForVBlank();
+}
+
 static void draw_quality_osd(const MjpegPlayer *player, u16 *fb);
 static void draw_seek_osd(u16 *fb);
 static void draw_remote_message_osd(u16 *fb);
@@ -660,9 +687,7 @@ static void draw_rgb565_frame(MjpegPlayer *player, const u16 *pixels, int img_w,
         draw_quality_osd(player, fb);
         draw_seek_osd(fb);
         draw_remote_message_osd(fb);
-        gfxFlushBuffers();
-        gfxSwapBuffersGpu();
-        gspWaitForVBlank();
+        flush_top_video_frame(fb);
         return;
     }
 
@@ -685,9 +710,7 @@ static void draw_rgb565_frame(MjpegPlayer *player, const u16 *pixels, int img_w,
     draw_quality_osd(player, fb);
     draw_seek_osd(fb);
     draw_remote_message_osd(fb);
-    gfxFlushBuffers();
-    gfxSwapBuffersGpu();
-    gspWaitForVBlank();
+    flush_top_video_frame(fb);
 }
 
 static void mjpeg_redraw_last_frame(MjpegPlayer *player)
@@ -2415,6 +2438,685 @@ static bool open_mjpeg_stream_with_retries(httpcContext *context, char *url, siz
     return false;
 }
 
+static int stream_reader_priority(void)
+{
+    s32 prio = 0x30;
+    svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
+    prio -= 1;
+    return clamp_int(prio, 0x18, 0x3F);
+}
+
+static void stream_reader_thread(void *arg)
+{
+    StreamReader *reader = (StreamReader *)arg;
+    if (!reader || !reader->context) {
+        threadExit(1);
+    }
+
+    for (;;) {
+        LightLock_Lock(&reader->lock);
+        while (!reader->stop && reader->count >= STREAM_READER_BUFFER_COUNT) {
+            CondVar_Wait(&reader->can_write, &reader->lock);
+        }
+        if (reader->stop) {
+            reader->finished = true;
+            CondVar_Broadcast(&reader->can_read);
+            LightLock_Unlock(&reader->lock);
+            break;
+        }
+        int slot = reader->write_index;
+        LightLock_Unlock(&reader->lock);
+
+        u32 read_size = 0;
+        Result ret = stream_receive_chunk(reader->context, reader->buffers[slot], MJPEG_READ_SIZE, &read_size);
+
+        if (read_size > 0) {
+            LightLock_Lock(&reader->lock);
+            if (!reader->stop && reader->count < STREAM_READER_BUFFER_COUNT) {
+                reader->sizes[slot] = read_size;
+                reader->write_index = (reader->write_index + 1) % STREAM_READER_BUFFER_COUNT;
+                reader->count++;
+                CondVar_Signal(&reader->can_read);
+            }
+            LightLock_Unlock(&reader->lock);
+        }
+
+        if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING || ret == (s32)HTTPC_RESULTCODE_TIMEDOUT) {
+            continue;
+        }
+
+        if (R_FAILED(ret) || read_size == 0) {
+            LightLock_Lock(&reader->lock);
+            reader->terminal_result = ret;
+            reader->finished = true;
+            CondVar_Broadcast(&reader->can_read);
+            LightLock_Unlock(&reader->lock);
+            break;
+        }
+    }
+
+    threadExit(0);
+}
+
+static void stream_reader_free_buffers(StreamReader *reader)
+{
+    if (!reader) {
+        return;
+    }
+    bool had_storage = reader->storage != NULL;
+    if (reader->storage) {
+        free(reader->storage);
+        reader->storage = NULL;
+    }
+    for (int i = 0; i < STREAM_READER_BUFFER_COUNT; i++) {
+        if (reader->buffers[i] && !had_storage) {
+            free(reader->buffers[i]);
+        }
+        reader->buffers[i] = NULL;
+    }
+}
+
+static bool stream_reader_start_on_core(StreamReader *reader, int core_id)
+{
+    reader->thread = threadCreate(stream_reader_thread, reader,
+                                  STREAM_READER_STACK_SIZE,
+                                  stream_reader_priority(), core_id, false);
+    if (!reader->thread) {
+        return false;
+    }
+    reader->started = true;
+    return true;
+}
+
+static bool stream_reader_start(StreamReader *reader, httpcContext *context)
+{
+    if (!reader || !context) {
+        return false;
+    }
+
+    memset(reader, 0, sizeof(*reader));
+    reader->context = context;
+    reader->terminal_result = (s32)HTTPC_RESULTCODE_DOWNLOADPENDING;
+    LightLock_Init(&reader->lock);
+    CondVar_Init(&reader->can_read);
+    CondVar_Init(&reader->can_write);
+
+    size_t storage_size = (size_t)STREAM_READER_BUFFER_COUNT * MJPEG_READ_SIZE;
+    reader->storage = (u8 *)malloc(storage_size);
+    if (!reader->storage) {
+        stream_reader_free_buffers(reader);
+        return false;
+    }
+    for (int i = 0; i < STREAM_READER_BUFFER_COUNT; i++) {
+        reader->buffers[i] = reader->storage + (size_t)i * MJPEG_READ_SIZE;
+    }
+
+    if (g_core1_reader_available && stream_reader_start_on_core(reader, 1)) {
+        return true;
+    }
+    if (stream_reader_start_on_core(reader, -2)) {
+        return true;
+    }
+
+    stream_reader_free_buffers(reader);
+    return false;
+}
+
+static Result stream_reader_pop(StreamReader *reader, u8 *out, u32 out_cap, u32 *read_size)
+{
+    if (read_size) {
+        *read_size = 0;
+    }
+    if (!reader || !out || out_cap == 0) {
+        return (s32)HTTPC_RESULTCODE_TIMEDOUT;
+    }
+
+    LightLock_Lock(&reader->lock);
+    if (reader->count <= 0) {
+        Result ret = reader->finished ? reader->terminal_result : (s32)HTTPC_RESULTCODE_TIMEDOUT;
+        LightLock_Unlock(&reader->lock);
+        return ret;
+    }
+
+    int slot = reader->read_index;
+    u32 size = reader->sizes[slot];
+    if (size > out_cap) {
+        size = out_cap;
+    }
+    memcpy(out, reader->buffers[slot], size);
+    reader->read_index = (reader->read_index + 1) % STREAM_READER_BUFFER_COUNT;
+    reader->count--;
+    CondVar_Signal(&reader->can_write);
+    LightLock_Unlock(&reader->lock);
+
+    if (read_size) {
+        *read_size = size;
+    }
+    return (s32)HTTPC_RESULTCODE_DOWNLOADPENDING;
+}
+
+static int stream_reader_buffered_chunks(StreamReader *reader)
+{
+    if (!reader || !reader->started) {
+        return 0;
+    }
+
+    LightLock_Lock(&reader->lock);
+    int count = reader->count;
+    LightLock_Unlock(&reader->lock);
+    return count;
+}
+
+static void stream_reader_prebuffer(StreamReader *reader)
+{
+    if (!reader || !reader->started) {
+        return;
+    }
+
+    u64 start_ms = osGetTime();
+    while (app_keep_running() &&
+           stream_reader_buffered_chunks(reader) < STREAM_READER_PREBUFFER_CHUNKS &&
+           osGetTime() - start_ms < STREAM_READER_PREBUFFER_MS) {
+        svcSleepThread(5000000ULL);
+    }
+}
+
+static void stream_reader_stop(StreamReader *reader)
+{
+    if (!reader) {
+        return;
+    }
+
+    if (reader->started) {
+        LightLock_Lock(&reader->lock);
+        reader->stop = true;
+        CondVar_Broadcast(&reader->can_read);
+        CondVar_Broadcast(&reader->can_write);
+        LightLock_Unlock(&reader->lock);
+
+        threadJoin(reader->thread, U64_MAX);
+        threadFree(reader->thread);
+        reader->thread = NULL;
+        reader->started = false;
+    }
+    stream_reader_free_buffers(reader);
+}
+
+static u16 mpeg1_ycbcr_to_rgb565(int y, int cb, int cr)
+{
+    int c = y - 16;
+    int d = cb - 128;
+    int e = cr - 128;
+    if (c < 0) {
+        c = 0;
+    }
+
+    int r = (298 * c + 409 * e + 128) >> 8;
+    int g = (298 * c - 100 * d - 208 * e + 128) >> 8;
+    int b = (298 * c + 516 * d + 128) >> 8;
+    r = clamp_int(r, 0, 255);
+    g = clamp_int(g, 0, 255);
+    b = clamp_int(b, 0, 255);
+    return rgb565_from_rgb((u8)r, (u8)g, (u8)b);
+}
+
+static void draw_mpeg1_frame_rgb565(MjpegPlayer *player, const plm_frame_t *frame)
+{
+    if (!frame || !frame->y.data || !frame->cb.data || !frame->cr.data ||
+        frame->width == 0 || frame->height == 0) {
+        return;
+    }
+
+    u16 *fb = (u16 *)gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
+    if (!fb) {
+        return;
+    }
+
+    int img_w = (int)frame->width;
+    int img_h = (int)frame->height;
+    int dst_w = 400;
+    int dst_h = (img_h * dst_w) / img_w;
+    if (dst_h > 240) {
+        dst_h = 240;
+        dst_w = (img_w * dst_h) / img_h;
+    }
+    if (dst_w < 1) {
+        dst_w = 1;
+    }
+    if (dst_h < 1) {
+        dst_h = 1;
+    }
+
+    int x0 = (400 - dst_w) / 2;
+    int y0 = (240 - dst_h) / 2;
+    if (dst_w < 400 || dst_h < 240) {
+        clear_top_rgb565(0);
+    }
+
+    mjpeg_prepare_scale_maps(player, img_w, img_h, dst_w, dst_h);
+    const u16 *x_map = player ? player->scale_x : NULL;
+    const u16 *y_map = player ? player->scale_y : NULL;
+
+    for (int y = 0; y < dst_h; y++) {
+        int sy = y_map ? y_map[y] : (y * img_h) / dst_h;
+        if (sy >= img_h) {
+            sy = img_h - 1;
+        }
+        int cy = sy >> 1;
+        if (cy >= (int)frame->cb.height) {
+            cy = (int)frame->cb.height - 1;
+        }
+        const u8 *y_row = frame->y.data + (size_t)sy * frame->y.width;
+        const u8 *cb_row = frame->cb.data + (size_t)cy * frame->cb.width;
+        const u8 *cr_row = frame->cr.data + (size_t)cy * frame->cr.width;
+        int screen_y = y0 + y;
+
+        for (int x = 0; x < dst_w; x++) {
+            int sx = x_map ? x_map[x] : (x * img_w) / dst_w;
+            if (sx >= img_w) {
+                sx = img_w - 1;
+            }
+            int cx = sx >> 1;
+            if (cx >= (int)frame->cb.width) {
+                cx = (int)frame->cb.width - 1;
+            }
+            int screen_x = x0 + x;
+            fb[screen_x * 240 + (239 - screen_y)] =
+                mpeg1_ycbcr_to_rgb565(y_row[sx], cb_row[cx], cr_row[cx]);
+        }
+    }
+
+    if (player) {
+        player->last_width = img_w;
+        player->last_height = img_h;
+    }
+    draw_volume_osd(player, fb);
+    draw_quality_osd(player, fb);
+    draw_seek_osd(fb);
+    draw_remote_message_osd(fb);
+    flush_top_video_frame(fb);
+}
+
+static void audio_queue_plm_samples(AudioPlayer *audio, const plm_samples_t *samples)
+{
+    if (!audio || !audio->ndsp_open || audio->failed || audio->muted || !samples) {
+        return;
+    }
+
+    int volume = clamp_int(audio->volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
+    for (unsigned i = 0; i < samples->count; i++) {
+        float left = samples->interleaved[i * 2];
+        float right = samples->interleaved[i * 2 + 1];
+        float mixed = (left + right) * 0.5f;
+        if (mixed > 1.0f) {
+            mixed = 1.0f;
+        } else if (mixed < -1.0f) {
+            mixed = -1.0f;
+        }
+
+        int sample = (int)(mixed * 32767.0f);
+        int boosted = (sample * volume) / 100;
+        s16 out = volume > 100 ? audio_limit_sample(boosted) : clamp_s16(boosted);
+
+        if (audio->pcm_staging_size + 2 > AUDIO_PCM_BUFFER_BYTES) {
+            if (!audio_submit_staging(audio)) {
+                return;
+            }
+        }
+        audio->pcm_staging[audio->pcm_staging_size++] = (u8)(out & 0xFF);
+        audio->pcm_staging[audio->pcm_staging_size++] = (u8)((out >> 8) & 0xFF);
+        if (audio->pcm_staging_size >= AUDIO_PCM_BUFFER_BYTES) {
+            audio_submit_staging(audio);
+        }
+    }
+}
+
+static bool mpeg1_decode_audio_until_ready(plm_t *plm, AudioPlayer *audio, int max_frames)
+{
+    if (!plm || !audio_can_control(audio)) {
+        return false;
+    }
+
+    bool decoded = false;
+    for (int i = 0; i < max_frames; i++) {
+        if (audio_queued_wavebufs(audio) >= AUDIO_TARGET_QUEUED_WAVEBUFS) {
+            break;
+        }
+        plm_samples_t *samples = plm_decode_audio(plm);
+        if (!samples) {
+            break;
+        }
+        audio_queue_plm_samples(audio, samples);
+        audio_refill(audio);
+        audio_protect_queue(audio);
+        decoded = true;
+    }
+    return decoded;
+}
+
+static void mpeg1_apply_audio_rate(plm_t *plm, AudioPlayer *audio)
+{
+    if (!plm || !audio || !audio->ndsp_open) {
+        return;
+    }
+
+    int rate = plm_get_samplerate(plm);
+    if (rate >= 8000 && rate <= 48000) {
+        audio->sample_rate = (u32)rate;
+        ndspChnSetRate(0, (float)rate);
+    }
+}
+
+static void mpeg1_seek_restart(MjpegPlayer *player, int seconds)
+{
+    u64 current = mjpeg_current_ticks(player);
+    u64 delta = (u64)(seconds < 0 ? -seconds : seconds) * TICKS_PER_SECOND;
+    if (seconds < 0) {
+        g_mjpeg_resume_ticks = current > delta ? current - delta : 0;
+    } else {
+        g_mjpeg_resume_ticks = clamp_media_ticks(current + delta);
+    }
+    g_seek_osd_target_ticks = g_mjpeg_resume_ticks;
+    g_seek_osd_delta_seconds = seconds;
+    g_seek_osd_pending = true;
+    seek_show_osd();
+}
+
+static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_ticks)
+{
+    if (!url || !url[0]) {
+        set_play_status("No MPEG-1 playback URL.");
+        return MJPEG_PLAY_FAILED;
+    }
+
+    bool reuse_graphics = g_playback_restart_in_progress;
+    if (reuse_graphics) {
+        g_playback_restart_in_progress = false;
+    } else {
+        ui_graphics_exit();
+        gfxInit(GSP_RGB565_OES, GSP_BGR8_OES, false);
+        clear_top_rgb565(0);
+        gfxFlushBuffers();
+        gfxSwapBuffersGpu();
+    }
+
+    MjpegPlayer player;
+    memset(&player, 0, sizeof(player));
+    player.target_fps = (u32)mjpeg_target_fps();
+    player.target_bitrate = (u32)quality_profile().video_bitrate;
+    player.start_time_ticks = clamp_media_ticks(start_time_ticks);
+    player.position_ticks = player.start_time_ticks;
+    player.frame_interval_ns = 1000000000ULL / (player.target_fps ? player.target_fps : 1);
+    player.avi_mode = false;
+
+    mjpeg_console(&player, "Opening Jellyfin MPEG-1 stream...");
+
+    httpcContext context;
+    char active_url[STREAM_URL_CAP];
+    copy_safe(active_url, sizeof(active_url), url);
+    u32 status = HTTP_STATUS_NONE;
+    Result ret = open_stream_context(&context, active_url, &status);
+    if (R_FAILED(ret)) {
+        set_mjpeg_open_failure_status("MPEG-1 stream failed", ret, status);
+        mjpeg_console(&player, g_play_status);
+        app_wait_or_exit(1500000000ULL);
+        playback_graphics_exit();
+        return MJPEG_PLAY_FAILED;
+    }
+
+    AudioPlayer audio;
+    memset(&audio, 0, sizeof(audio));
+    player.audio = &audio;
+    if (!audio_start(&audio, NULL)) {
+        set_play_status("MPEG-1 audio init failed; video only.");
+    } else {
+        audio_show_volume_osd(&audio);
+    }
+
+    StreamReader reader;
+    bool reader_active = stream_reader_start(&reader, &context);
+    if (reader_active) {
+        set_play_status("Buffering stream...");
+        mjpeg_console(&player, g_play_status);
+        stream_reader_prebuffer(&reader);
+    }
+    u8 *chunk = (u8 *)malloc(MJPEG_READ_SIZE);
+    plm_buffer_t *mpeg_buffer = plm_buffer_create_with_capacity(MPEG1_STREAM_BUFFER_CAP);
+    plm_t *plm = mpeg_buffer ? plm_create_with_buffer(mpeg_buffer, true) : NULL;
+    MjpegPlayResult result = MJPEG_PLAY_FAILED;
+    bool mpeg_end_signaled = false;
+    bool headers_ready = false;
+    bool remote_started = false;
+
+    if (!chunk || !plm) {
+        set_play_status("Not enough memory for MPEG-1 playback.");
+    } else {
+        plm_set_video_enabled(plm, true);
+        plm_set_audio_enabled(plm, true);
+
+        if (remote_control_start()) {
+            remote_started = true;
+            g_session_capabilities_reported = false;
+        }
+        report_playback_start(player.position_ticks, player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+
+        if (g_quality_osd_pending) {
+            quality_show_osd();
+            g_quality_osd_pending = false;
+        }
+        if (g_seek_osd_pending) {
+            seek_show_osd();
+            g_seek_osd_pending = false;
+        }
+
+        set_play_status("Buffering MPEG-1 test stream.");
+        player.position_clock_ns = monotonic_ns();
+        mjpeg_console(&player, g_play_status);
+
+        bool paused_osd_was_visible = false;
+        int no_frame_loops = 0;
+        while (app_keep_running()) {
+            hidScanInput();
+            u32 down = hidKeysDown();
+            if (down & KEY_START) {
+                g_exit_requested = true;
+                set_play_status("Playback stopped.");
+                break;
+            }
+            if (down & KEY_B) {
+                set_play_status("Playback stopped.");
+                result = MJPEG_PLAY_OK;
+                break;
+            }
+            if (down & KEY_A) {
+                mjpeg_set_paused(&player, !player.paused);
+                report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+                if (!player.paused) {
+                    paused_osd_was_visible = false;
+                }
+            }
+            if (down & KEY_UP) {
+                audio_change_volume(&audio, VOLUME_STEP_PERCENT);
+                report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+                if (player.paused) {
+                    mjpeg_redraw_last_frame(&player);
+                    paused_osd_was_visible = audio_volume_osd_visible(&audio);
+                }
+            }
+            if (down & KEY_DOWN) {
+                audio_change_volume(&audio, -VOLUME_STEP_PERCENT);
+                report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+                if (player.paused) {
+                    mjpeg_redraw_last_frame(&player);
+                    paused_osd_was_visible = audio_volume_osd_visible(&audio);
+                }
+            }
+            if (down & KEY_Y) {
+                audio_toggle_mute(&audio);
+                report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+                if (player.paused) {
+                    mjpeg_redraw_last_frame(&player);
+                    paused_osd_was_visible = audio_volume_osd_visible(&audio);
+                }
+                mjpeg_console(&player, g_play_status);
+            }
+            if (down & KEY_L) {
+                mpeg1_seek_restart(&player, -SEEK_STEP_SECONDS);
+                report_playback_progress(g_mjpeg_resume_ticks, true, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+                result = MJPEG_PLAY_RESTART;
+                break;
+            }
+            if (down & KEY_R) {
+                mpeg1_seek_restart(&player, SEEK_STEP_SECONDS);
+                report_playback_progress(g_mjpeg_resume_ticks, true, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+                result = MJPEG_PLAY_RESTART;
+                break;
+            }
+            if (down & KEY_DLEFT) {
+                g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+                report_playback_progress(g_mjpeg_resume_ticks, player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+                change_quality(-1);
+                g_stream_switch_serial++;
+                quality_show_osd();
+                g_quality_osd_pending = true;
+                result = MJPEG_PLAY_RESTART;
+                break;
+            }
+            if (down & KEY_DRIGHT) {
+                g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+                report_playback_progress(g_mjpeg_resume_ticks, player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+                change_quality(1);
+                g_stream_switch_serial++;
+                quality_show_osd();
+                g_quality_osd_pending = true;
+                result = MJPEG_PLAY_RESTART;
+                break;
+            }
+
+            RemoteCommand remote_cmd;
+            if (remote_control_poll(&remote_cmd)) {
+                if (mjpeg_apply_remote_command(&player, &audio, &remote_cmd, &result)) {
+                    break;
+                }
+            }
+
+            report_playback_progress_periodic(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+
+            u32 read_size = 0;
+            ret = reader_active ? stream_reader_pop(&reader, chunk, MJPEG_READ_SIZE, &read_size)
+                                : stream_receive_chunk(&context, chunk, MJPEG_READ_SIZE, &read_size);
+            if (read_size) {
+                plm_buffer_write(mpeg_buffer, chunk, read_size);
+            }
+            if (!mpeg_end_signaled && ret != (s32)HTTPC_RESULTCODE_DOWNLOADPENDING && ret != (s32)HTTPC_RESULTCODE_TIMEDOUT) {
+                if (R_FAILED(ret)) {
+                    if (player.frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES) {
+                        g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+                        g_stream_switch_serial++;
+                        set_play_status("MPEG-1 stream interrupted; reconnecting.");
+                        result = MJPEG_PLAY_RESTART;
+                    } else {
+                        set_play_status("MPEG-1 read failed: 0x%08lX.", (unsigned long)ret);
+                    }
+                    break;
+                }
+                plm_buffer_signal_end(mpeg_buffer);
+                mpeg_end_signaled = true;
+            }
+
+            if (!headers_ready) {
+                headers_ready = plm_has_headers(plm);
+                if (headers_ready) {
+                    mpeg1_apply_audio_rate(plm, &audio);
+                    set_play_status("Playing MPEG-1 test.");
+                    mjpeg_console(&player, g_play_status);
+                } else {
+                    if (!read_size && reader_active) {
+                        svcSleepThread(STREAM_READER_EMPTY_SLEEP_NS);
+                    }
+                    continue;
+                }
+            }
+
+            if (player.paused) {
+                bool osd_visible = audio_volume_osd_visible(&audio) || seek_osd_visible() || quality_osd_visible();
+                if (osd_visible || paused_osd_was_visible) {
+                    mjpeg_redraw_last_frame(&player);
+                    paused_osd_was_visible = osd_visible;
+                }
+                svcSleepThread(50000000ULL);
+                continue;
+            }
+
+            mpeg1_decode_audio_until_ready(plm, &audio, 3);
+            audio_refill(player.audio);
+
+            plm_frame_t *frame = plm_decode_video(plm);
+            if (frame) {
+                no_frame_loops = 0;
+                mjpeg_pace_frame(&player);
+                draw_mpeg1_frame_rgb565(&player, frame);
+                player.frame_count++;
+                continue;
+            }
+
+            if (plm_has_ended(plm)) {
+                set_play_status("MPEG-1 reached end of stream.");
+                result = MJPEG_PLAY_OK;
+                break;
+            }
+
+            no_frame_loops++;
+            if (!read_size && reader_active) {
+                svcSleepThread(STREAM_READER_EMPTY_SLEEP_NS);
+            } else if (no_frame_loops > 20) {
+                svcSleepThread(5000000ULL);
+            }
+        }
+    }
+
+    if (result != MJPEG_PLAY_RESTART) {
+        g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+        report_playback_stopped(g_mjpeg_resume_ticks);
+    }
+    if (!app_system_closing() && remote_started && result != MJPEG_PLAY_RESTART) {
+        remote_control_stop();
+    }
+    if (g_volume_save_pending && !app_system_closing()) {
+        save_config();
+        g_volume_save_pending = false;
+    }
+    if (plm) {
+        plm_destroy(plm);
+    } else if (mpeg_buffer) {
+        plm_buffer_destroy(mpeg_buffer);
+    }
+    if (reader_active) {
+        stream_reader_stop(&reader);
+    }
+    if (chunk) {
+        free(chunk);
+    }
+    if (!app_system_closing()) {
+        audio_stop(&audio);
+        httpcCancelConnection(&context);
+        httpcCloseContext(&context);
+    }
+    if (!app_system_closing() && result == MJPEG_PLAY_RESTART) {
+        stop_active_encoding();
+        svcSleepThread(120000000ULL);
+    }
+    if (!app_system_closing() && result != MJPEG_PLAY_RESTART) {
+        mjpeg_console(&player, g_play_status);
+    }
+    if (!g_exit_requested && result != MJPEG_PLAY_RESTART) {
+        app_wait_or_exit(700000000ULL);
+    }
+    g_playback_restart_in_progress = result == MJPEG_PLAY_RESTART;
+    playback_graphics_exit();
+    return result;
+}
+
 static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container, u64 start_time_ticks)
 {
     if (!url || !url[0]) {
@@ -2496,6 +3198,13 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     if (!chunk) {
         set_play_status("Could not allocate MJPEG read buffer.");
     } else {
+        StreamReader reader;
+        bool reader_active = stream_reader_start(&reader, &context);
+        if (reader_active) {
+            set_play_status("Buffering stream...");
+            mjpeg_console(&player, g_play_status);
+            stream_reader_prebuffer(&reader);
+        }
         if (g_quality_osd_pending) {
             quality_show_osd();
             g_quality_osd_pending = false;
@@ -2663,7 +3372,11 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
 
             audio_refill(player.audio);
             u32 read_size = 0;
-            ret = stream_receive_chunk(&context, chunk, MJPEG_READ_SIZE, &read_size);
+            if (reader_active) {
+                ret = stream_reader_pop(&reader, chunk, MJPEG_READ_SIZE, &read_size);
+            } else {
+                ret = stream_receive_chunk(&context, chunk, MJPEG_READ_SIZE, &read_size);
+            }
             if (read_size) {
                 bool fed = avi_container ? feed_avi_mjpeg_bytes(&player, chunk, read_size)
                                          : feed_mjpeg_bytes(&player, chunk, read_size);
@@ -2672,6 +3385,9 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 }
             }
             if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING || ret == (s32)HTTPC_RESULTCODE_TIMEDOUT) {
+                if (!read_size && reader_active) {
+                    svcSleepThread(STREAM_READER_EMPTY_SLEEP_NS);
+                }
                 continue;
             }
             if (R_FAILED(ret)) {
@@ -2690,6 +3406,9 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             set_play_status("MJPEG reached end of stream.");
             result = MJPEG_PLAY_OK;
             break;
+        }
+        if (reader_active) {
+            stream_reader_stop(&reader);
         }
         free(chunk);
     }
@@ -2759,8 +3478,39 @@ static bool play_current_item_video(void)
         set_play_status("Old3DS detected: using MJPEG software playback.");
     }
 
-    char mjpeg_url[STREAM_URL_CAP];
     u64 start_ticks = 0;
+    if (g_cfg.quality == 242) {
+        char mpeg_url[STREAM_URL_CAP];
+        for (int alias = 0; alias < 2; alias++) {
+            build_mpeg1_stream_url(&g_current, mpeg_url, sizeof(mpeg_url), start_ticks, alias != 0);
+            copy_safe(g_play_url, sizeof(g_play_url), mpeg_url);
+            copy_safe(g_play_method, sizeof(g_play_method), alias ? "mpeg1-mp2-mpg-test" : "mpeg1-mp2-test");
+            set_play_status(alias ? "Trying MPEG-1 mpg alias..." : "Trying MPEG-1 test stream...");
+            MjpegPlayResult result = play_mpeg1_stream_url(g_play_url, start_ticks);
+            if (result == MJPEG_PLAY_RESTART) {
+                start_ticks = g_mjpeg_resume_ticks;
+                if (!request_playback_info(start_ticks)) {
+                    g_playback_restart_in_progress = false;
+                    playback_graphics_exit();
+                    return false;
+                }
+                if (g_cfg.quality != 242) {
+                    break;
+                }
+                alias = -1;
+                continue;
+            }
+            if (result == MJPEG_PLAY_OK) {
+                return true;
+            }
+            if (g_exit_requested) {
+                return false;
+            }
+        }
+        set_play_status("MPEG-1 test failed; falling back to MJPEG.");
+    }
+
+    char mjpeg_url[STREAM_URL_CAP];
     for (;;) {
         build_mjpeg_stream_url(&g_current, mjpeg_url, sizeof(mjpeg_url), true, start_ticks);
         copy_safe(g_play_url, sizeof(g_play_url), mjpeg_url);

@@ -316,15 +316,6 @@ static Result api_delete(const char *path, HttpResponse *out)
     return http_request_full(HTTPC_METHOD_DELETE, url, NULL, true, out);
 }
 
-static bool api_post_silent(const char *path, const char *body)
-{
-    HttpResponse res;
-    Result ret = api_post(path, body, true, &res);
-    bool ok = R_SUCCEEDED(ret) && res.status >= 200 && res.status < 300;
-    free_response(&res);
-    return ok;
-}
-
 static bool report_session_capabilities(void)
 {
     if (g_session_capabilities_reported || !g_cfg.token[0] || !g_cfg.device_id[0]) {
@@ -361,6 +352,124 @@ static bool report_session_capabilities(void)
 static bool playback_report_ready(void)
 {
     return g_cfg.token[0] && g_current.id[0] && g_play_session[0];
+}
+
+static int playback_report_thread_priority(void)
+{
+    s32 prio = 0x30;
+    svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
+    prio += 4;
+    if (prio < 0x18) {
+        prio = 0x18;
+    }
+    if (prio > 0x3F) {
+        prio = 0x3F;
+    }
+    return prio;
+}
+
+static void playback_report_worker_main(void *arg)
+{
+    (void)arg;
+
+    for (;;) {
+        PlaybackReportMessage msg;
+        memset(&msg, 0, sizeof(msg));
+
+        LightLock_Lock(&g_playback_report_lock);
+        while (!g_playback_report_worker_stop && g_playback_report_queue_count <= 0) {
+            CondVar_Wait(&g_playback_report_cv, &g_playback_report_lock);
+        }
+        if (g_playback_report_worker_stop && g_playback_report_queue_count <= 0) {
+            LightLock_Unlock(&g_playback_report_lock);
+            break;
+        }
+
+        msg = g_playback_report_queue[g_playback_report_queue_read];
+        g_playback_report_queue_read = (g_playback_report_queue_read + 1) % PLAYBACK_REPORT_QUEUE_COUNT;
+        g_playback_report_queue_count--;
+        LightLock_Unlock(&g_playback_report_lock);
+
+        if (msg.path[0] && msg.body[0]) {
+            remote_http_post_json_quick(msg.path, msg.body, PLAYBACK_REPORT_TIMEOUT_MS);
+        }
+    }
+
+    threadExit(0);
+}
+
+static bool playback_report_worker_start(void)
+{
+    if (!g_playback_report_sync_ready) {
+        LightLock_Init(&g_playback_report_lock);
+        CondVar_Init(&g_playback_report_cv);
+        g_playback_report_sync_ready = true;
+    }
+    if (g_playback_report_worker_running) {
+        return true;
+    }
+
+    g_playback_report_worker_stop = false;
+    g_playback_report_queue_read = 0;
+    g_playback_report_queue_write = 0;
+    g_playback_report_queue_count = 0;
+    g_playback_report_thread = threadCreate(playback_report_worker_main, NULL,
+                                            PLAYBACK_REPORT_STACK_SIZE,
+                                            playback_report_thread_priority(),
+                                            -2, false);
+    g_playback_report_worker_running = g_playback_report_thread != NULL;
+    return g_playback_report_worker_running;
+}
+
+static void playback_report_worker_stop(bool drain)
+{
+    if (!g_playback_report_worker_running) {
+        return;
+    }
+
+    if (!drain) {
+        LightLock_Lock(&g_playback_report_lock);
+        g_playback_report_queue_read = 0;
+        g_playback_report_queue_write = 0;
+        g_playback_report_queue_count = 0;
+        LightLock_Unlock(&g_playback_report_lock);
+    }
+
+    LightLock_Lock(&g_playback_report_lock);
+    g_playback_report_worker_stop = true;
+    CondVar_Broadcast(&g_playback_report_cv);
+    LightLock_Unlock(&g_playback_report_lock);
+
+    threadJoin(g_playback_report_thread, U64_MAX);
+    threadFree(g_playback_report_thread);
+    g_playback_report_thread = NULL;
+    g_playback_report_worker_running = false;
+    g_playback_report_worker_stop = false;
+}
+
+static bool queue_playback_report(const char *path, const char *body)
+{
+    if (!path || !body || !path[0] || !body[0]) {
+        return false;
+    }
+    if (!playback_report_worker_start()) {
+        return false;
+    }
+
+    LightLock_Lock(&g_playback_report_lock);
+    if (g_playback_report_queue_count >= PLAYBACK_REPORT_QUEUE_COUNT) {
+        g_playback_report_queue_read = (g_playback_report_queue_read + 1) % PLAYBACK_REPORT_QUEUE_COUNT;
+        g_playback_report_queue_count--;
+    }
+
+    PlaybackReportMessage *msg = &g_playback_report_queue[g_playback_report_queue_write];
+    copy_safe(msg->path, sizeof(msg->path), path);
+    copy_safe(msg->body, sizeof(msg->body), body);
+    g_playback_report_queue_write = (g_playback_report_queue_write + 1) % PLAYBACK_REPORT_QUEUE_COUNT;
+    g_playback_report_queue_count++;
+    CondVar_Signal(&g_playback_report_cv);
+    LightLock_Unlock(&g_playback_report_lock);
+    return true;
 }
 
 static int playback_report_volume_level(int volume_percent, bool muted)
@@ -443,7 +552,7 @@ static bool report_playback_start(u64 position_ticks, bool paused, bool muted, i
     build_playback_state_body(body, sizeof(body), position_ticks, paused, muted, volume_percent);
     g_playback_report_active = true;
     g_playback_last_report_ms = osGetTime();
-    return api_post_silent("/Sessions/Playing", body);
+    return queue_playback_report("/Sessions/Playing", body);
 }
 
 static bool report_playback_progress(u64 position_ticks, bool paused, bool muted, int volume_percent)
@@ -455,7 +564,7 @@ static bool report_playback_progress(u64 position_ticks, bool paused, bool muted
     char body[1024];
     build_playback_state_body(body, sizeof(body), position_ticks, paused, muted, volume_percent);
     g_playback_last_report_ms = osGetTime();
-    return api_post_silent("/Sessions/Playing/Progress", body);
+    return queue_playback_report("/Sessions/Playing/Progress", body);
 }
 
 static void report_playback_progress_periodic(u64 position_ticks, bool paused, bool muted, int volume_percent)
@@ -485,9 +594,12 @@ static bool report_playback_stopped(u64 position_ticks)
     char body[1024];
     build_playback_stop_body(body, sizeof(body), position_ticks);
     if (app_system_closing()) {
+        playback_report_worker_stop(false);
         return remote_http_post_json_quick("/Sessions/Playing/Stopped", body, 350);
     }
-    return api_post_silent("/Sessions/Playing/Stopped", body);
+    bool queued = queue_playback_report("/Sessions/Playing/Stopped", body);
+    playback_report_worker_stop(true);
+    return queued;
 }
 
 static void stop_active_encoding(void)
@@ -840,6 +952,41 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
                  "%s/Videos/%s/stream?Container=mjpeg&DeviceId=%s%s%s%s%s&VideoCodec=mjpeg&VideoBitRate=%d&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported&ApiKey=%s",
                  g_cfg.server, id, dev, media_q, session_q, start_q, refresh_q, bitrate, q.width, q.height, q.width, q.height, fps, fps, token);
     }
+}
+
+static void build_mpeg1_stream_url(const MediaItem *item, char *out, size_t outsz, u64 start_time_ticks, bool mpg_alias)
+{
+    QualityProfile q = quality_profile();
+    int fps = mjpeg_target_fps();
+    char id[160];
+    char token[256];
+    char dev[160];
+    char media_source[192];
+    char session[160];
+    char media_q[224] = "";
+    char session_q[192] = "";
+    char start_q[96] = "";
+    char refresh_q[96] = "";
+    url_encode(item->id, id, sizeof(id));
+    url_encode(g_cfg.token, token, sizeof(token));
+    url_encode(g_cfg.device_id, dev, sizeof(dev));
+    url_encode(g_play_media_source_id, media_source, sizeof(media_source));
+    url_encode(g_play_session, session, sizeof(session));
+    if (media_source[0]) {
+        snprintf(media_q, sizeof(media_q), "&MediaSourceId=%s", media_source);
+    }
+    if (session[0]) {
+        snprintf(session_q, sizeof(session_q), "&PlaySessionId=%s", session);
+    }
+    if (start_time_ticks > 0) {
+        snprintf(start_q, sizeof(start_q), "&StartTimeTicks=%llu", (unsigned long long)start_time_ticks);
+    }
+    snprintf(refresh_q, sizeof(refresh_q), "&3dJellyQuality=%d&3dJellySwitch=%lu", g_cfg.quality, (unsigned long)g_stream_switch_serial);
+
+    snprintf(out, outsz,
+             "%s/Videos/%s/stream?Container=%s&DeviceId=%s%s%s%s%s&VideoCodec=mpeg1video&AudioCodec=mp2&VideoBitRate=%d&AudioBitRate=%d&AudioSampleRate=44100&AudioChannels=1&MaxAudioChannels=1&TranscodingMaxAudioChannels=1&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported&ApiKey=%s",
+             g_cfg.server, id, mpg_alias ? "mpg" : "mpeg", dev, media_q, session_q, start_q, refresh_q,
+             q.video_bitrate, q.audio_bitrate, q.width, q.height, q.width, q.height, fps, fps, token);
 }
 
 static void normalize_transcode_url(char *url, size_t urlsz)

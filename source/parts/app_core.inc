@@ -99,7 +99,7 @@ static int default_quality(void)
 
 static int quality_display_height(int quality)
 {
-    return quality == 241 ? 240 : quality;
+    return (quality == 241 || quality == 242) ? 240 : quality;
 }
 
 static void format_quality_label(char *out, size_t outsz, int quality)
@@ -109,6 +109,8 @@ static void format_quality_label(char *out, size_t outsz, int quality)
     }
     if (quality == 241) {
         snprintf(out, outsz, "240HQ");
+    } else if (quality == 242) {
+        snprintf(out, outsz, "240M1");
     } else {
         snprintf(out, outsz, "%dP", quality);
     }
@@ -131,6 +133,10 @@ static QualityProfile quality_profile(void)
     }
     case 241: {
         QualityProfile q = {400, 240, 1100000, 64000, 24};
+        return q;
+    }
+    case 242: {
+        QualityProfile q = {400, 240, 520000, 64000, 24};
         return q;
     }
     case 240:
@@ -157,6 +163,7 @@ static int mjpeg_target_fps(void)
         }
     }
     switch (g_cfg.quality) {
+    case 242:
     case 241:
         return 10;
     case 360:
@@ -188,6 +195,8 @@ static int mjpeg_target_bitrate(void)
     switch (g_cfg.quality) {
     case 144:
         return 420000;
+    case 242:
+        return 520000;
     case 241:
         return 1100000;
     case 360:
@@ -204,6 +213,21 @@ static void detect_hardware(void)
 {
     bool is_new = false;
     g_is_new_3ds = R_SUCCEEDED(APT_CheckNew3DS(&is_new)) && is_new;
+}
+
+static void enable_playback_performance_mode(void)
+{
+    if (g_performance_mode_checked) {
+        return;
+    }
+
+    g_performance_mode_checked = true;
+    g_performance_mode_result = APT_SetAppCpuTimeLimit(STREAM_READER_CPU_TIME_LIMIT);
+    g_core1_reader_available = R_SUCCEEDED(g_performance_mode_result);
+
+    if (g_is_new_3ds) {
+        osSetSpeedupEnable(true);
+    }
 }
 
 static void apply_hardware_defaults(void)

@@ -1,6 +1,7 @@
 #include <3ds.h>
 #include <citro2d.h>
 #include "picojpeg.h"
+#include "pl_mpeg.h"
 
 #include <mbedtls/aes.h>
 #include <mbedtls/sha256.h>
@@ -33,6 +34,7 @@
 #define HTTP_STATUS_NONE 0xFFFFFFFFu
 #define HTTP_STATUS_TIMEOUT_NS 15000000000ULL
 #define STREAM_READ_TIMEOUT_NS 100000000ULL
+#define STREAM_READER_EMPTY_SLEEP_NS 2500000ULL
 #define EXIT_POLL_SLEEP_NS 50000000ULL
 #define STREAM_URL_CAP 2048
 #define STREAM_READ_SIZE (188 * 16)
@@ -40,6 +42,12 @@
 #define MVD_IN_CAP (1024 * 1024)
 #define MVD_OUT_CAP (1024 * 1024)
 #define MJPEG_READ_SIZE 8192
+#define STREAM_READER_BUFFER_COUNT 256
+#define STREAM_READER_PREBUFFER_CHUNKS 64
+#define STREAM_READER_PREBUFFER_MS 3000
+#define STREAM_READER_STACK_SIZE (16 * 1024)
+#define STREAM_READER_CPU_TIME_LIMIT 30
+#define MPEG1_STREAM_BUFFER_CAP (384 * 1024)
 #define MJPEG_FRAME_CAP (1024 * 1024)
 #define MJPEG_STREAM_OPEN_RETRIES 3
 #define MJPEG_STREAM_RETRY_SLEEP_NS 450000000ULL
@@ -74,6 +82,11 @@
 #define QUALITY_OSD_MS 1900
 #define QUALITY_OSD_FADE_MS 650
 #define PLAYBACK_REPORT_INTERVAL_MS 5000
+#define PLAYBACK_REPORT_QUEUE_COUNT 6
+#define PLAYBACK_REPORT_PATH_CAP 96
+#define PLAYBACK_REPORT_BODY_CAP 1024
+#define PLAYBACK_REPORT_STACK_SIZE (12 * 1024)
+#define PLAYBACK_REPORT_TIMEOUT_MS 280
 #define REMOTE_MESSAGE_OSD_MS 5000
 #define REMOTE_MESSAGE_OSD_FADE_MS 650
 #define WEBSOCKET_SOC_BUFFER_SIZE (1024 * 1024)
@@ -144,6 +157,11 @@ typedef struct {
     int max_fps;
 } QualityProfile;
 
+typedef struct {
+    char path[PLAYBACK_REPORT_PATH_CAP];
+    char body[PLAYBACK_REPORT_BODY_CAP];
+} PlaybackReportMessage;
+
 static Config g_cfg;
 static View g_view = VIEW_SETUP;
 static C3D_RenderTarget *g_top;
@@ -183,6 +201,16 @@ static bool g_playback_restart_in_progress;
 static bool g_session_capabilities_reported;
 static bool g_playback_report_active;
 static u64 g_playback_last_report_ms;
+static bool g_playback_report_sync_ready;
+static bool g_playback_report_worker_running;
+static bool g_playback_report_worker_stop;
+static Thread g_playback_report_thread;
+static LightLock g_playback_report_lock;
+static CondVar g_playback_report_cv;
+static PlaybackReportMessage g_playback_report_queue[PLAYBACK_REPORT_QUEUE_COUNT];
+static int g_playback_report_queue_read;
+static int g_playback_report_queue_write;
+static int g_playback_report_queue_count;
 static char g_remote_status[96] = "REMOTE NOT STARTED";
 static Result g_remote_last_result;
 static int g_remote_last_errno;
@@ -195,6 +223,9 @@ static volatile bool g_exit_requested;
 static volatile bool g_system_close_requested;
 static bool g_is_new_3ds;
 static bool g_http_ready;
+static bool g_performance_mode_checked;
+static bool g_core1_reader_available;
+static Result g_performance_mode_result;
 static aptHookCookie g_apt_hook;
 static bool g_apt_hooked;
 static bool g_volume_save_pending;
@@ -223,13 +254,14 @@ static void change_quality(int dir);
 static void build_url(char *out, size_t outsz, const char *path);
 static bool play_stream_url(const char *url);
 static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container, u64 start_time_ticks);
+static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_ticks);
 static bool play_current_item_video(void);
 static u64 monotonic_ns(void);
 static u64 clamp_media_ticks(u64 ticks);
 static bool remote_http_post_json_quick(const char *path, const char *body, int timeout_ms);
 
 static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 360, 480};
-static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
+static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241, 242};
 
 
 #include "parts/app_core.inc"
@@ -248,6 +280,7 @@ int main(void)
 
     ui_graphics_init();
     detect_hardware();
+    enable_playback_performance_mode();
     Result http_ret = httpcInit(4 * 1024 * 1024);
     if (R_SUCCEEDED(http_ret)) {
         g_http_ready = true;
