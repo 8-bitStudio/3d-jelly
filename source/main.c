@@ -11,7 +11,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define APP_VERSION "0.1.2"
+#define APP_VERSION "0.2.0"
 #define CONFIG_DIR "sdmc:/3dJelly"
 #define CONFIG_PATH "sdmc:/3dJelly/config.ini"
 
@@ -1211,7 +1211,7 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
 
         httpcSetSSLOpt(&context, SSLCOPT_DisableVerify);
         httpcSetKeepAlive(&context, HTTPC_KEEPALIVE_DISABLED);
-        httpcAddRequestHeaderField(&context, "User-Agent", "3dJelly/0.1 Nintendo 3DS");
+        httpcAddRequestHeaderField(&context, "User-Agent", "3dJelly/0.2.0 Nintendo 3DS");
         httpcAddRequestHeaderField(&context, "Accept", "application/json, */*");
         httpcAddRequestHeaderField(&context, "Connection", "Close");
 
@@ -1881,7 +1881,7 @@ static Result add_stream_headers(httpcContext *context)
         return ret;
     }
     httpcSetKeepAlive(context, HTTPC_KEEPALIVE_DISABLED);
-    httpcAddRequestHeaderField(context, "User-Agent", "3dJelly/0.1 Nintendo 3DS");
+    httpcAddRequestHeaderField(context, "User-Agent", "3dJelly/0.2.0 Nintendo 3DS");
     httpcAddRequestHeaderField(context, "Accept", "video/mp2t, multipart/x-mixed-replace, image/jpeg, audio/wav, audio/*, */*");
     httpcAddRequestHeaderField(context, "Connection", "Close");
 
