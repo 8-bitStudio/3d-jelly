@@ -93,7 +93,6 @@ Makefile            devkitPro build file
 ## Known Issues
 
 - Some Jellyfin server transcoding settings may affect playback.
-- App may not exit cleanly in some cases
 
 ## Credits
 
