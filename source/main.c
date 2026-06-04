@@ -19,7 +19,9 @@
 #define MAX_STACK 8
 #define HTTP_CAP (1024 * 1024)
 #define HTTP_STATUS_NONE 0xFFFFFFFFu
-#define HTTP_STATUS_TIMEOUT_NS 60000000000ULL
+#define HTTP_STATUS_TIMEOUT_NS 15000000000ULL
+#define STREAM_READ_TIMEOUT_NS 100000000ULL
+#define EXIT_POLL_SLEEP_NS 50000000ULL
 #define STREAM_URL_CAP 2048
 #define STREAM_READ_SIZE (188 * 16)
 #define H264_BUFFER_CAP (1024 * 1024)
@@ -114,8 +116,12 @@ static char g_play_media_source_id[128];
 static char g_play_status[192];
 static View g_return_view = VIEW_ITEMS;
 static unsigned g_frame_counter;
-static bool g_exit_requested;
+static volatile bool g_exit_requested;
+static volatile bool g_system_close_requested;
 static bool g_is_new_3ds;
+static bool g_http_ready;
+static aptHookCookie g_apt_hook;
+static bool g_apt_hooked;
 
 static const u32 COL_BG = 0xFF101010;
 static const u32 COL_PAPER = 0xFF202020;
@@ -129,6 +135,10 @@ static const u32 COL_MUTED = 0xFFB5B5B5;
 
 static void ui_graphics_init(void);
 static void ui_graphics_exit(void);
+static bool app_system_closing(void);
+static bool app_keep_running(void);
+static bool app_wait_or_exit(u64 ns);
+static void playback_graphics_exit(void);
 static void save_config(void);
 static void build_url(char *out, size_t outsz, const char *path);
 static bool play_stream_url(const char *url);
@@ -136,6 +146,65 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container);
 static bool play_current_item_video(void);
 
 static const int QUALITY_LEVELS[] = {144, 240, 360, 480};
+
+static void app_apt_hook(APT_HookType hook, void *param)
+{
+    (void)param;
+    if (hook == APTHOOK_ONEXIT) {
+        g_exit_requested = true;
+        g_system_close_requested = true;
+    }
+}
+
+static bool app_system_closing(void)
+{
+    return g_system_close_requested || aptShouldClose();
+}
+
+static bool app_should_exit(void)
+{
+    if (g_exit_requested || aptShouldClose()) {
+        g_exit_requested = true;
+        if (aptShouldClose()) {
+            g_system_close_requested = true;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool app_keep_running(void)
+{
+    if (!aptMainLoop()) {
+        g_exit_requested = true;
+        g_system_close_requested = true;
+        return false;
+    }
+    return !app_should_exit();
+}
+
+static bool app_wait_or_exit(u64 ns)
+{
+    while (ns > 0) {
+        if (!app_keep_running()) {
+            return true;
+        }
+        u64 step = ns < EXIT_POLL_SLEEP_NS ? ns : EXIT_POLL_SLEEP_NS;
+        svcSleepThread(step);
+        ns -= step;
+    }
+    return app_should_exit();
+}
+
+static void playback_graphics_exit(void)
+{
+    if (!app_system_closing()) {
+        gfxExit();
+    }
+    if (!g_exit_requested && !app_system_closing()) {
+        ui_graphics_init();
+    }
+}
 
 static void set_status(const char *fmt, ...)
 {
@@ -739,6 +808,10 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
     out->status = 0;
     out->result = 0;
     copy_safe(out->url, sizeof(out->url), url);
+    if (!g_http_ready) {
+        out->result = (Result)0xD9000003;
+        return out->result;
+    }
 
     char *active_url = NULL;
     char *redirect_url = NULL;
@@ -751,6 +824,7 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
     u32 status = 0;
     httpcContext context;
     memset(&context, 0, sizeof(context));
+    bool context_open = false;
 
     for (int redirects = 0; redirects < 4; redirects++) {
         copy_safe(out->url, sizeof(out->url), active_url);
@@ -758,12 +832,13 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
         if (R_FAILED(ret)) {
             break;
         }
+        context_open = true;
 
         httpcSetSSLOpt(&context, SSLCOPT_DisableVerify);
-        httpcSetKeepAlive(&context, HTTPC_KEEPALIVE_ENABLED);
+        httpcSetKeepAlive(&context, HTTPC_KEEPALIVE_DISABLED);
         httpcAddRequestHeaderField(&context, "User-Agent", "3dJelly/0.1 Nintendo 3DS");
         httpcAddRequestHeaderField(&context, "Accept", "application/json, */*");
-        httpcAddRequestHeaderField(&context, "Connection", "Keep-Alive");
+        httpcAddRequestHeaderField(&context, "Connection", "Close");
 
         char auth[384];
         auth_header(auth, sizeof(auth), include_token);
@@ -777,25 +852,33 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
             httpcAddRequestHeaderField(&context, "Content-Type", "application/json");
             ret = httpcAddPostDataRaw(&context, (u32 *)body, strlen(body));
             if (R_FAILED(ret)) {
+                httpcCancelConnection(&context);
                 httpcCloseContext(&context);
+                context_open = false;
                 break;
             }
         }
 
         ret = httpcBeginRequest(&context);
         if (R_FAILED(ret)) {
+            httpcCancelConnection(&context);
             httpcCloseContext(&context);
+            context_open = false;
             break;
         }
 
         ret = httpcGetResponseStatusCodeTimeout(&context, &status, HTTP_STATUS_TIMEOUT_NS);
         if (R_FAILED(ret)) {
+            httpcCancelConnection(&context);
             httpcCloseContext(&context);
+            context_open = false;
             break;
         }
         if (status == HTTP_STATUS_NONE) {
             ret = (Result)0xD9000001;
+            httpcCancelConnection(&context);
             httpcCloseContext(&context);
+            context_open = false;
             break;
         }
 
@@ -805,12 +888,16 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
             }
             if (!redirect_url) {
                 ret = -1;
+                httpcCancelConnection(&context);
                 httpcCloseContext(&context);
+                context_open = false;
                 break;
             }
             memset(redirect_url, 0, 1024);
             ret = httpcGetResponseHeader(&context, "Location", redirect_url, 1024);
+            httpcCancelConnection(&context);
             httpcCloseContext(&context);
+            context_open = false;
             if (R_FAILED(ret) || !redirect_url[0]) {
                 break;
             }
@@ -863,7 +950,12 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
         }
     }
 
-    httpcCloseContext(&context);
+    if (context_open) {
+        if (R_FAILED(ret)) {
+            httpcCancelConnection(&context);
+        }
+        httpcCloseContext(&context);
+    }
     free(active_url);
     free(redirect_url);
 
@@ -1328,6 +1420,9 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
 {
     memset(context, 0, sizeof(*context));
     *status_out = HTTP_STATUS_NONE;
+    if (!g_http_ready) {
+        return (Result)0xD9000003;
+    }
 
     char *active_url = strdup(url);
     char *redirect_url = NULL;
@@ -1399,6 +1494,32 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
 
     free(active_url);
     free(redirect_url);
+    return ret;
+}
+
+static Result stream_receive_chunk(httpcContext *context, u8 *buffer, u32 size, u32 *read_size)
+{
+    u32 start = 0;
+    u32 end = 0;
+    *read_size = 0;
+
+    Result ret = httpcGetDownloadSizeState(context, &start, NULL);
+    if (R_FAILED(ret)) {
+        return ret;
+    }
+
+    ret = httpcReceiveDataTimeout(context, buffer, size, STREAM_READ_TIMEOUT_NS);
+
+    Result state_ret = httpcGetDownloadSizeState(context, &end, NULL);
+    if (R_SUCCEEDED(state_ret) && end >= start) {
+        *read_size = end - start;
+        if (*read_size > size) {
+            *read_size = size;
+        }
+    } else if (R_FAILED(state_ret) && R_SUCCEEDED(ret)) {
+        return state_ret;
+    }
+
     return ret;
 }
 
@@ -1760,8 +1881,7 @@ static bool play_stream_url(const char *url)
     player_console(NULL, "Starting decoder...");
     if (!player_init(&player)) {
         player_free(&player, false);
-        gfxExit();
-        ui_graphics_init();
+        playback_graphics_exit();
         return false;
     }
     mvd_started = true;
@@ -1772,11 +1892,12 @@ static bool play_stream_url(const char *url)
     Result ret = open_stream_context(&context, url, &status);
     if (R_FAILED(ret)) {
         set_play_status("Stream open failed: HTTP %lu result 0x%08lX.", (unsigned long)status, (unsigned long)ret);
-        player_console(&player, g_play_status);
-        svcSleepThread(1800000000ULL);
+        if (!app_system_closing()) {
+            player_console(&player, g_play_status);
+        }
+        app_wait_or_exit(1800000000ULL);
         player_free(&player, mvd_started);
-        gfxExit();
-        ui_graphics_init();
+        playback_graphics_exit();
         return false;
     }
 
@@ -1787,7 +1908,7 @@ static bool play_stream_url(const char *url)
         set_play_status("Playing. Press B to stop.");
         player_console(&player, g_play_status);
         u64 last_console_ms = osGetTime();
-        while (aptMainLoop()) {
+        while (app_keep_running()) {
             hidScanInput();
             u32 down = hidKeysDown();
             if (down & KEY_START) {
@@ -1802,11 +1923,11 @@ static bool play_stream_url(const char *url)
             }
 
             u32 read_size = 0;
-            ret = httpcDownloadData(&context, chunk, STREAM_READ_SIZE, &read_size);
+            ret = stream_receive_chunk(&context, chunk, STREAM_READ_SIZE, &read_size);
             if (read_size && !feed_ts_bytes(&player, chunk, read_size)) {
                 break;
             }
-            if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING) {
+            if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING || ret == (s32)HTTPC_RESULTCODE_TIMEDOUT) {
                 u64 now_ms = osGetTime();
                 if (now_ms - last_console_ms >= 1000) {
                     player_console(&player, "Playing. Press B to stop.");
@@ -1825,17 +1946,24 @@ static bool play_stream_url(const char *url)
         free(chunk);
     }
 
-    httpcCancelConnection(&context);
-    httpcCloseContext(&context);
+    if (!app_system_closing()) {
+        httpcCancelConnection(&context);
+        httpcCloseContext(&context);
+    }
 
     if (!ok && !g_play_status[0]) {
         set_play_status("Playback failed.");
     }
-    player_console(&player, g_play_status);
-    svcSleepThread(900000000ULL);
-    player_free(&player, mvd_started);
-    gfxExit();
-    ui_graphics_init();
+    if (!app_system_closing()) {
+        player_console(&player, g_play_status);
+    }
+    if (!g_exit_requested) {
+        app_wait_or_exit(900000000ULL);
+    }
+    if (!app_system_closing()) {
+        player_free(&player, mvd_started);
+    }
+    playback_graphics_exit();
     return ok;
 }
 
@@ -2316,6 +2444,9 @@ static void mjpeg_pace_frame(MjpegPlayer *player)
             wait = 20000000ULL;
         }
         audio_refill(player->audio);
+        if (app_should_exit()) {
+            return;
+        }
         svcSleepThread(wait);
         now = monotonic_ns();
     }
@@ -2645,11 +2776,12 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
     player.pixels = (u16 *)linearMemAlign(JPEG_PIXELS_CAP * sizeof(u16), 0x40);
     if (!player.buf || !player.pixels) {
         set_play_status("Not enough memory for MJPEG playback.");
-        mjpeg_console(&player, g_play_status);
-        svcSleepThread(1500000000ULL);
+        if (!app_system_closing()) {
+            mjpeg_console(&player, g_play_status);
+        }
+        app_wait_or_exit(1500000000ULL);
         mjpeg_free(&player);
-        gfxExit();
-        ui_graphics_init();
+        playback_graphics_exit();
         return false;
     }
 
@@ -2660,11 +2792,12 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
     Result ret = open_stream_context(&context, url, &status);
     if (R_FAILED(ret)) {
         set_play_status("MJPEG stream failed: HTTP %lu result 0x%08lX.", (unsigned long)status, (unsigned long)ret);
-        mjpeg_console(&player, g_play_status);
-        svcSleepThread(1500000000ULL);
+        if (!app_system_closing()) {
+            mjpeg_console(&player, g_play_status);
+        }
+        app_wait_or_exit(1500000000ULL);
         mjpeg_free(&player);
-        gfxExit();
-        ui_graphics_init();
+        playback_graphics_exit();
         return false;
     }
 
@@ -2683,7 +2816,7 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
         set_play_status("Playing MJPEG. Press B to stop.");
         mjpeg_console(&player, g_play_status);
         u64 last_console_ms = osGetTime();
-        while (aptMainLoop()) {
+        while (app_keep_running()) {
             hidScanInput();
             u32 down = hidKeysDown();
             if (down & KEY_START) {
@@ -2710,7 +2843,7 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
 
             audio_refill(player.audio);
             u32 read_size = 0;
-            ret = httpcDownloadData(&context, chunk, MJPEG_READ_SIZE, &read_size);
+            ret = stream_receive_chunk(&context, chunk, MJPEG_READ_SIZE, &read_size);
             if (read_size) {
                 bool fed = avi_container ? feed_avi_mjpeg_bytes(&player, chunk, read_size)
                                          : feed_mjpeg_bytes(&player, chunk, read_size);
@@ -2718,7 +2851,7 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
                     break;
                 }
             }
-            if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING) {
+            if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING || ret == (s32)HTTPC_RESULTCODE_TIMEDOUT) {
                 u64 now_ms = osGetTime();
                 if (now_ms - last_console_ms >= 1000) {
                     mjpeg_console(&player, "Playing MJPEG. Press B to stop.");
@@ -2737,15 +2870,22 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
         free(chunk);
     }
 
-    audio_stop(&audio);
-    httpcCancelConnection(&context);
-    httpcCloseContext(&context);
+    if (!app_system_closing()) {
+        audio_stop(&audio);
+        httpcCancelConnection(&context);
+        httpcCloseContext(&context);
+    }
 
-    mjpeg_console(&player, g_play_status);
-    svcSleepThread(700000000ULL);
-    mjpeg_free(&player);
-    gfxExit();
-    ui_graphics_init();
+    if (!app_system_closing()) {
+        mjpeg_console(&player, g_play_status);
+    }
+    if (!g_exit_requested) {
+        app_wait_or_exit(700000000ULL);
+    }
+    if (!app_system_closing()) {
+        mjpeg_free(&player);
+    }
+    playback_graphics_exit();
     return ok;
 }
 
@@ -3300,9 +3440,17 @@ static void handle_input(u32 down)
 
 int main(void)
 {
+    aptHook(&g_apt_hook, app_apt_hook, NULL);
+    g_apt_hooked = true;
+
     ui_graphics_init();
     detect_hardware();
-    httpcInit(4 * 1024 * 1024);
+    Result http_ret = httpcInit(4 * 1024 * 1024);
+    if (R_SUCCEEDED(http_ret)) {
+        g_http_ready = true;
+    } else {
+        set_status("HTTP service failed: 0x%08lX", (unsigned long)http_ret);
+    }
 
     load_config();
     apply_hardware_defaults();
@@ -3314,19 +3462,35 @@ int main(void)
         g_view = VIEW_SETUP;
     }
 
-    while (aptMainLoop()) {
+    while (app_keep_running()) {
         hidScanInput();
         u32 down = hidKeysDown();
         if (g_exit_requested || (down & KEY_START)) {
+            g_exit_requested = true;
             break;
         }
         handle_input(down);
+        if (g_exit_requested) {
+            break;
+        }
         g_frame_counter++;
         render();
     }
 
-    save_config();
-    httpcExit();
-    ui_graphics_exit();
+    bool system_closing = app_system_closing();
+    if (!system_closing) {
+        save_config();
+    }
+    if (g_http_ready && !system_closing) {
+        httpcExit();
+        g_http_ready = false;
+    }
+    if (!system_closing) {
+        ui_graphics_exit();
+    }
+    if (g_apt_hooked && !system_closing) {
+        aptUnhook(&g_apt_hook);
+        g_apt_hooked = false;
+    }
     return 0;
 }
