@@ -1,7 +1,6 @@
 # Build outputs
 /build/
 /dist/*
-!/dist/3dJelly.cia
 /3dJelly.3dsx
 /3dJelly.elf
 /3dJelly.smdh
