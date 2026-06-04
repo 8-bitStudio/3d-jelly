@@ -32,7 +32,7 @@
 #define JPEG_PIXELS_CAP (854 * 480)
 #define AUDIO_SAMPLE_RATE 22050
 #define AUDIO_CHANNELS 1
-#define AUDIO_WAVEBUF_COUNT 4
+#define AUDIO_WAVEBUF_COUNT 6
 #define AUDIO_WAVEBUF_SAMPLES 1024
 #define AUDIO_READ_SIZE 4096
 #define AUDIO_PCM_BUFFER_BYTES (AUDIO_WAVEBUF_SAMPLES * AUDIO_CHANNELS * sizeof(s16))
@@ -88,7 +88,7 @@ typedef struct {
     char token[192];
     char user_id[80];
     char device_id[80];
-    int quality; /* 144, 240, 360, or 480 */
+    int quality; /* 144, 240, 241 (Old3DS 240HQ), 360, or 480 */
 } Config;
 
 typedef struct {
@@ -171,7 +171,8 @@ static bool play_current_item_video(void);
 static u64 monotonic_ns(void);
 static u64 clamp_media_ticks(u64 ticks);
 
-static const int QUALITY_LEVELS[] = {144, 240, 360, 480};
+static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 360, 480};
+static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
 
 static void app_apt_hook(APT_HookType hook, void *param)
 {
@@ -240,15 +241,22 @@ static void set_status(const char *fmt, ...)
     va_end(ap);
 }
 
-static int quality_count(void)
+static const int *quality_levels(int *count)
 {
-    return (int)(sizeof(QUALITY_LEVELS) / sizeof(QUALITY_LEVELS[0]));
+    if (g_is_new_3ds) {
+        *count = (int)(sizeof(QUALITY_LEVELS_NEW3DS) / sizeof(QUALITY_LEVELS_NEW3DS[0]));
+        return QUALITY_LEVELS_NEW3DS;
+    }
+    *count = (int)(sizeof(QUALITY_LEVELS_OLD3DS) / sizeof(QUALITY_LEVELS_OLD3DS[0]));
+    return QUALITY_LEVELS_OLD3DS;
 }
 
 static int quality_index(int quality)
 {
-    for (int i = 0; i < quality_count(); i++) {
-        if (QUALITY_LEVELS[i] == quality) {
+    int count = 0;
+    const int *levels = quality_levels(&count);
+    for (int i = 0; i < count; i++) {
+        if (levels[i] == quality) {
             return i;
         }
     }
@@ -265,11 +273,28 @@ static int default_quality(void)
     return g_is_new_3ds ? 240 : 144;
 }
 
+static int quality_display_height(int quality)
+{
+    return quality == 241 ? 240 : quality;
+}
+
+static void format_quality_label(char *out, size_t outsz, int quality)
+{
+    if (!out || outsz == 0) {
+        return;
+    }
+    if (quality == 241) {
+        snprintf(out, outsz, "240HQ");
+    } else {
+        snprintf(out, outsz, "%dP", quality);
+    }
+}
+
 static QualityProfile quality_profile(void)
 {
     switch (g_cfg.quality) {
     case 144: {
-        QualityProfile q = {256, 144, 280000, 48000, 24};
+        QualityProfile q = {256, 144, 420000, 48000, 24};
         return q;
     }
     case 360: {
@@ -280,9 +305,13 @@ static QualityProfile quality_profile(void)
         QualityProfile q = {854, 480, 1200000, 128000, 24};
         return q;
     }
+    case 241: {
+        QualityProfile q = {400, 240, 1100000, 64000, 24};
+        return q;
+    }
     case 240:
     default: {
-        QualityProfile q = {400, 240, 360000, 64000, 24};
+        QualityProfile q = {400, 240, 820000, 64000, 24};
         return q;
     }
     }
@@ -304,6 +333,8 @@ static int mjpeg_target_fps(void)
         }
     }
     switch (g_cfg.quality) {
+    case 241:
+        return 10;
     case 360:
         return 8;
     case 480:
@@ -332,14 +363,16 @@ static int mjpeg_target_bitrate(void)
     }
     switch (g_cfg.quality) {
     case 144:
-        return 320000;
+        return 420000;
+    case 241:
+        return 1100000;
     case 360:
         return 850000;
     case 480:
         return 1200000;
     case 240:
     default:
-        return 560000;
+        return 820000;
     }
 }
 
@@ -351,6 +384,11 @@ static void detect_hardware(void)
 
 static void apply_hardware_defaults(void)
 {
+    if (!g_is_new_3ds && (g_cfg.quality == 360 || g_cfg.quality == 480)) {
+        g_cfg.quality = 241;
+        save_config();
+        return;
+    }
     if (!is_supported_quality(g_cfg.quality)) {
         g_cfg.quality = default_quality();
         save_config();
@@ -1715,6 +1753,8 @@ static void normalize_transcode_url(char *url, size_t urlsz)
 static void build_playback_body(char *out, size_t outsz, u64 start_time_ticks)
 {
     QualityProfile q = quality_profile();
+    char quality_label[16];
+    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
     start_time_ticks = clamp_media_ticks(start_time_ticks);
     snprintf(out, outsz,
         "{"
@@ -1730,7 +1770,7 @@ static void build_playback_body(char *out, size_t outsz, u64 start_time_ticks)
         "\"AllowAudioStreamCopy\":false,"
         "\"AlwaysBurnInSubtitleWhenTranscoding\":true,"
         "\"DeviceProfile\":{"
-            "\"Name\":\"3dJelly %dp\","
+            "\"Name\":\"3dJelly %s\","
             "\"MaxStreamingBitrate\":%d,"
             "\"MaxStaticBitrate\":%d,"
             "\"MusicStreamingTranscodingBitrate\":96000,"
@@ -1762,7 +1802,7 @@ static void build_playback_body(char *out, size_t outsz, u64 start_time_ticks)
             "\"SubtitleProfiles\":[]"
         "}"
         "}",
-        g_cfg.user_id, (unsigned long long)start_time_ticks, q.video_bitrate + q.audio_bitrate, g_cfg.quality,
+        g_cfg.user_id, (unsigned long long)start_time_ticks, q.video_bitrate + q.audio_bitrate, quality_label,
         q.video_bitrate + q.audio_bitrate, q.video_bitrate + q.audio_bitrate,
         q.width, q.height, q.video_bitrate, q.max_fps, q.audio_bitrate);
 }
@@ -1791,7 +1831,9 @@ static bool request_playback_info(u64 start_time_ticks)
     g_play_session[0] = 0;
 
     HttpResponse res;
-    snprintf(g_play_status, sizeof(g_play_status), "Requesting %dp playback session...", g_cfg.quality);
+    char quality_label[16];
+    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
+    snprintf(g_play_status, sizeof(g_play_status), "Requesting %s playback session...", quality_label);
     set_status("%s", g_play_status);
     Result ret = api_post(path, body, true, &res);
     if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
@@ -1834,8 +1876,8 @@ static bool request_playback_info(u64 start_time_ticks)
     free_response(&res);
 
     snprintf(g_play_status, sizeof(g_play_status),
-             "%dp session OK. Transcode:%s Direct:%s",
-             g_cfg.quality,
+             "%s session OK. Transcode:%s Direct:%s",
+             quality_label,
              supports_transcoding ? "yes" : "no",
              supports_direct ? "yes" : "no");
     set_status("%s", g_play_status);
@@ -1860,11 +1902,13 @@ typedef struct {
 
 static void player_console(const StreamPlayer *player, const char *line)
 {
+    char quality_label[16];
+    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
     consoleClear();
     printf("3dJelly player\n");
     printf("%s\n\n", g_current.name[0] ? g_current.name : "Video");
     printf("%s\n\n", line ? line : "");
-    printf("Quality: %dp\n", g_cfg.quality);
+    printf("Quality: %s\n", quality_label);
     if (player) {
         printf("PMT PID: %d  H264 PID: %d\n", player->pmt_pid, player->video_pid);
         printf("NAL: %lu  Frames: %lu\n", (unsigned long)player->nal_count, (unsigned long)player->frame_count);
@@ -3312,8 +3356,8 @@ static void draw_quality_osd(const MjpegPlayer *player, u16 *fb)
     QualityProfile q = quality_profile();
     int shown_w = player && player->last_width > 0 ? player->last_width : q.width;
     int shown_h = player && player->last_height > 0 ? player->last_height : q.height;
-    snprintf(label, sizeof(label), "%dP", g_cfg.quality);
-    snprintf(req_dims, sizeof(req_dims), "REQ %dX%d", q.width, q.height);
+    snprintf(label, sizeof(label), "%dP", quality_display_height(g_cfg.quality));
+    snprintf(req_dims, sizeof(req_dims), "%s %dX%d", g_cfg.quality == 241 ? "HQ" : "REQ", q.width, q.height);
     snprintf(actual_dims, sizeof(actual_dims), "ACT %dX%d", shown_w, shown_h);
 
     int label_w = fb_quality_label_width(label);
@@ -3450,10 +3494,12 @@ static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
     }
 
     char title[28];
-    char quality[16];
+    char quality[32];
+    char quality_label[16];
     const char *state = playback_state_label(player, line);
     playback_short_text(g_current.name[0] ? g_current.name : "Video", title, sizeof(title), 24);
-    snprintf(quality, sizeof(quality), "L/R %dP", g_cfg.quality);
+    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
+    snprintf(quality, sizeof(quality), "L/R %s", quality_label);
 
     bottom_fill_rect(fb, 0, 0, 320, 240, 14, 15, 19);
 
@@ -3931,6 +3977,7 @@ static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t siz
             }
         } else {
             audio_queue_pcm(player->audio, payload, chunk_size);
+            audio_refill(player->audio);
         }
 
         memmove(player->buf, player->buf + total, player->size - total);
@@ -3962,6 +4009,7 @@ static bool process_mjpeg_frame(MjpegPlayer *player, const u8 *jpeg, size_t len)
     player->last_height = h;
     mjpeg_pace_frame(player);
     draw_rgb565_frame(player, player->pixels, w, h);
+    audio_refill(player->audio);
     player->frame_count++;
     return true;
 }
@@ -4136,9 +4184,11 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
                 change_quality(-1);
                 g_stream_switch_serial++;
+                char quality_label[16];
+                format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
                 quality_show_osd();
                 g_quality_osd_pending = true;
-                set_play_status("Switching to %dp.", g_cfg.quality);
+                set_play_status("Switching to %s.", quality_label);
                 mjpeg_redraw_last_frame(&player);
                 mjpeg_console(&player, g_play_status);
                 result = MJPEG_PLAY_RESTART;
@@ -4148,9 +4198,11 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
                 change_quality(1);
                 g_stream_switch_serial++;
+                char quality_label[16];
+                format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
                 quality_show_osd();
                 g_quality_osd_pending = true;
-                set_play_status("Switching to %dp.", g_cfg.quality);
+                set_play_status("Switching to %s.", quality_label);
                 mjpeg_redraw_last_frame(&player);
                 mjpeg_console(&player, g_play_status);
                 result = MJPEG_PLAY_RESTART;
@@ -4457,6 +4509,8 @@ static void draw_setup(void)
     snprintf(values[2], sizeof(values[2]), "%s", g_cfg.password[0] ? "stored" : "not set");
     snprintf(values[3], sizeof(values[3]), "%s", g_cfg.token[0] ? "refresh token/session" : "authenticate");
     QualityProfile q = quality_profile();
+    char quality_label[16];
+    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
 
     for (int i = 0; i < 4; i++) {
         float y = 58.0f + i * 32.0f;
@@ -4467,12 +4521,14 @@ static void draw_setup(void)
         draw_text(130, y, 0.39f, i == g_setup_row ? COL_WHITE : COL_MUTED, "%s", values[i]);
     }
 
-    draw_text(28, 204, 0.34f, COL_MUTED, "Quality: %dp (%dx%d), changed during playback", g_cfg.quality, q.width, q.height);
+    draw_text(28, 204, 0.34f, COL_MUTED, "Quality: %s (%dx%d), changed during playback", quality_label, q.width, q.height);
     draw_text(28, 220, 0.34f, COL_MUTED, "Playback: %s", g_is_new_3ds ? "New3DS H264/MVD + MJPEG fallback" : "Old3DS MJPEG software");
 }
 
 static void draw_detail(void)
 {
+    char quality_label[16];
+    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
     draw_header("Item");
     C2D_DrawRectSolid(18, 50, 0, 364, 140, COL_PAPER);
     C2D_DrawRectSolid(18, 50, 0, 8, 140, COL_PRIMARY);
@@ -4485,13 +4541,15 @@ static void draw_detail(void)
         unsigned long long minutes = g_current.runtime_ticks / 600000000ULL;
         draw_text(38, 150, 0.43f, COL_MUTED, "Runtime: %llumin", minutes);
     }
-    draw_text(38, 174, 0.40f, COL_PRIMARY, "A: request %dp transcode", g_cfg.quality);
+    draw_text(38, 174, 0.40f, COL_PRIMARY, "A: request %s transcode", quality_label);
 }
 
 static void draw_playback(void)
 {
     draw_header("Playback");
     QualityProfile q = quality_profile();
+    char quality_label[16];
+    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
     float preview_w = 110.0f + (float)q.height * 0.35f;
     if (preview_w > 250.0f) {
         preview_w = 250.0f;
@@ -4499,7 +4557,7 @@ static void draw_playback(void)
     C2D_DrawRectSolid(14, 45, 0, 372, 164, COL_PAPER);
     C2D_DrawRectSolid(24, 58, 0, preview_w, 74, COL_CARD);
     C2D_DrawRectSolid(24, 58, 0, (float)(g_frame_counter % (int)preview_w), 4, COL_PRIMARY);
-    draw_text(36, 76, 0.55f, COL_WHITE, "%dp", g_cfg.quality);
+    draw_text(36, 76, 0.55f, COL_WHITE, "%s", quality_label);
     draw_text(36, 103, 0.38f, COL_MUTED, "%s", g_play_method[0] ? g_play_method : "stream");
 
     draw_text_wrap(220, 58, 0.38f, 150, COL_WHITE, "%s", g_current.name);
@@ -4611,11 +4669,14 @@ static void change_quality(int dir)
         idx = 0;
     }
 
-    int count = quality_count();
+    int count = 0;
+    const int *levels = quality_levels(&count);
     idx = (idx + (dir >= 0 ? 1 : -1) + count) % count;
-    g_cfg.quality = QUALITY_LEVELS[idx];
+    g_cfg.quality = levels[idx];
     save_config();
-    set_status("Quality target set to %dp.", g_cfg.quality);
+    char quality_label[16];
+    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
+    set_status("Quality target set to %s.", quality_label);
 }
 
 static void handle_setup(u32 down)
