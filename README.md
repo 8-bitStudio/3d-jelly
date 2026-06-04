@@ -25,7 +25,7 @@ https://github.com/8-bitStudio/3d-jelly/releases
 
 Install `3dJelly.cia` on a modded Nintendo 3DS, or use it with an emulator that supports CIA installation.
 
-3dJelly works best on the 'New Nintendo 3ds' but works on the originl Nintendo 3ds.
+3dJelly works best on the 'New Nintendo 3ds' but works on the original Nintendo 3ds.
 
 ## Current Status
 
@@ -92,11 +92,8 @@ Makefile            devkitPro build file
 
 ## Known Issues
 
-- Playback is experimental and may fail on some media.
-- MJPEG playback can be heavy on Old 3DS hardware.
-- Audio support is still being tuned.
 - Some Jellyfin server transcoding settings may affect playback.
-- does not close right
+- App may not exit cleanly in some cases
 
 ## Credits
 
