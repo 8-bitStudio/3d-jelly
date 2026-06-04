@@ -6,16 +6,11 @@ The project is early, there will be bugs. 3dJelly is being actively worked on.
 
 ## Features
 
-- Jellyfin server setup from the 3DS software keyboard
 - Username and password login through Jellyfin
 - Saved server, user, and token configuration on the SD card
 - Library and item browsing
 - 144p, 240p, 360p, and 480p quality modes
-- Jellyfin inspired dark UI using cyan, purple, and yellow accents
-- Custom 3DS Home Menu icon
-- Installable CIA build
 - Experimental New 3DS H.264 hardware decode path
-- Experimental Old 3DS and Azahar MJPEG playback fallback
 
 ## Downloads
 
