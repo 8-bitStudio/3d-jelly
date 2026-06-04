@@ -36,14 +36,18 @@
 #define AUDIO_WAVEBUF_SAMPLES 1024
 #define AUDIO_READ_SIZE 4096
 #define AUDIO_PCM_BUFFER_BYTES (AUDIO_WAVEBUF_SAMPLES * AUDIO_CHANNELS * sizeof(s16))
+#define VOLUME_DEFAULT_PERCENT 100
+#define VOLUME_MIN_PERCENT 0
+#define VOLUME_MAX_PERCENT 300
+#define VOLUME_STEP_PERCENT 10
+#define VOLUME_OSD_MS 1800
 
 typedef enum {
     VIEW_SETUP,
     VIEW_LIBRARIES,
     VIEW_ITEMS,
     VIEW_DETAIL,
-    VIEW_PLAYBACK,
-    VIEW_TESTS
+    VIEW_PLAYBACK
 } View;
 
 typedef struct {
@@ -144,6 +148,7 @@ static void build_url(char *out, size_t outsz, const char *path);
 static bool play_stream_url(const char *url);
 static bool play_mjpeg_stream_url(const char *url, bool avi_container);
 static bool play_current_item_video(void);
+static u64 monotonic_ns(void);
 
 static const int QUALITY_LEVELS[] = {144, 240, 360, 480};
 
@@ -346,6 +351,273 @@ static void copy_safe(char *dst, size_t dstsz, const char *src)
     }
     memcpy(dst, src, n);
     dst[n] = 0;
+}
+
+static bool append_char(char *out, size_t outsz, size_t *w, char c)
+{
+    if (!out || !w || *w + 1 >= outsz) {
+        return false;
+    }
+    out[(*w)++] = c;
+    out[*w] = 0;
+    return true;
+}
+
+static bool append_text(char *out, size_t outsz, size_t *w, const char *text)
+{
+    for (size_t i = 0; text && text[i]; i++) {
+        if (!append_char(out, outsz, w, text[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool append_utf8_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
+{
+    if (cp <= 0x7F) {
+        return append_char(out, outsz, w, (char)cp);
+    }
+    if (cp <= 0x7FF) {
+        if (!out || !w || *w + 2 >= outsz) {
+            return false;
+        }
+        out[(*w)++] = (char)(0xC0 | (cp >> 6));
+        out[(*w)++] = (char)(0x80 | (cp & 0x3F));
+    } else if (cp <= 0xFFFF) {
+        if (!out || !w || *w + 3 >= outsz || (cp >= 0xD800 && cp <= 0xDFFF)) {
+            return false;
+        }
+        out[(*w)++] = (char)(0xE0 | (cp >> 12));
+        out[(*w)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[(*w)++] = (char)(0x80 | (cp & 0x3F));
+    } else if (cp <= 0x10FFFF) {
+        if (!out || !w || *w + 4 >= outsz) {
+            return false;
+        }
+        out[(*w)++] = (char)(0xF0 | (cp >> 18));
+        out[(*w)++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        out[(*w)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[(*w)++] = (char)(0x80 | (cp & 0x3F));
+    } else {
+        return false;
+    }
+    out[*w] = 0;
+    return true;
+}
+
+static bool append_hangul_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
+{
+    static const char *initials[] = {
+        "g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s",
+        "ss", "", "j", "jj", "ch", "k", "t", "p", "h"
+    };
+    static const char *vowels[] = {
+        "a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa",
+        "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"
+    };
+    static const char *finals[] = {
+        "", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lk",
+        "lm", "lb", "ls", "lt", "lp", "lh", "m", "p", "ps", "t",
+        "t", "ng", "t", "t", "k", "t", "p", "t"
+    };
+
+    if (cp >= 0xAC00 && cp <= 0xD7A3) {
+        u32 s = cp - 0xAC00;
+        u32 initial = s / (21 * 28);
+        u32 vowel = (s % (21 * 28)) / 28;
+        u32 final = s % 28;
+        return append_text(out, outsz, w, initials[initial]) &&
+               append_text(out, outsz, w, vowels[vowel]) &&
+               append_text(out, outsz, w, finals[final]);
+    }
+
+    switch (cp) {
+    case 0x3131:
+    case 0x1100:
+        return append_text(out, outsz, w, "g");
+    case 0x3132:
+    case 0x1101:
+        return append_text(out, outsz, w, "kk");
+    case 0x3134:
+    case 0x1102:
+        return append_text(out, outsz, w, "n");
+    case 0x3137:
+    case 0x1103:
+        return append_text(out, outsz, w, "d");
+    case 0x3138:
+    case 0x1104:
+        return append_text(out, outsz, w, "tt");
+    case 0x3139:
+    case 0x1105:
+        return append_text(out, outsz, w, "r");
+    case 0x3141:
+    case 0x1106:
+        return append_text(out, outsz, w, "m");
+    case 0x3142:
+    case 0x1107:
+        return append_text(out, outsz, w, "b");
+    case 0x3143:
+    case 0x1108:
+        return append_text(out, outsz, w, "pp");
+    case 0x3145:
+    case 0x1109:
+        return append_text(out, outsz, w, "s");
+    case 0x3146:
+    case 0x110A:
+        return append_text(out, outsz, w, "ss");
+    case 0x3147:
+    case 0x110B:
+        return append_text(out, outsz, w, "ng");
+    case 0x3148:
+    case 0x110C:
+        return append_text(out, outsz, w, "j");
+    case 0x3149:
+    case 0x110D:
+        return append_text(out, outsz, w, "jj");
+    case 0x314A:
+    case 0x110E:
+        return append_text(out, outsz, w, "ch");
+    case 0x314B:
+    case 0x110F:
+        return append_text(out, outsz, w, "k");
+    case 0x314C:
+    case 0x1110:
+        return append_text(out, outsz, w, "t");
+    case 0x314D:
+    case 0x1111:
+        return append_text(out, outsz, w, "p");
+    case 0x314E:
+    case 0x1112:
+        return append_text(out, outsz, w, "h");
+    default:
+        return false;
+    }
+}
+
+static bool append_display_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
+{
+    if ((cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0x3130 && cp <= 0x318F) || (cp >= 0x1100 && cp <= 0x11FF)) {
+        return append_hangul_codepoint(out, outsz, w, cp);
+    }
+
+    switch (cp) {
+    case 0x00A0:
+        return append_char(out, outsz, w, ' ');
+    case 0x2018:
+    case 0x2019:
+    case 0x201A:
+    case 0x201B:
+    case 0x2032:
+        return append_char(out, outsz, w, '\'');
+    case 0x201C:
+    case 0x201D:
+    case 0x201E:
+    case 0x201F:
+    case 0x2033:
+        return append_char(out, outsz, w, '"');
+    case 0x2010:
+    case 0x2011:
+    case 0x2012:
+    case 0x2013:
+    case 0x2014:
+    case 0x2212:
+        return append_char(out, outsz, w, '-');
+    case 0x2026:
+        return append_text(out, outsz, w, "...");
+    default:
+        return append_utf8_codepoint(out, outsz, w, cp);
+    }
+}
+
+static int hex_value(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+static bool read_json_hex4(const char *p, const char *end, u32 *out)
+{
+    if (!p || !out || p + 4 > end) {
+        return false;
+    }
+    u32 cp = 0;
+    for (int i = 0; i < 4; i++) {
+        int v = hex_value(p[i]);
+        if (v < 0) {
+            return false;
+        }
+        cp = (cp << 4) | (u32)v;
+    }
+    *out = cp;
+    return true;
+}
+
+static size_t read_utf8_codepoint(const char *p, const char *end, u32 *out)
+{
+    if (!p || !out || p >= end) {
+        return 0;
+    }
+
+    unsigned char c0 = (unsigned char)p[0];
+    if (c0 < 0x80) {
+        *out = c0;
+        return 1;
+    }
+
+    size_t len = 0;
+    u32 cp = 0;
+    if ((c0 & 0xE0) == 0xC0) {
+        len = 2;
+        cp = c0 & 0x1F;
+    } else if ((c0 & 0xF0) == 0xE0) {
+        len = 3;
+        cp = c0 & 0x0F;
+    } else if ((c0 & 0xF8) == 0xF0) {
+        len = 4;
+        cp = c0 & 0x07;
+    } else {
+        return 0;
+    }
+
+    if (p + len > end) {
+        return 0;
+    }
+    for (size_t i = 1; i < len; i++) {
+        unsigned char cx = (unsigned char)p[i];
+        if ((cx & 0xC0) != 0x80) {
+            return 0;
+        }
+        cp = (cp << 6) | (u32)(cx & 0x3F);
+    }
+    *out = cp;
+    return len;
+}
+
+static size_t utf8_sequence_len(const char *s)
+{
+    unsigned char c = (unsigned char)(s ? s[0] : 0);
+    if (c < 0x80) {
+        return c ? 1 : 0;
+    }
+    if ((c & 0xE0) == 0xC0) {
+        return 2;
+    }
+    if ((c & 0xF0) == 0xE0) {
+        return 3;
+    }
+    if ((c & 0xF8) == 0xF0) {
+        return 4;
+    }
+    return 1;
 }
 
 static void trim_newline(char *s)
@@ -612,31 +884,79 @@ static bool json_get_string_range(const char *start, const char *end, const char
 
     p++;
     size_t w = 0;
+    if (outsz) {
+        out[0] = 0;
+    }
     while (p < end && *p != '"' && w + 1 < outsz) {
         if (*p == '\\' && p + 1 < end) {
             p++;
             switch (*p) {
+            case '"':
+            case '\\':
+            case '/':
+                append_char(out, outsz, &w, *p);
+                p++;
+                continue;
+            case 'b':
+                append_char(out, outsz, &w, '\b');
+                p++;
+                continue;
+            case 'f':
+                append_char(out, outsz, &w, '\f');
+                p++;
+                continue;
             case 'n':
-                out[w++] = '\n';
-                break;
+                append_char(out, outsz, &w, '\n');
+                p++;
+                continue;
             case 'r':
-                out[w++] = '\r';
-                break;
+                append_char(out, outsz, &w, '\r');
+                p++;
+                continue;
             case 't':
-                out[w++] = '\t';
-                break;
+                append_char(out, outsz, &w, '\t');
+                p++;
+                continue;
             case 'u':
-                out[w++] = '?';
-                p += (p + 4 < end) ? 4 : 0;
-                break;
+            {
+                u32 cp = 0;
+                if (!read_json_hex4(p + 1, end, &cp)) {
+                    append_char(out, outsz, &w, '?');
+                    p++;
+                    continue;
+                }
+                p += 5;
+                if (cp >= 0xD800 && cp <= 0xDBFF && p + 6 <= end && p[0] == '\\' && p[1] == 'u') {
+                    u32 lo = 0;
+                    if (read_json_hex4(p + 2, end, &lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
+                        cp = 0x10000 + (((cp - 0xD800) << 10) | (lo - 0xDC00));
+                        p += 6;
+                    }
+                }
+                if (!append_display_codepoint(out, outsz, &w, cp)) {
+                    append_char(out, outsz, &w, '?');
+                }
+                continue;
+            }
             default:
-                out[w++] = *p;
-                break;
+                append_char(out, outsz, &w, *p);
+                p++;
+                continue;
             }
         } else {
-            out[w++] = *p;
+            u32 cp = 0;
+            size_t len = read_utf8_codepoint(p, end, &cp);
+            if (len > 0) {
+                if (!append_display_codepoint(out, outsz, &w, cp)) {
+                    append_char(out, outsz, &w, '?');
+                }
+                p += len;
+            } else {
+                append_char(out, outsz, &w, *p);
+                p++;
+            }
+            continue;
         }
-        p++;
     }
     if (outsz) {
         out[w] = 0;
@@ -1981,6 +2301,8 @@ typedef struct {
     bool eof;
     bool failed;
     bool muted;
+    int volume_percent;
+    u64 volume_osd_until_ms;
     u8 *chunk;
     size_t chunk_pos;
     size_t chunk_size;
@@ -2016,14 +2338,133 @@ typedef struct {
     u32 target_bitrate;
     u64 next_frame_time_ns;
     u64 frame_interval_ns;
+    int last_width;
+    int last_height;
     unsigned last_jpeg_status;
     bool avi_mode;
     bool avi_in_movi;
+    bool paused;
 } MjpegPlayer;
 
 static int min_int(int a, int b)
 {
     return a < b ? a : b;
+}
+
+static int clamp_int(int value, int lo, int hi)
+{
+    if (value < lo) {
+        return lo;
+    }
+    if (value > hi) {
+        return hi;
+    }
+    return value;
+}
+
+static s16 clamp_s16(int value)
+{
+    if (value > 32767) {
+        return 32767;
+    }
+    if (value < -32768) {
+        return -32768;
+    }
+    return (s16)value;
+}
+
+static const char *audio_y_action(const AudioPlayer *audio)
+{
+    if (!audio || !audio->ndsp_open) {
+        return "Y audio";
+    }
+    return audio->muted ? "Y unmute" : "Y mute";
+}
+
+static void audio_show_volume_osd(AudioPlayer *audio)
+{
+    if (!audio) {
+        return;
+    }
+    audio->volume_osd_until_ms = osGetTime() + VOLUME_OSD_MS;
+}
+
+static bool audio_volume_osd_visible(const AudioPlayer *audio)
+{
+    return audio && audio->volume_osd_until_ms && osGetTime() < audio->volume_osd_until_ms;
+}
+
+static bool audio_can_control(const AudioPlayer *audio)
+{
+    return audio && audio->ndsp_open && !audio->failed;
+}
+
+static const char *audio_volume_range_label(const AudioPlayer *audio)
+{
+    if (!audio || audio->muted || audio->volume_percent == 0) {
+        return "muted";
+    }
+    if (audio->volume_percent > 100) {
+        return "boost";
+    }
+    return "normal";
+}
+
+static void audio_set_play_status(AudioPlayer *audio, const char *prefix)
+{
+    if (!audio_can_control(audio)) {
+        set_play_status("Audio unavailable on this stream.");
+        return;
+    }
+
+    set_play_status("%s Volume %d%% %s. %s.",
+                    prefix ? prefix : "Audio",
+                    audio->muted ? 0 : audio->volume_percent,
+                    audio_volume_range_label(audio),
+                    audio_y_action(audio));
+}
+
+static bool audio_change_volume(AudioPlayer *audio, int delta)
+{
+    if (!audio_can_control(audio)) {
+        set_play_status("Audio unavailable on this stream.");
+        return false;
+    }
+
+    int base = audio->volume_percent;
+    if (audio->muted && delta > 0 && base <= 0) {
+        base = 0;
+    }
+
+    audio->volume_percent = clamp_int(base + delta, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
+    audio->muted = audio->volume_percent == 0;
+    audio_show_volume_osd(audio);
+    audio_set_play_status(audio, delta >= 0 ? "Volume up." : "Volume down.");
+    return true;
+}
+
+static bool audio_toggle_mute(AudioPlayer *audio)
+{
+    if (!audio_can_control(audio)) {
+        set_play_status("Audio unavailable on this stream.");
+        return false;
+    }
+
+    audio->muted = !audio->muted;
+    if (!audio->muted && audio->volume_percent <= 0) {
+        audio->volume_percent = VOLUME_STEP_PERCENT;
+    }
+    audio->pcm_staging_size = 0;
+    audio_show_volume_osd(audio);
+    audio_set_play_status(audio, audio->muted ? "Muted." : "Unmuted.");
+    return true;
+}
+
+static void audio_set_paused(AudioPlayer *audio, bool paused)
+{
+    if (audio && audio->ndsp_open && !audio->failed) {
+        ndspChnSetPaused(0, paused);
+    }
 }
 
 static unsigned char jpeg_need_bytes(unsigned char *buf, unsigned char buf_size, unsigned char *read, void *userdata)
@@ -2157,7 +2598,112 @@ static void clear_top_rgb565(u16 color)
     }
 }
 
-static void draw_rgb565_frame(const u16 *pixels, int img_w, int img_h)
+static u16 rgb565_blend(u16 dst, u16 src, int alpha)
+{
+    alpha = clamp_int(alpha, 0, 255);
+    int sr = (src >> 11) & 0x1F;
+    int sg = (src >> 5) & 0x3F;
+    int sb = src & 0x1F;
+    int dr = (dst >> 11) & 0x1F;
+    int dg = (dst >> 5) & 0x3F;
+    int db = dst & 0x1F;
+    int r = (sr * alpha + dr * (255 - alpha)) / 255;
+    int g = (sg * alpha + dg * (255 - alpha)) / 255;
+    int b = (sb * alpha + db * (255 - alpha)) / 255;
+    return (u16)((r << 11) | (g << 5) | b);
+}
+
+static void fb_put_pixel(u16 *fb, int x, int y, u16 color)
+{
+    if (!fb || x < 0 || x >= 400 || y < 0 || y >= 240) {
+        return;
+    }
+    fb[x * 240 + (239 - y)] = color;
+}
+
+static void fb_fill_rect(u16 *fb, int x, int y, int w, int h, u16 color)
+{
+    for (int yy = 0; yy < h; yy++) {
+        int sy = y + yy;
+        if (sy < 0 || sy >= 240) {
+            continue;
+        }
+        for (int xx = 0; xx < w; xx++) {
+            int sx = x + xx;
+            if (sx < 0 || sx >= 400) {
+                continue;
+            }
+            fb_put_pixel(fb, sx, sy, color);
+        }
+    }
+}
+
+static void fb_fill_rect_blend(u16 *fb, int x, int y, int w, int h, u16 color, int alpha)
+{
+    for (int yy = 0; yy < h; yy++) {
+        int sy = y + yy;
+        if (sy < 0 || sy >= 240) {
+            continue;
+        }
+        for (int xx = 0; xx < w; xx++) {
+            int sx = x + xx;
+            if (sx < 0 || sx >= 400) {
+                continue;
+            }
+            int idx = sx * 240 + (239 - sy);
+            fb[idx] = rgb565_blend(fb[idx], color, alpha);
+        }
+    }
+}
+
+static void fb_stroke_rect(u16 *fb, int x, int y, int w, int h, u16 color)
+{
+    fb_fill_rect(fb, x, y, w, 1, color);
+    fb_fill_rect(fb, x, y + h - 1, w, 1, color);
+    fb_fill_rect(fb, x, y, 1, h, color);
+    fb_fill_rect(fb, x + w - 1, y, 1, h, color);
+}
+
+static void draw_volume_osd(const MjpegPlayer *player, u16 *fb)
+{
+    const AudioPlayer *audio = player ? player->audio : NULL;
+    if (!audio_volume_osd_visible(audio)) {
+        return;
+    }
+
+    int volume = audio->muted ? 0 : clamp_int(audio->volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
+    int bar_x = 58;
+    int bar_y = 207;
+    int bar_w = 284;
+    int bar_h = 13;
+    int dock_x = bar_x - 12;
+    int dock_y = bar_y - 10;
+    int dock_w = bar_w + 24;
+    int dock_h = bar_h + 20;
+    u16 shadow = rgb565_from_rgb(0, 0, 0);
+    u16 dock = rgb565_from_rgb(18, 19, 23);
+    u16 track = rgb565_from_rgb(44, 47, 54);
+    u16 track_dark = rgb565_from_rgb(17, 18, 22);
+    u16 fill = rgb565_from_rgb(55, 206, 224);
+    u16 edge = rgb565_from_rgb(104, 111, 126);
+    u16 mute_edge = rgb565_from_rgb(92, 94, 100);
+
+    fb_fill_rect_blend(fb, dock_x + 2, dock_y + 3, dock_w, dock_h, shadow, 145);
+    fb_fill_rect_blend(fb, dock_x, dock_y, dock_w, dock_h, dock, 218);
+    fb_stroke_rect(fb, dock_x, dock_y, dock_w, dock_h, audio->muted ? mute_edge : edge);
+    fb_fill_rect(fb, bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, track_dark);
+    fb_fill_rect(fb, bar_x, bar_y, bar_w, bar_h, track);
+    fb_fill_rect_blend(fb, bar_x, bar_y, bar_w, 1, rgb565_from_rgb(92, 98, 112), 180);
+
+    int filled = (volume * bar_w + VOLUME_MAX_PERCENT / 2) / VOLUME_MAX_PERCENT;
+    filled = clamp_int(filled, 0, bar_w);
+    if (filled > 0) {
+        fb_fill_rect(fb, bar_x, bar_y, filled, bar_h, fill);
+        fb_fill_rect_blend(fb, bar_x, bar_y, filled, 2, rgb565_from_rgb(246, 250, 255), 70);
+    }
+}
+
+static void draw_rgb565_frame(const MjpegPlayer *player, const u16 *pixels, int img_w, int img_h)
 {
     if (!pixels || img_w <= 0 || img_h <= 0) {
         return;
@@ -2195,6 +2741,7 @@ static void draw_rgb565_frame(const u16 *pixels, int img_w, int img_h)
             }
         }
 
+        draw_volume_osd(player, fb);
         gfxFlushBuffers();
         gfxSwapBuffersGpu();
         gspWaitForVBlank();
@@ -2211,45 +2758,368 @@ static void draw_rgb565_frame(const u16 *pixels, int img_w, int img_h)
         }
     }
 
+    draw_volume_osd(player, fb);
     gfxFlushBuffers();
     gfxSwapBuffersGpu();
     gspWaitForVBlank();
 }
 
-static void mjpeg_console(const MjpegPlayer *player, const char *line)
+static void mjpeg_redraw_last_frame(MjpegPlayer *player)
 {
-    consoleClear();
-    printf("3dJelly MJPEG player\n");
-    printf("%s\n\n", g_current.name[0] ? g_current.name : "Video");
-    printf("%s\n\n", line ? line : "");
-    printf("Quality: %dp  Decoder: CPU JPEG\n", g_cfg.quality);
-    if (player) {
-        printf("MJPEG: %lu fps target  %lu kbps\n",
-               (unsigned long)player->target_fps,
-               (unsigned long)(player->target_bitrate / 1000));
-        printf("Frames: %lu  Bytes: %lu\n", (unsigned long)player->frame_count, (unsigned long)player->byte_count);
-        printf("JPEG status: %u  skipped: %lu\n", player->last_jpeg_status, (unsigned long)player->decode_fail_count);
-        if (!player->audio) {
-            printf("Audio: unavailable\n");
-        } else if (!player->audio->ndsp_open && !player->audio->failed) {
-            printf("Audio: unavailable on this stream\n");
-        } else if (player->audio->ndsp_open && player->audio->muted) {
-            printf("Audio: muted  press Y\n");
-        } else if (player->audio->ndsp_open && player->audio->buffers_submitted > 0) {
-            printf("Audio: PCM %d Hz mono  %lu buffers  drop %lu\n",
-                   player->audio->sample_rate ? (int)player->audio->sample_rate : AUDIO_SAMPLE_RATE,
-                   (unsigned long)player->audio->buffers_submitted,
-                   (unsigned long)player->audio->overruns);
-        } else if (player->audio && player->audio->ndsp_open) {
-            printf("Audio: on  waiting for PCM chunks\n");
-        } else if (player->audio && player->audio->failed) {
-            printf("Audio: off  result 0x%08lX\n",
-                   (unsigned long)player->audio->last_result);
-        } else {
-            printf("Audio: off\n");
+    if (!player || !player->pixels || player->last_width <= 0 || player->last_height <= 0) {
+        return;
+    }
+    draw_rgb565_frame(player, player->pixels, player->last_width, player->last_height);
+}
+
+static void bottom_put_pixel(u8 *fb, int x, int y, u8 r, u8 g, u8 b)
+{
+    if (!fb || x < 0 || x >= 320 || y < 0 || y >= 240) {
+        return;
+    }
+    size_t idx = ((size_t)x * 240 + (size_t)(239 - y)) * 3;
+    fb[idx] = b;
+    fb[idx + 1] = g;
+    fb[idx + 2] = r;
+}
+
+static void bottom_fill_rect(u8 *fb, int x, int y, int w, int h, u8 r, u8 g, u8 b)
+{
+    for (int yy = 0; yy < h; yy++) {
+        int sy = y + yy;
+        if (sy < 0 || sy >= 240) {
+            continue;
+        }
+        for (int xx = 0; xx < w; xx++) {
+            int sx = x + xx;
+            if (sx < 0 || sx >= 320) {
+                continue;
+            }
+            bottom_put_pixel(fb, sx, sy, r, g, b);
         }
     }
-    printf("\nB stop playback  Y mute  START exit app\n");
+}
+
+static void bottom_stroke_rect(u8 *fb, int x, int y, int w, int h, u8 r, u8 g, u8 b)
+{
+    bottom_fill_rect(fb, x, y, w, 1, r, g, b);
+    bottom_fill_rect(fb, x, y + h - 1, w, 1, r, g, b);
+    bottom_fill_rect(fb, x, y, 1, h, r, g, b);
+    bottom_fill_rect(fb, x + w - 1, y, 1, h, r, g, b);
+}
+
+static const u8 *bottom_glyph(char ch)
+{
+    static const u8 sp[7] = {0, 0, 0, 0, 0, 0, 0};
+    static const u8 qmark[7] = {14, 17, 1, 2, 4, 0, 4};
+    static const u8 dot[7] = {0, 0, 0, 0, 0, 6, 6};
+    static const u8 colon[7] = {0, 4, 4, 0, 4, 4, 0};
+    static const u8 dash[7] = {0, 0, 0, 31, 0, 0, 0};
+    static const u8 slash[7] = {1, 2, 2, 4, 8, 8, 16};
+    static const u8 apostrophe[7] = {4, 4, 8, 0, 0, 0, 0};
+    static const u8 zero[7] = {14, 17, 19, 21, 25, 17, 14};
+    static const u8 one[7] = {4, 12, 4, 4, 4, 4, 14};
+    static const u8 two[7] = {14, 17, 1, 2, 4, 8, 31};
+    static const u8 three[7] = {30, 1, 1, 14, 1, 1, 30};
+    static const u8 four[7] = {2, 6, 10, 18, 31, 2, 2};
+    static const u8 five[7] = {31, 16, 30, 1, 1, 17, 14};
+    static const u8 six[7] = {6, 8, 16, 30, 17, 17, 14};
+    static const u8 seven[7] = {31, 1, 2, 4, 8, 8, 8};
+    static const u8 eight[7] = {14, 17, 17, 14, 17, 17, 14};
+    static const u8 nine[7] = {14, 17, 17, 15, 1, 2, 12};
+    static const u8 a[7] = {14, 17, 17, 31, 17, 17, 17};
+    static const u8 b[7] = {30, 17, 17, 30, 17, 17, 30};
+    static const u8 c[7] = {14, 17, 16, 16, 16, 17, 14};
+    static const u8 d[7] = {30, 17, 17, 17, 17, 17, 30};
+    static const u8 e[7] = {31, 16, 16, 30, 16, 16, 31};
+    static const u8 f[7] = {31, 16, 16, 30, 16, 16, 16};
+    static const u8 g[7] = {14, 17, 16, 23, 17, 17, 15};
+    static const u8 h[7] = {17, 17, 17, 31, 17, 17, 17};
+    static const u8 i[7] = {14, 4, 4, 4, 4, 4, 14};
+    static const u8 j[7] = {7, 2, 2, 2, 2, 18, 12};
+    static const u8 k[7] = {17, 18, 20, 24, 20, 18, 17};
+    static const u8 l[7] = {16, 16, 16, 16, 16, 16, 31};
+    static const u8 m[7] = {17, 27, 21, 21, 17, 17, 17};
+    static const u8 n[7] = {17, 25, 21, 19, 17, 17, 17};
+    static const u8 o[7] = {14, 17, 17, 17, 17, 17, 14};
+    static const u8 p[7] = {30, 17, 17, 30, 16, 16, 16};
+    static const u8 q[7] = {14, 17, 17, 17, 21, 18, 13};
+    static const u8 r[7] = {30, 17, 17, 30, 20, 18, 17};
+    static const u8 s[7] = {15, 16, 16, 14, 1, 1, 30};
+    static const u8 t[7] = {31, 4, 4, 4, 4, 4, 4};
+    static const u8 u[7] = {17, 17, 17, 17, 17, 17, 14};
+    static const u8 v[7] = {17, 17, 17, 17, 17, 10, 4};
+    static const u8 w[7] = {17, 17, 17, 21, 21, 21, 10};
+    static const u8 x[7] = {17, 17, 10, 4, 10, 17, 17};
+    static const u8 y[7] = {17, 17, 10, 4, 4, 4, 4};
+    static const u8 z[7] = {31, 1, 2, 4, 8, 16, 31};
+
+    if (ch >= 'a' && ch <= 'z') {
+        ch = (char)(ch - 32);
+    }
+    switch (ch) {
+    case ' ':
+        return sp;
+    case '.':
+        return dot;
+    case ':':
+        return colon;
+    case '-':
+        return dash;
+    case '/':
+        return slash;
+    case '\'':
+        return apostrophe;
+    case '0':
+        return zero;
+    case '1':
+        return one;
+    case '2':
+        return two;
+    case '3':
+        return three;
+    case '4':
+        return four;
+    case '5':
+        return five;
+    case '6':
+        return six;
+    case '7':
+        return seven;
+    case '8':
+        return eight;
+    case '9':
+        return nine;
+    case 'A':
+        return a;
+    case 'B':
+        return b;
+    case 'C':
+        return c;
+    case 'D':
+        return d;
+    case 'E':
+        return e;
+    case 'F':
+        return f;
+    case 'G':
+        return g;
+    case 'H':
+        return h;
+    case 'I':
+        return i;
+    case 'J':
+        return j;
+    case 'K':
+        return k;
+    case 'L':
+        return l;
+    case 'M':
+        return m;
+    case 'N':
+        return n;
+    case 'O':
+        return o;
+    case 'P':
+        return p;
+    case 'Q':
+        return q;
+    case 'R':
+        return r;
+    case 'S':
+        return s;
+    case 'T':
+        return t;
+    case 'U':
+        return u;
+    case 'V':
+        return v;
+    case 'W':
+        return w;
+    case 'X':
+        return x;
+    case 'Y':
+        return y;
+    case 'Z':
+        return z;
+    default:
+        return qmark;
+    }
+}
+
+static int bottom_text_width(const char *text, int scale)
+{
+    int count = 0;
+    for (size_t i = 0; text && text[i]; i++) {
+        count++;
+    }
+    return count > 0 ? count * 6 * scale - scale : 0;
+}
+
+static void bottom_draw_text(u8 *fb, int x, int y, const char *text, int scale, u8 r, u8 g, u8 b)
+{
+    if (!fb || !text || scale <= 0) {
+        return;
+    }
+
+    int cx = x;
+    for (size_t i = 0; text[i]; i++) {
+        unsigned char raw = (unsigned char)text[i];
+        char c = raw < 0x80 ? (char)raw : '?';
+        const u8 *glyph = bottom_glyph(c);
+        for (int row = 0; row < 7; row++) {
+            for (int col = 0; col < 5; col++) {
+                if (glyph[row] & (1 << (4 - col))) {
+                    bottom_fill_rect(fb, cx + col * scale, y + row * scale, scale, scale, r, g, b);
+                }
+            }
+        }
+        cx += 6 * scale;
+    }
+}
+
+static void bottom_draw_text_centered(u8 *fb, int center_x, int y, const char *text, int scale, u8 r, u8 g, u8 b)
+{
+    int width = bottom_text_width(text, scale);
+    bottom_draw_text(fb, center_x - width / 2, y, text, scale, r, g, b);
+}
+
+static void bottom_draw_button(u8 *fb, int x, int y, int w, int h, const char *label, bool active)
+{
+    u8 fr = active ? 55 : 62;
+    u8 fg = active ? 206 : 68;
+    u8 fbcol = active ? 224 : 82;
+    bottom_fill_rect(fb, x, y, w, h, 28, 31, 39);
+    bottom_fill_rect(fb, x, y, w, 2, 37, 41, 52);
+    bottom_stroke_rect(fb, x, y, w, h, fr, fg, fbcol);
+    bottom_draw_text_centered(fb, x + w / 2, y + (h - 7) / 2, label, 1, 238, 241, 246);
+}
+
+static const char *playback_button_y(const AudioPlayer *audio)
+{
+    if (!audio || !audio->ndsp_open || audio->failed) {
+        return "Y AUDIO";
+    }
+    return audio->muted ? "Y UNMUTE" : "Y MUTE";
+}
+
+static const char *playback_state_label(const MjpegPlayer *player, const char *line)
+{
+    if (player && player->paused) {
+        return "PAUSED";
+    }
+    if (line && (strstr(line, "failed") || strstr(line, "Failed") || strstr(line, "decode"))) {
+        return "ERROR";
+    }
+    if (line && (strstr(line, "Opening") || strstr(line, "Requesting"))) {
+        return "LOADING";
+    }
+    if (line && (strstr(line, "stopped") || strstr(line, "end"))) {
+        return "STOPPED";
+    }
+    return "PLAYING";
+}
+
+static void playback_short_text(const char *src, char *out, size_t outsz, size_t max_chars)
+{
+    if (!out || outsz == 0) {
+        return;
+    }
+    out[0] = 0;
+    if (!src) {
+        return;
+    }
+
+    size_t w = 0;
+    size_t chars = 0;
+    size_t copy_limit = max_chars > 3 ? max_chars - 3 : max_chars;
+    const char *p = src;
+    for (; *p && chars < copy_limit && w + 1 < outsz; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c >= 0x80) {
+            c = '?';
+        } else if (c >= 'a' && c <= 'z') {
+            c = (unsigned char)(c - 32);
+        }
+        out[w++] = (char)c;
+        chars++;
+    }
+    if (*p && w + 3 < outsz && max_chars > 3) {
+        out[w++] = '.';
+        out[w++] = '.';
+        out[w++] = '.';
+    }
+    out[w] = 0;
+}
+
+static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
+{
+    u8 *fb = (u8 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
+    if (!fb) {
+        return;
+    }
+
+    char title[28];
+    char quality[12];
+    const char *state = playback_state_label(player, line);
+    playback_short_text(g_current.name[0] ? g_current.name : "Video", title, sizeof(title), 24);
+    snprintf(quality, sizeof(quality), "%dP", g_cfg.quality);
+
+    bottom_fill_rect(fb, 0, 0, 320, 240, 14, 15, 19);
+    bottom_fill_rect(fb, 0, 0, 320, 4, 55, 206, 224);
+
+    bottom_fill_rect(fb, 12, 16, 296, 88, 21, 23, 29);
+    bottom_fill_rect(fb, 12, 16, 296, 1, 48, 53, 65);
+    bottom_stroke_rect(fb, 12, 16, 296, 88, 42, 47, 59);
+    bottom_fill_rect(fb, 22, 28, 68, 14, 55, 206, 224);
+    bottom_draw_text_centered(fb, 56, 32, "3DJELLY", 1, 10, 14, 18);
+
+    bool paused = player && player->paused;
+    int badge_w = paused ? 70 : 78;
+    bottom_fill_rect(fb, 308 - badge_w, 27, badge_w, 18, paused ? 86 : 35, paused ? 90 : 55, paused ? 105 : 64);
+    bottom_stroke_rect(fb, 308 - badge_w, 27, badge_w, 18, paused ? 141 : 55, paused ? 148 : 206, paused ? 170 : 224);
+    bottom_draw_text_centered(fb, 308 - badge_w / 2, 33, state, 1, 245, 247, 250);
+
+    bottom_draw_text(fb, 22, 58, title, 2, 240, 244, 248);
+    bottom_draw_text(fb, 246, 83, quality, 1, 177, 184, 197);
+
+    bottom_fill_rect(fb, 12, 120, 296, 104, 19, 21, 27);
+    bottom_fill_rect(fb, 12, 120, 296, 1, 55, 206, 224);
+    bottom_stroke_rect(fb, 12, 120, 296, 104, 40, 45, 57);
+
+    bottom_draw_button(fb, 24, 138, 78, 24, paused ? "A RESUME" : "A PAUSE", true);
+    bottom_draw_button(fb, 112, 138, 62, 24, "B STOP", false);
+    bottom_draw_button(fb, 184, 138, 100, 24, playback_button_y(player ? player->audio : NULL), false);
+    bottom_draw_button(fb, 24, 180, 126, 24, "UP/DOWN VOL", false);
+    bottom_draw_button(fb, 160, 180, 124, 24, "START EXIT", false);
+}
+
+static void mjpeg_console(const MjpegPlayer *player, const char *line)
+{
+    for (int pass = 0; pass < 2; pass++) {
+        draw_playback_bottom_ui(player, line);
+        gfxFlushBuffers();
+        gfxSwapBuffersGpu();
+        gspWaitForVBlank();
+    }
+}
+
+static void mjpeg_set_paused(MjpegPlayer *player, bool paused)
+{
+    if (!player || player->paused == paused) {
+        return;
+    }
+
+    player->paused = paused;
+    audio_set_paused(player->audio, paused);
+    if (paused) {
+        set_play_status("Paused.");
+    } else {
+        player->next_frame_time_ns = monotonic_ns() + player->frame_interval_ns;
+        set_play_status("Playing.");
+    }
+    mjpeg_redraw_last_frame(player);
+    mjpeg_console(player, g_play_status);
 }
 
 static int audio_free_wavebuf(AudioPlayer *audio)
@@ -2295,8 +3165,11 @@ static void audio_queue_sample(AudioPlayer *audio, s16 sample)
         return;
     }
 
-    audio->pcm_staging[audio->pcm_staging_size++] = (u8)(sample & 0xFF);
-    audio->pcm_staging[audio->pcm_staging_size++] = (u8)((sample >> 8) & 0xFF);
+    int boosted = ((int)sample * clamp_int(audio->volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT)) / 100;
+    s16 out = clamp_s16(boosted);
+
+    audio->pcm_staging[audio->pcm_staging_size++] = (u8)(out & 0xFF);
+    audio->pcm_staging[audio->pcm_staging_size++] = (u8)((out >> 8) & 0xFF);
     if (audio->pcm_staging_size >= AUDIO_PCM_BUFFER_BYTES) {
         audio_submit_staging(audio);
     }
@@ -2387,6 +3260,7 @@ static bool audio_start(AudioPlayer *audio, const char *url)
     audio->channels = AUDIO_CHANNELS;
     audio->bits_per_sample = 16;
     audio->sample_rate = AUDIO_SAMPLE_RATE;
+    audio->volume_percent = VOLUME_DEFAULT_PERCENT;
 
     Result ret = ndspInit();
     audio->last_result = ret;
@@ -2693,8 +3567,10 @@ static bool process_mjpeg_frame(MjpegPlayer *player, const u8 *jpeg, size_t len)
 
     player->last_jpeg_status = 0;
     player->decode_fail_count = 0;
+    player->last_width = w;
+    player->last_height = h;
     mjpeg_pace_frame(player);
-    draw_rgb565_frame(player->pixels, w, h);
+    draw_rgb565_frame(player, player->pixels, w, h);
     player->frame_count++;
     return true;
 }
@@ -2761,7 +3637,6 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
 
     ui_graphics_exit();
     gfxInit(GSP_RGB565_OES, GSP_BGR8_OES, false);
-    consoleInit(GFX_BOTTOM, NULL);
     clear_top_rgb565(0);
     gfxFlushBuffers();
     gfxSwapBuffersGpu();
@@ -2806,6 +3681,8 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
     player.audio = &audio;
     if (avi_container && !audio_start(&audio, NULL)) {
         set_play_status("Audio init failed; playing video only.");
+    } else if (avi_container) {
+        audio_show_volume_osd(&audio);
     }
 
     u8 *chunk = (u8 *)malloc(MJPEG_READ_SIZE);
@@ -2813,9 +3690,8 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
     if (!chunk) {
         set_play_status("Could not allocate MJPEG read buffer.");
     } else {
-        set_play_status("Playing MJPEG. Press B to stop.");
+        set_play_status("Playing.");
         mjpeg_console(&player, g_play_status);
-        u64 last_console_ms = osGetTime();
         while (app_keep_running()) {
             hidScanInput();
             u32 down = hidKeysDown();
@@ -2829,16 +3705,32 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
                 ok = true;
                 break;
             }
+            if (down & KEY_A) {
+                mjpeg_set_paused(&player, !player.paused);
+            }
+            if (down & KEY_UP) {
+                audio_change_volume(&audio, VOLUME_STEP_PERCENT);
+                if (player.paused) {
+                    mjpeg_redraw_last_frame(&player);
+                }
+            }
+            if (down & KEY_DOWN) {
+                audio_change_volume(&audio, -VOLUME_STEP_PERCENT);
+                if (player.paused) {
+                    mjpeg_redraw_last_frame(&player);
+                }
+            }
             if (down & KEY_Y) {
-                if (audio.ndsp_open) {
-                    audio.muted = !audio.muted;
-                    audio.pcm_staging_size = 0;
-                    set_play_status(audio.muted ? "Audio muted." : "Audio on.");
-                } else {
-                    set_play_status("Audio unavailable on this stream.");
+                audio_toggle_mute(&audio);
+                if (player.paused) {
+                    mjpeg_redraw_last_frame(&player);
                 }
                 mjpeg_console(&player, g_play_status);
-                last_console_ms = osGetTime();
+            }
+
+            if (player.paused) {
+                svcSleepThread(50000000ULL);
+                continue;
             }
 
             audio_refill(player.audio);
@@ -2852,11 +3744,6 @@ static bool play_mjpeg_stream_url(const char *url, bool avi_container)
                 }
             }
             if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING || ret == (s32)HTTPC_RESULTCODE_TIMEDOUT) {
-                u64 now_ms = osGetTime();
-                if (now_ms - last_console_ms >= 1000) {
-                    mjpeg_console(&player, "Playing MJPEG. Press B to stop.");
-                    last_console_ms = now_ms;
-                }
                 continue;
             }
             if (R_FAILED(ret)) {
@@ -3001,10 +3888,27 @@ static void clipped_name(const char *src, char *out, size_t outsz, size_t max_ch
     if (!outsz) {
         return;
     }
-    snprintf(out, outsz, "%.*s", (int)(outsz - 1), src ? src : "");
-    size_t n = strlen(out);
-    if (n > max_chars && outsz > 4) {
-        out[max_chars > outsz - 4 ? outsz - 4 : max_chars] = 0;
+    out[0] = 0;
+    if (!src) {
+        return;
+    }
+
+    size_t w = 0;
+    size_t chars = 0;
+    size_t limit = outsz > 4 ? outsz - 4 : outsz - 1;
+    const char *p = src;
+    while (*p && chars < max_chars) {
+        size_t len = utf8_sequence_len(p);
+        if (!len || w + len > limit) {
+            break;
+        }
+        memcpy(out + w, p, len);
+        w += len;
+        p += len;
+        chars++;
+    }
+    out[w] = 0;
+    if (*p && outsz > 4) {
         strcat(out, "...");
     }
 }
@@ -3037,14 +3941,33 @@ static void draw_text_wrap(float x, float y, float scale, float wrap, u32 color,
     C2D_DrawText(&t, C2D_WithColor | C2D_WordWrap, x, y, 0.5f, scale, scale, color, wrap);
 }
 
+static void draw_text_centered(float center_x, float y, float scale, u32 color, const char *fmt, ...)
+{
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    C2D_Text t;
+    C2D_TextParse(&t, g_text, buf);
+    C2D_TextOptimize(&t);
+    float width = 0.0f;
+    float height = 0.0f;
+    C2D_TextGetDimensions(&t, scale, scale, &width, &height);
+    (void)height;
+    C2D_DrawText(&t, C2D_WithColor, center_x - width * 0.5f, y, 0.5f, scale, scale, color);
+}
+
 static void draw_header(const char *title)
 {
     C2D_DrawRectSolid(0, 0, 0, 400, 34, COL_PAPER);
     C2D_DrawRectSolid(0, 33, 0, 400, 2, COL_PRIMARY);
-    C2D_DrawRectSolid(9, 8, 0, 10, 18, COL_PRIMARY);
-    C2D_DrawRectSolid(22, 8, 0, 10, 18, COL_SECONDARY);
-    draw_text(42, 8, 0.55f, COL_WHITE, "3dJelly");
-    draw_text(136, 9, 0.48f, COL_MUTED, "%s", title);
+    draw_text(12, 8, 0.55f, COL_WHITE, "3dJelly");
+
+    char centered[72];
+    clipped_name(title ? title : "", centered, sizeof(centered), 24);
+    draw_text_centered(200.0f, 9.0f, 0.48f, COL_MUTED, "%s", centered);
 }
 
 static void draw_bottom_help(const char *line1, const char *line2)
@@ -3161,41 +4084,6 @@ static void draw_playback(void)
     draw_text_wrap(24, 178, 0.31f, 344, COL_MUTED, "%s", g_play_url[0] ? g_play_url : "No URL.");
 }
 
-static void draw_tests(void)
-{
-    draw_header("Render Test");
-    QualityProfile q = quality_profile();
-    int w = q.width;
-    int h = q.height;
-    float scale = 1.0f;
-    if (w > 360) {
-        scale = 360.0f / (float)w;
-    }
-    if ((float)h * scale > 154.0f) {
-        scale = 154.0f / (float)h;
-    }
-    w = (int)((float)w * scale);
-    h = (int)((float)h * scale);
-    if (w < 1) {
-        w = 1;
-    }
-    if (h < 1) {
-        h = 1;
-    }
-    float x = (400 - w) / 2.0f;
-    float y = (240 - h) / 2.0f + 10.0f;
-    if (y < 42) {
-        y = 42;
-    }
-    C2D_DrawRectSolid(x, y, 0, (float)w, (float)h, 0xFF050505);
-    for (int i = 0; i < 18; i++) {
-        float px = x + (float)((i * 37 + g_frame_counter * 3) % w);
-        float py = y + (float)((i * 23 + g_frame_counter * 2) % h);
-        C2D_DrawRectSolid(px, py, 0, 18, 10, (i & 1) ? COL_PRIMARY : COL_SECONDARY);
-    }
-    draw_text(16, 214, 0.38f, COL_MUTED, "Synthetic %dp viewport, frame %u", g_cfg.quality, g_frame_counter);
-}
-
 static void render(void)
 {
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
@@ -3219,9 +4107,6 @@ static void render(void)
     case VIEW_PLAYBACK:
         draw_playback();
         break;
-    case VIEW_TESTS:
-        draw_tests();
-        break;
     }
 
     C2D_TargetClear(g_bottom, COL_PAPER);
@@ -3231,13 +4116,10 @@ static void render(void)
                          "Server format: http://your-server:8096. HTTPS works with certificate verification disabled for local/self-signed servers.");
     } else if (g_view == VIEW_PLAYBACK) {
         draw_bottom_help("B back  X play again  L/R quality",
-                         g_is_new_3ds ? "New3DS uses Jellyfin TS/H.264 with MVD first, then AVI/MJPEG fallback with PCM audio. Y mutes in MJPEG playback."
-                                      : "Old3DS defaults to 144p, with 240p/360p/480p available for testing. Y mutes in MJPEG playback.");
-    } else if (g_view == VIEW_TESTS) {
-        draw_bottom_help("SELECT return  L/R quality  START exit",
-                         "Render-only stress view for comparing 144p, 240p, 360p, and 480p viewport cost.");
+                         g_is_new_3ds ? "New3DS uses Jellyfin TS/H.264 first, then AVI/MJPEG fallback. In MJPEG playback, Y mute/unmute and Up/Down volume."
+                                      : "Old3DS defaults to 144p. In MJPEG playback, Y mute/unmute and Up/Down volume.");
     } else {
-        draw_bottom_help(g_view == VIEW_LIBRARIES ? "A open  X refresh  Y setup  L/R quality  SELECT test" : "A open/play  B back  X refresh  L/R quality",
+        draw_bottom_help(g_view == VIEW_LIBRARIES ? "A open  X refresh  Y setup  L/R quality" : "A open/play  B back  X refresh  L/R quality",
                          "Jellyfin-style native UI using dark, cyan, and purple theme colors from Jellyfin Web.");
     }
 
@@ -3358,9 +4240,6 @@ static void handle_common(u32 down)
     if (down & KEY_R) {
         change_quality(1);
     }
-    if (down & KEY_SELECT) {
-        g_view = (g_view == VIEW_TESTS) ? VIEW_LIBRARIES : VIEW_TESTS;
-    }
 }
 
 static void handle_input(u32 down)
@@ -3430,10 +4309,6 @@ static void handle_input(u32 down)
         }
         if (down & KEY_X) {
             probe_playback();
-        }
-    } else if (g_view == VIEW_TESTS) {
-        if (down & KEY_B) {
-            g_view = g_cfg.token[0] ? VIEW_LIBRARIES : VIEW_SETUP;
         }
     }
 }
