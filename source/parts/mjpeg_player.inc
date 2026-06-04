@@ -44,6 +44,7 @@ typedef struct {
     AudioPlayer *audio;
     u32 frame_count;
     u32 decode_fail_count;
+    u32 skipped_frame_count;
     u32 byte_count;
     u32 target_fps;
     u32 target_bitrate;
@@ -54,6 +55,12 @@ typedef struct {
     u64 frame_interval_ns;
     int last_width;
     int last_height;
+    int scale_src_w;
+    int scale_src_h;
+    int scale_dst_w;
+    int scale_dst_h;
+    u16 scale_x[400];
+    u16 scale_y[240];
     unsigned last_jpeg_status;
     bool avi_mode;
     bool avi_in_movi;
@@ -234,6 +241,16 @@ static bool audio_can_control(const AudioPlayer *audio)
     return audio && audio->ndsp_open && !audio->failed;
 }
 
+static bool audio_muted_for_report(const AudioPlayer *audio)
+{
+    return !audio_can_control(audio) || audio->muted;
+}
+
+static int audio_volume_for_report(const AudioPlayer *audio)
+{
+    return audio ? audio->volume_percent : g_cfg.volume_percent;
+}
+
 static const char *audio_volume_range_label(const AudioPlayer *audio)
 {
     if (!audio || audio->muted || audio->volume_percent == 0) {
@@ -277,6 +294,22 @@ static bool audio_change_volume(AudioPlayer *audio, int delta)
     g_volume_save_pending = true;
     audio_show_volume_osd(audio);
     audio_set_play_status(audio, delta >= 0 ? "Volume up." : "Volume down.");
+    return true;
+}
+
+static bool audio_set_volume_percent(AudioPlayer *audio, int volume_percent)
+{
+    if (!audio_can_control(audio)) {
+        set_play_status("Audio unavailable on this stream.");
+        return false;
+    }
+
+    audio->volume_percent = clamp_int(volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
+    audio->muted = audio->volume_percent == 0;
+    g_cfg.volume_percent = audio->volume_percent;
+    g_volume_save_pending = true;
+    audio_show_volume_osd(audio);
+    audio_set_play_status(audio, "Remote volume.");
     return true;
 }
 
@@ -510,6 +543,7 @@ static void fb_stroke_rect(u16 *fb, int x, int y, int w, int h, u16 color)
 
 static void draw_quality_osd(const MjpegPlayer *player, u16 *fb);
 static void draw_seek_osd(u16 *fb);
+static void draw_remote_message_osd(u16 *fb);
 
 static void draw_volume_osd(const MjpegPlayer *player, u16 *fb)
 {
@@ -550,7 +584,29 @@ static void draw_volume_osd(const MjpegPlayer *player, u16 *fb)
     }
 }
 
-static void draw_rgb565_frame(const MjpegPlayer *player, const u16 *pixels, int img_w, int img_h)
+static void mjpeg_prepare_scale_maps(MjpegPlayer *player, int img_w, int img_h, int dst_w, int dst_h)
+{
+    if (!player) {
+        return;
+    }
+    if (player->scale_src_w == img_w && player->scale_src_h == img_h &&
+        player->scale_dst_w == dst_w && player->scale_dst_h == dst_h) {
+        return;
+    }
+
+    player->scale_src_w = img_w;
+    player->scale_src_h = img_h;
+    player->scale_dst_w = dst_w;
+    player->scale_dst_h = dst_h;
+    for (int x = 0; x < dst_w && x < 400; x++) {
+        player->scale_x[x] = (u16)((x * img_w) / dst_w);
+    }
+    for (int y = 0; y < dst_h && y < 240; y++) {
+        player->scale_y[y] = (u16)((y * img_h) / dst_h);
+    }
+}
+
+static void draw_rgb565_frame(MjpegPlayer *player, const u16 *pixels, int img_w, int img_h)
 {
     if (!pixels || img_w <= 0 || img_h <= 0) {
         return;
@@ -603,25 +659,32 @@ static void draw_rgb565_frame(const MjpegPlayer *player, const u16 *pixels, int 
         draw_volume_osd(player, fb);
         draw_quality_osd(player, fb);
         draw_seek_osd(fb);
+        draw_remote_message_osd(fb);
         gfxFlushBuffers();
         gfxSwapBuffersGpu();
         gspWaitForVBlank();
         return;
     }
 
+    mjpeg_prepare_scale_maps(player, img_w, img_h, dst_w, dst_h);
+    const u16 *x_map = player ? player->scale_x : NULL;
+    const u16 *y_map = player ? player->scale_y : NULL;
+
     for (int y = 0; y < dst_h; y++) {
-        int sy = (y * img_h) / dst_h;
+        int sy = y_map ? y_map[y] : (y * img_h) / dst_h;
         int screen_y = y0 + y;
+        const u16 *src_row = pixels + sy * img_w;
         for (int x = 0; x < dst_w; x++) {
-            int sx = (x * img_w) / dst_w;
+            int sx = x_map ? x_map[x] : (x * img_w) / dst_w;
             int screen_x = x0 + x;
-            fb[screen_x * 240 + (239 - screen_y)] = pixels[sy * img_w + sx];
+            fb[screen_x * 240 + (239 - screen_y)] = src_row[sx];
         }
     }
 
     draw_volume_osd(player, fb);
     draw_quality_osd(player, fb);
     draw_seek_osd(fb);
+    draw_remote_message_osd(fb);
     gfxFlushBuffers();
     gfxSwapBuffersGpu();
     gspWaitForVBlank();
@@ -848,6 +911,115 @@ static void fb_draw_text_centered(u16 *fb, int center_x, int y, const char *text
 {
     int width = bottom_text_width(text, scale);
     fb_draw_text(fb, center_x - width / 2, y, text, scale, color, alpha);
+}
+
+static void message_copy_line(const char *src, char *out, size_t outsz, size_t max_chars)
+{
+    if (!out || outsz == 0) {
+        return;
+    }
+    out[0] = 0;
+    if (!src) {
+        return;
+    }
+    size_t n = strlen(src);
+    if (n > max_chars) {
+        n = max_chars;
+    }
+    if (n >= outsz) {
+        n = outsz - 1;
+    }
+    memcpy(out, src, n);
+    out[n] = 0;
+}
+
+static void message_split_text(const char *src, char *line1, size_t line1sz, char *line2, size_t line2sz, size_t max_chars)
+{
+    line1[0] = 0;
+    line2[0] = 0;
+    if (!src || !src[0]) {
+        return;
+    }
+
+    size_t len = strlen(src);
+    size_t first = len > max_chars ? max_chars : len;
+    if (len > max_chars) {
+        size_t break_pos = first;
+        while (break_pos > 8 && src[break_pos] != ' ') {
+            break_pos--;
+        }
+        if (break_pos > 8) {
+            first = break_pos;
+        }
+    }
+
+    message_copy_line(src, line1, line1sz, first);
+    const char *second = src + first;
+    while (*second == ' ') {
+        second++;
+    }
+    message_copy_line(second, line2, line2sz, max_chars);
+}
+
+static void draw_remote_message_osd(u16 *fb)
+{
+    if (!fb || !remote_message_osd_visible()) {
+        return;
+    }
+
+    u64 now = osGetTime();
+    u64 remaining = g_remote_message_until_ms > now ? g_remote_message_until_ms - now : 0;
+    int alpha = 226;
+    if (remaining < REMOTE_MESSAGE_OSD_FADE_MS) {
+        alpha = (int)((remaining * 226ULL) / REMOTE_MESSAGE_OSD_FADE_MS);
+    }
+    if (alpha <= 0) {
+        return;
+    }
+
+    char header[32];
+    char line1[40];
+    char line2[40];
+    message_copy_line(g_remote_message_header, header, sizeof(header), 28);
+    message_split_text(g_remote_message_text, line1, sizeof(line1), line2, sizeof(line2), 31);
+
+    int header_w = bottom_text_width(header, 1);
+    int line1_w = bottom_text_width(line1, 2);
+    int line2_w = line2[0] ? bottom_text_width(line2, 2) : 0;
+    int text_w = header_w;
+    if (line1_w > text_w) {
+        text_w = line1_w;
+    }
+    if (line2_w > text_w) {
+        text_w = line2_w;
+    }
+
+    int dock_w = text_w + 42;
+    if (dock_w < 238) {
+        dock_w = 238;
+    }
+    if (dock_w > 372) {
+        dock_w = 372;
+    }
+    int dock_h = line2[0] ? 70 : 51;
+    int dock_x = (400 - dock_w) / 2;
+    int dock_y = 18;
+
+    u16 shadow = rgb565_from_rgb(0, 0, 0);
+    u16 dock = rgb565_from_rgb(18, 19, 23);
+    u16 edge = rgb565_from_rgb(55, 206, 224);
+    u16 text = rgb565_from_rgb(246, 250, 255);
+    u16 muted = rgb565_from_rgb(178, 186, 198);
+
+    fb_fill_rect_blend(fb, dock_x + 3, dock_y + 4, dock_w, dock_h, shadow, alpha / 2);
+    fb_fill_rect_blend(fb, dock_x, dock_y, dock_w, dock_h, dock, alpha);
+    fb_fill_rect_blend(fb, dock_x, dock_y, dock_w, 2, edge, alpha);
+    fb_stroke_rect(fb, dock_x, dock_y, dock_w, dock_h, rgb565_from_rgb(90, 98, 112));
+    fb_draw_text(fb, dock_x + 18, dock_y + 10, header, 1, muted, alpha);
+    fb_draw_text(fb, dock_x + 18, dock_y + 25, line1, 2, text, alpha);
+    if (line2[0]) {
+        fb_draw_text(fb, dock_x + 18, dock_y + 44, line2, 2, text, alpha);
+    }
 }
 
 static int quality_digit_mask(char ch)
@@ -1323,6 +1495,8 @@ static void mjpeg_set_paused(MjpegPlayer *player, bool paused)
     mjpeg_console(player, g_play_status);
 }
 
+static void mjpeg_redraw_last_frame(MjpegPlayer *player);
+
 static bool mjpeg_preview_seek(MjpegPlayer *player, int requested_seconds, u64 base_ticks, bool extend_existing)
 {
     if (!player || requested_seconds == 0) {
@@ -1368,6 +1542,90 @@ static void mjpeg_commit_seek(void)
     char at[16];
     format_playback_time(g_mjpeg_resume_ticks, at, sizeof(at));
     set_play_status("Seeking to %s.", at);
+}
+
+static bool mjpeg_apply_remote_command(MjpegPlayer *player, AudioPlayer *audio, const RemoteCommand *cmd, MjpegPlayResult *result)
+{
+    if (!player || !cmd || cmd->type == REMOTE_CMD_NONE) {
+        return false;
+    }
+
+    switch (cmd->type) {
+    case REMOTE_CMD_PAUSE:
+        mjpeg_set_paused(player, true);
+        report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        return false;
+    case REMOTE_CMD_UNPAUSE:
+        mjpeg_set_paused(player, false);
+        report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        return false;
+    case REMOTE_CMD_TOGGLE_PAUSE:
+        mjpeg_set_paused(player, !player->paused);
+        report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        return false;
+    case REMOTE_CMD_STOP:
+        set_play_status("Stopped from Jellyfin dashboard.");
+        if (result) {
+            *result = MJPEG_PLAY_OK;
+        }
+        return true;
+    case REMOTE_CMD_SEEK:
+    {
+        u64 current = mjpeg_current_ticks(player);
+        g_mjpeg_resume_ticks = clamp_media_ticks(cmd->seek_ticks);
+        g_seek_osd_target_ticks = g_mjpeg_resume_ticks;
+        u64 diff = current > g_mjpeg_resume_ticks ? current - g_mjpeg_resume_ticks : g_mjpeg_resume_ticks - current;
+        int seconds = (int)((diff + TICKS_PER_SECOND / 2) / TICKS_PER_SECOND);
+        g_seek_osd_delta_seconds = g_mjpeg_resume_ticks < current ? -seconds : seconds;
+        g_stream_switch_serial++;
+        g_seek_osd_pending = true;
+        seek_show_osd();
+        char at[16];
+        format_playback_time(g_mjpeg_resume_ticks, at, sizeof(at));
+        set_play_status("Remote seek to %s.", at);
+        report_playback_progress(g_mjpeg_resume_ticks, true, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        if (result) {
+            *result = MJPEG_PLAY_RESTART;
+        }
+        return true;
+    }
+    case REMOTE_CMD_MESSAGE:
+        remote_show_message(cmd->header, cmd->text, cmd->timeout_ms ? cmd->timeout_ms : REMOTE_MESSAGE_OSD_MS);
+        set_play_status("Jellyfin message received.");
+        mjpeg_redraw_last_frame(player);
+        mjpeg_console(player, g_play_status);
+        return false;
+    case REMOTE_CMD_MUTE:
+        if (audio_can_control(audio) && !audio->muted) {
+            audio_toggle_mute(audio);
+        }
+        report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        return false;
+    case REMOTE_CMD_UNMUTE:
+        if (audio_can_control(audio) && audio->muted) {
+            audio_toggle_mute(audio);
+        }
+        report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        return false;
+    case REMOTE_CMD_TOGGLE_MUTE:
+        audio_toggle_mute(audio);
+        report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        return false;
+    case REMOTE_CMD_VOLUME_UP:
+        audio_change_volume(audio, VOLUME_STEP_PERCENT);
+        report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        return false;
+    case REMOTE_CMD_VOLUME_DOWN:
+        audio_change_volume(audio, -VOLUME_STEP_PERCENT);
+        report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        return false;
+    case REMOTE_CMD_SET_VOLUME:
+        audio_set_volume_percent(audio, cmd->volume_percent);
+        report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
+        return false;
+    default:
+        return false;
+    }
 }
 
 static int audio_free_wavebuf(AudioPlayer *audio)
@@ -1423,6 +1681,42 @@ static bool audio_submit_staging(AudioPlayer *audio)
     return true;
 }
 
+static bool audio_submit_partial_staging(AudioPlayer *audio, size_t min_bytes)
+{
+    if (!audio || !audio->ndsp_open || audio->muted || audio->pcm_staging_size < min_bytes) {
+        return false;
+    }
+
+    size_t bytes = audio->pcm_staging_size & ~(size_t)1;
+    if (bytes < 2) {
+        return false;
+    }
+
+    int index = audio_free_wavebuf(audio);
+    if (index < 0) {
+        return false;
+    }
+
+    memcpy(audio->pcm[index], audio->pcm_staging, bytes);
+    audio->pcm_staging_size = 0;
+    audio->wavebufs[index].data_pcm16 = audio->pcm[index];
+    audio->wavebufs[index].nsamples = (u32)(bytes / sizeof(s16));
+    DSP_FlushDataCache(audio->pcm[index], bytes);
+    ndspChnWaveBufAdd(0, &audio->wavebufs[index]);
+    audio->buffers_submitted++;
+    return true;
+}
+
+static void audio_protect_queue(AudioPlayer *audio)
+{
+    if (!audio_can_control(audio)) {
+        return;
+    }
+    if (audio_queued_wavebufs(audio) <= AUDIO_LOW_WAVEBUFS) {
+        audio_submit_partial_staging(audio, AUDIO_PCM_BUFFER_BYTES / 2);
+    }
+}
+
 static void audio_queue_pcm16_mono_raw(AudioPlayer *audio, const u8 *data, size_t size)
 {
     size &= ~(size_t)1;
@@ -1431,6 +1725,40 @@ static void audio_queue_pcm16_mono_raw(AudioPlayer *audio, const u8 *data, size_
         size_t take = size < space ? size : space;
         memcpy(audio->pcm_staging + audio->pcm_staging_size, data, take);
         audio->pcm_staging_size += take;
+        data += take;
+        size -= take;
+        if (audio->pcm_staging_size >= AUDIO_PCM_BUFFER_BYTES) {
+            audio_submit_staging(audio);
+        }
+    }
+}
+
+static void audio_queue_pcm16_mono_scaled(AudioPlayer *audio, const u8 *data, size_t size)
+{
+    if (!audio || !audio->ndsp_open || audio->failed || audio->muted || !data) {
+        return;
+    }
+
+    size &= ~(size_t)1;
+    int volume = clamp_int(audio->volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
+    while (size > 0) {
+        size_t space = AUDIO_PCM_BUFFER_BYTES - audio->pcm_staging_size;
+        if (space < 2) {
+            if (!audio_submit_staging(audio)) {
+                return;
+            }
+            space = AUDIO_PCM_BUFFER_BYTES - audio->pcm_staging_size;
+        }
+
+        size_t take = size < space ? size : space;
+        take &= ~(size_t)1;
+        for (size_t i = 0; i < take; i += 2) {
+            int sample = (s16)((u16)data[i] | ((u16)data[i + 1] << 8));
+            int boosted = (sample * volume) / 100;
+            s16 out = volume > 100 ? audio_limit_sample(boosted) : clamp_s16(boosted);
+            audio->pcm_staging[audio->pcm_staging_size++] = (u8)(out & 0xFF);
+            audio->pcm_staging[audio->pcm_staging_size++] = (u8)((out >> 8) & 0xFF);
+        }
         data += take;
         size -= take;
         if (audio->pcm_staging_size >= AUDIO_PCM_BUFFER_BYTES) {
@@ -1470,8 +1798,12 @@ static void audio_queue_pcm(AudioPlayer *audio, const u8 *data, size_t size)
         channels = 1;
     }
 
-    if (bits == 16 && channels == 1 && audio->volume_percent == 100) {
-        audio_queue_pcm16_mono_raw(audio, data, size);
+    if (bits == 16 && channels == 1) {
+        if (audio->volume_percent == 100) {
+            audio_queue_pcm16_mono_raw(audio, data, size);
+        } else {
+            audio_queue_pcm16_mono_scaled(audio, data, size);
+        }
         return;
     }
 
@@ -1718,8 +2050,41 @@ static void parse_avi_headers(MjpegPlayer *player, const u8 *buf, size_t len)
     }
 }
 
+static bool mjpeg_skip_late_frame(MjpegPlayer *player)
+{
+    if (!player || player->paused ||
+        player->frame_count < 6 || player->next_frame_time_ns == 0 || player->frame_interval_ns == 0) {
+        return false;
+    }
+
+    u64 now = monotonic_ns();
+    u64 late_by = now > player->next_frame_time_ns ? now - player->next_frame_time_ns : 0;
+    bool skip = false;
+    if (player->avi_mode && audio_can_control(player->audio)) {
+        int queued = audio_queued_wavebufs(player->audio);
+        skip = (queued <= AUDIO_LOW_WAVEBUFS && late_by >= player->frame_interval_ns) ||
+               (late_by >= player->frame_interval_ns * 3ULL);
+    } else {
+        skip = late_by >= player->frame_interval_ns * 4ULL;
+    }
+    if (!skip) {
+        return false;
+    }
+
+    player->next_frame_time_ns += player->frame_interval_ns;
+    if (player->next_frame_time_ns + player->frame_interval_ns < now) {
+        player->next_frame_time_ns = now + player->frame_interval_ns;
+    }
+    player->skipped_frame_count++;
+    return true;
+}
+
 static bool process_avi_video_chunk(MjpegPlayer *player, const u8 *data, size_t size)
 {
+    if (mjpeg_skip_late_frame(player)) {
+        return true;
+    }
+
     if (size >= 4 && data[0] == 0xFF && data[1] == 0xD8) {
         return process_mjpeg_frame(player, data, size);
     }
@@ -1770,8 +2135,9 @@ static size_t avi_prequeue_audio_after(MjpegPlayer *player, size_t pos)
 
         audio_queue_pcm(player->audio, chunk + 8, chunk_size);
         audio_refill(player->audio);
+        audio_protect_queue(player->audio);
         pos += total;
-        if (audio_queued_wavebufs(player->audio) >= AUDIO_WAVEBUF_COUNT - 1) {
+        if (audio_queued_wavebufs(player->audio) >= AUDIO_TARGET_QUEUED_WAVEBUFS) {
             break;
         }
     }
@@ -1885,6 +2251,7 @@ static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t siz
         } else {
             audio_queue_pcm(player->audio, payload, chunk_size);
             audio_refill(player->audio);
+            audio_protect_queue(player->audio);
             pos += total;
         }
     }
@@ -1959,7 +2326,7 @@ static bool feed_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t size)
         }
 
         size_t frame_len = eoi + 2;
-        if (!process_mjpeg_frame(player, player->buf, frame_len)) {
+        if (!mjpeg_skip_late_frame(player) && !process_mjpeg_frame(player, player->buf, frame_len)) {
             return false;
         }
 
@@ -2079,6 +2446,9 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     if (!player.buf || !player.pixels) {
         set_play_status("Not enough memory for MJPEG playback.");
         if (!app_system_closing()) {
+            report_playback_stopped(player.position_ticks);
+        }
+        if (!app_system_closing()) {
             mjpeg_console(&player, g_play_status);
         }
         app_wait_or_exit(1500000000ULL);
@@ -2097,6 +2467,9 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     if (!open_mjpeg_stream_with_retries(&context, active_url, sizeof(active_url), avi_container, start_time_ticks, &player, &ret, &status)) {
         set_mjpeg_open_failure_status("MJPEG stream failed", ret, status);
         if (!app_system_closing()) {
+            report_playback_stopped(player.position_ticks);
+        }
+        if (!app_system_closing()) {
             mjpeg_console(&player, g_play_status);
         }
         app_wait_or_exit(1500000000ULL);
@@ -2113,6 +2486,10 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     } else if (avi_container) {
         audio_show_volume_osd(&audio);
     }
+    if (remote_control_start()) {
+        g_session_capabilities_reported = false;
+    }
+    report_playback_start(player.position_ticks, player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
 
     u8 *chunk = (u8 *)malloc(MJPEG_READ_SIZE);
     MjpegPlayResult result = MJPEG_PLAY_FAILED;
@@ -2152,12 +2529,14 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             }
             if (down & KEY_A) {
                 mjpeg_set_paused(&player, !player.paused);
+                report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
                 if (!player.paused) {
                     paused_osd_was_visible = false;
                 }
             }
             if (down & KEY_UP) {
                 audio_change_volume(&audio, VOLUME_STEP_PERCENT);
+                report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
                 if (player.paused) {
                     mjpeg_redraw_last_frame(&player);
                     paused_osd_was_visible = audio_volume_osd_visible(&audio);
@@ -2165,6 +2544,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             }
             if (down & KEY_DOWN) {
                 audio_change_volume(&audio, -VOLUME_STEP_PERCENT);
+                report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
                 if (player.paused) {
                     mjpeg_redraw_last_frame(&player);
                     paused_osd_was_visible = audio_volume_osd_visible(&audio);
@@ -2172,11 +2552,19 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             }
             if (down & KEY_Y) {
                 audio_toggle_mute(&audio);
+                report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
                 if (player.paused) {
                     mjpeg_redraw_last_frame(&player);
                     paused_osd_was_visible = audio_volume_osd_visible(&audio);
                 }
                 mjpeg_console(&player, g_play_status);
+            }
+
+            RemoteCommand remote_cmd;
+            if (remote_control_poll(&remote_cmd)) {
+                if (mjpeg_apply_remote_command(&player, &audio, &remote_cmd, &result)) {
+                    break;
+                }
             }
 
             int seek_seconds = 0;
@@ -2225,12 +2613,14 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 mjpeg_commit_seek();
                 mjpeg_redraw_last_frame(&player);
                 mjpeg_console(&player, g_play_status);
+                report_playback_progress(g_mjpeg_resume_ticks, true, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
                 result = MJPEG_PLAY_RESTART;
                 break;
             }
 
             if (down & KEY_DLEFT) {
                 g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+                report_playback_progress(g_mjpeg_resume_ticks, player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
                 change_quality(-1);
                 g_stream_switch_serial++;
                 char quality_label[16];
@@ -2245,6 +2635,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             }
             if (down & KEY_DRIGHT) {
                 g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+                report_playback_progress(g_mjpeg_resume_ticks, player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
                 change_quality(1);
                 g_stream_switch_serial++;
                 char quality_label[16];
@@ -2257,6 +2648,8 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 result = MJPEG_PLAY_RESTART;
                 break;
             }
+
+            report_playback_progress_periodic(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
 
             if (player.paused) {
                 bool osd_visible = audio_volume_osd_visible(&audio) || seek_osd_visible() || quality_osd_visible();
@@ -2303,6 +2696,13 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
 
     if (result != MJPEG_PLAY_RESTART) {
         g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+    }
+
+    if (result != MJPEG_PLAY_RESTART) {
+        report_playback_stopped(g_mjpeg_resume_ticks);
+    }
+    if (!app_system_closing() && result != MJPEG_PLAY_RESTART) {
+        remote_control_stop();
     }
 
     if (g_volume_save_pending && !app_system_closing()) {

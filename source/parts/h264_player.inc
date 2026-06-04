@@ -515,6 +515,7 @@ static bool play_stream_url(const char *url)
     StreamPlayer player;
     bool ok = false;
     bool mvd_started = false;
+    bool remote_started = false;
     player_console(NULL, "Starting decoder...");
     if (!player_init(&player)) {
         player_free(&player, false);
@@ -539,9 +540,21 @@ static bool play_stream_url(const char *url)
     }
 
     u8 *chunk = (u8 *)malloc(STREAM_READ_SIZE);
+    bool h264_report_started = false;
+    u64 h264_report_start_ms = 0;
+    u64 h264_paused_total_ms = 0;
+    u64 h264_pause_started_ms = 0;
+    bool h264_paused = false;
+    remote_started = remote_control_start();
+    if (remote_started) {
+        g_session_capabilities_reported = false;
+    }
     if (!chunk) {
         set_play_status("Could not allocate stream read buffer.");
     } else {
+        h264_report_start_ms = osGetTime();
+        h264_report_started = true;
+        report_playback_start(0, false, false, g_cfg.volume_percent);
         set_play_status("Playing. Press B to stop.");
         player_console(&player, g_play_status);
         u64 last_console_ms = osGetTime();
@@ -557,6 +570,62 @@ static bool play_stream_url(const char *url)
                 set_play_status("Playback stopped.");
                 ok = true;
                 break;
+            }
+
+            u64 now_ms = osGetTime();
+            u64 paused_total = h264_paused_total_ms;
+            if (h264_paused && h264_pause_started_ms && now_ms > h264_pause_started_ms) {
+                paused_total += now_ms - h264_pause_started_ms;
+            }
+            u64 elapsed_ms = now_ms > h264_report_start_ms + paused_total ? now_ms - h264_report_start_ms - paused_total : 0;
+            u64 position_ticks = clamp_media_ticks(elapsed_ms * (TICKS_PER_SECOND / 1000ULL));
+            RemoteCommand remote_cmd;
+            if (remote_control_poll(&remote_cmd)) {
+                if (remote_cmd.type == REMOTE_CMD_STOP) {
+                    set_play_status("Stopped from Jellyfin dashboard.");
+                    ok = true;
+                    break;
+                } else if (remote_cmd.type == REMOTE_CMD_PAUSE) {
+                    if (!h264_paused) {
+                        h264_pause_started_ms = now_ms;
+                        h264_paused = true;
+                    }
+                    set_play_status("Paused from Jellyfin dashboard.");
+                    report_playback_progress(position_ticks, true, false, g_cfg.volume_percent);
+                    player_console(&player, g_play_status);
+                } else if (remote_cmd.type == REMOTE_CMD_UNPAUSE) {
+                    if (h264_paused && h264_pause_started_ms && now_ms > h264_pause_started_ms) {
+                        h264_paused_total_ms += now_ms - h264_pause_started_ms;
+                    }
+                    h264_pause_started_ms = 0;
+                    h264_paused = false;
+                    set_play_status("Playing. Press B to stop.");
+                    report_playback_progress(position_ticks, false, false, g_cfg.volume_percent);
+                    player_console(&player, g_play_status);
+                } else if (remote_cmd.type == REMOTE_CMD_TOGGLE_PAUSE) {
+                    if (h264_paused) {
+                        if (h264_pause_started_ms && now_ms > h264_pause_started_ms) {
+                            h264_paused_total_ms += now_ms - h264_pause_started_ms;
+                        }
+                        h264_pause_started_ms = 0;
+                        h264_paused = false;
+                    } else {
+                        h264_pause_started_ms = now_ms;
+                        h264_paused = true;
+                    }
+                    set_play_status(h264_paused ? "Paused from Jellyfin dashboard." : "Playing. Press B to stop.");
+                    report_playback_progress(position_ticks, h264_paused, false, g_cfg.volume_percent);
+                    player_console(&player, g_play_status);
+                } else if (remote_cmd.type == REMOTE_CMD_MESSAGE) {
+                    set_play_status("Jellyfin message: %.120s", remote_cmd.text);
+                    player_console(&player, g_play_status);
+                }
+            }
+
+            report_playback_progress_periodic(position_ticks, h264_paused, false, g_cfg.volume_percent);
+            if (h264_paused) {
+                svcSleepThread(50000000ULL);
+                continue;
             }
 
             u32 read_size = 0;
@@ -583,6 +652,20 @@ static bool play_stream_url(const char *url)
         free(chunk);
     }
 
+    if (h264_report_started) {
+        u64 now_ms = osGetTime();
+        u64 paused_total = h264_paused_total_ms;
+        if (h264_paused && h264_pause_started_ms && now_ms > h264_pause_started_ms) {
+            paused_total += now_ms - h264_pause_started_ms;
+        }
+        u64 elapsed_ms = now_ms > h264_report_start_ms + paused_total ? now_ms - h264_report_start_ms - paused_total : 0;
+        u64 position_ticks = clamp_media_ticks(elapsed_ms * (TICKS_PER_SECOND / 1000ULL));
+        report_playback_stopped(position_ticks);
+    }
+    if (!app_system_closing() && (h264_report_started || remote_started)) {
+        remote_control_stop();
+    }
+
     if (!app_system_closing()) {
         httpcCancelConnection(&context);
         httpcCloseContext(&context);
@@ -603,4 +686,3 @@ static bool play_stream_url(const char *url)
     playback_graphics_exit();
     return ok;
 }
-

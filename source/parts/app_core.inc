@@ -135,7 +135,7 @@ static QualityProfile quality_profile(void)
     }
     case 240:
     default: {
-        QualityProfile q = {400, 240, 820000, 64000, 24};
+        QualityProfile q = {400, 240, g_is_new_3ds ? 820000 : 720000, 64000, 24};
         return q;
     }
     }
@@ -196,7 +196,7 @@ static int mjpeg_target_bitrate(void)
         return 1200000;
     case 240:
     default:
-        return 820000;
+        return 720000;
     }
 }
 

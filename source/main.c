@@ -6,13 +6,20 @@
 #include <mbedtls/sha256.h>
 
 #include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
+#include <malloc.h>
+#include <netdb.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #define APP_VERSION "0.2.1"
 #define CONFIG_DIR "sdmc:/3dJelly"
@@ -32,7 +39,7 @@
 #define H264_BUFFER_CAP (1024 * 1024)
 #define MVD_IN_CAP (1024 * 1024)
 #define MVD_OUT_CAP (1024 * 1024)
-#define MJPEG_READ_SIZE 4096
+#define MJPEG_READ_SIZE 8192
 #define MJPEG_FRAME_CAP (1024 * 1024)
 #define MJPEG_STREAM_OPEN_RETRIES 3
 #define MJPEG_STREAM_RETRY_SLEEP_NS 450000000ULL
@@ -42,6 +49,7 @@
 #define AUDIO_CHANNELS 1
 #define AUDIO_WAVEBUF_COUNT 6
 #define AUDIO_WAVEBUF_SAMPLES 1024
+#define AUDIO_TARGET_QUEUED_WAVEBUFS 4
 #define AUDIO_READ_SIZE 4096
 #define AUDIO_PCM_BUFFER_BYTES (AUDIO_WAVEBUF_SAMPLES * AUDIO_CHANNELS * sizeof(s16))
 #define VOLUME_DEFAULT_PERCENT 100
@@ -65,6 +73,12 @@
 #define SEEK_OSD_FADE_MS 650
 #define QUALITY_OSD_MS 1900
 #define QUALITY_OSD_FADE_MS 650
+#define PLAYBACK_REPORT_INTERVAL_MS 5000
+#define REMOTE_MESSAGE_OSD_MS 5000
+#define REMOTE_MESSAGE_OSD_FADE_MS 650
+#define WEBSOCKET_SOC_BUFFER_SIZE (1024 * 1024)
+#define WEBSOCKET_RECV_CAP 4096
+#define WEBSOCKET_MESSAGE_CAP 2048
 #define TICKS_PER_SECOND 10000000ULL
 
 typedef enum {
@@ -166,6 +180,16 @@ static bool g_seek_osd_pending;
 static u64 g_quality_osd_until_ms;
 static bool g_quality_osd_pending;
 static bool g_playback_restart_in_progress;
+static bool g_session_capabilities_reported;
+static bool g_playback_report_active;
+static u64 g_playback_last_report_ms;
+static char g_remote_status[96] = "REMOTE NOT STARTED";
+static Result g_remote_last_result;
+static int g_remote_last_errno;
+static int g_remote_last_http_status;
+static u64 g_remote_message_until_ms;
+static char g_remote_message_header[64];
+static char g_remote_message_text[192];
 static unsigned g_frame_counter;
 static volatile bool g_exit_requested;
 static volatile bool g_system_close_requested;
@@ -202,6 +226,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
 static bool play_current_item_video(void);
 static u64 monotonic_ns(void);
 static u64 clamp_media_ticks(u64 ticks);
+static bool remote_http_post_json_quick(const char *path, const char *body, int timeout_ms);
 
 static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 360, 480};
 static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
@@ -210,6 +235,7 @@ static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
 #include "parts/app_core.inc"
 #include "parts/text_config.inc"
 #include "parts/jellyfin_api.inc"
+#include "parts/websocket_remote.inc"
 #include "parts/h264_player.inc"
 #include "parts/mjpeg_player.inc"
 #include "parts/ui.inc"
@@ -257,6 +283,9 @@ int main(void)
     bool system_closing = app_system_closing();
     if (!system_closing) {
         save_config();
+    }
+    if (!system_closing) {
+        remote_control_stop();
     }
     if (g_http_ready && !system_closing) {
         httpcExit();

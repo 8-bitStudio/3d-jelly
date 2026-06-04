@@ -316,6 +316,180 @@ static Result api_delete(const char *path, HttpResponse *out)
     return http_request_full(HTTPC_METHOD_DELETE, url, NULL, true, out);
 }
 
+static bool api_post_silent(const char *path, const char *body)
+{
+    HttpResponse res;
+    Result ret = api_post(path, body, true, &res);
+    bool ok = R_SUCCEEDED(ret) && res.status >= 200 && res.status < 300;
+    free_response(&res);
+    return ok;
+}
+
+static bool report_session_capabilities(void)
+{
+    if (g_session_capabilities_reported || !g_cfg.token[0] || !g_cfg.device_id[0]) {
+        return g_session_capabilities_reported;
+    }
+
+    const char *body =
+        "{"
+        "\"PlayableMediaTypes\":[\"Video\"],"
+        "\"SupportedCommands\":[\"PlayState\",\"DisplayMessage\",\"Mute\",\"Unmute\",\"ToggleMute\",\"SetVolume\",\"VolumeUp\",\"VolumeDown\"],"
+        "\"SupportsMediaControl\":true,"
+        "\"SupportsPersistentIdentifier\":true"
+        "}";
+
+    HttpResponse res;
+    Result ret = api_post("/Sessions/Capabilities/Full", body, true, &res);
+    bool ok = R_SUCCEEDED(ret) && res.status >= 200 && res.status < 300;
+    bool unsupported = res.status == 404 || res.status == 405;
+    free_response(&res);
+
+    if (!ok && unsupported) {
+        ret = api_post("/Sessions/Capabilities?playableMediaTypes=Video&supportedCommands=PlayState,DisplayMessage,Mute,Unmute,ToggleMute,SetVolume,VolumeUp,VolumeDown&supportsMediaControl=true&supportsPersistentIdentifier=true", NULL, true, &res);
+        ok = R_SUCCEEDED(ret) && res.status >= 200 && res.status < 300;
+        unsupported = res.status == 404 || res.status == 405;
+        free_response(&res);
+    }
+
+    if (ok || unsupported) {
+        g_session_capabilities_reported = true;
+    }
+    return ok;
+}
+
+static bool playback_report_ready(void)
+{
+    return g_cfg.token[0] && g_current.id[0] && g_play_session[0];
+}
+
+static int playback_report_volume_level(int volume_percent, bool muted)
+{
+    if (muted || volume_percent < 0) {
+        return 0;
+    }
+    if (volume_percent > 100) {
+        return 100;
+    }
+    return volume_percent;
+}
+
+static void build_playback_state_body(char *out, size_t outsz, u64 position_ticks, bool paused, bool muted, int volume_percent)
+{
+    char item_id[128];
+    char media_source_id[192];
+    char play_session_id[128];
+    json_escape(g_current.id, item_id, sizeof(item_id));
+    json_escape(g_play_media_source_id, media_source_id, sizeof(media_source_id));
+    json_escape(g_play_session, play_session_id, sizeof(play_session_id));
+
+    snprintf(out, outsz,
+             "{"
+             "\"CanSeek\":true,"
+             "\"ItemId\":\"%s\","
+             "\"MediaSourceId\":\"%s\","
+             "\"IsPaused\":%s,"
+             "\"IsMuted\":%s,"
+             "\"PositionTicks\":%llu,"
+             "\"VolumeLevel\":%d,"
+             "\"PlayMethod\":\"Transcode\","
+             "\"PlaySessionId\":\"%s\","
+             "\"RepeatMode\":\"RepeatNone\","
+             "\"PlaybackOrder\":\"Default\","
+             "\"NowPlayingQueue\":[]"
+             "}",
+             item_id,
+             media_source_id,
+             paused ? "true" : "false",
+             muted ? "true" : "false",
+             (unsigned long long)clamp_media_ticks(position_ticks),
+             playback_report_volume_level(volume_percent, muted),
+             play_session_id);
+}
+
+static void build_playback_stop_body(char *out, size_t outsz, u64 position_ticks)
+{
+    char item_id[128];
+    char media_source_id[192];
+    char play_session_id[128];
+    json_escape(g_current.id, item_id, sizeof(item_id));
+    json_escape(g_play_media_source_id, media_source_id, sizeof(media_source_id));
+    json_escape(g_play_session, play_session_id, sizeof(play_session_id));
+
+    snprintf(out, outsz,
+             "{"
+             "\"ItemId\":\"%s\","
+             "\"MediaSourceId\":\"%s\","
+             "\"PositionTicks\":%llu,"
+             "\"PlaySessionId\":\"%s\","
+             "\"Failed\":false,"
+             "\"NowPlayingQueue\":[]"
+             "}",
+             item_id,
+             media_source_id,
+             (unsigned long long)clamp_media_ticks(position_ticks),
+             play_session_id);
+}
+
+static bool report_playback_start(u64 position_ticks, bool paused, bool muted, int volume_percent)
+{
+    if (!playback_report_ready()) {
+        return false;
+    }
+
+    report_session_capabilities();
+
+    char body[1024];
+    build_playback_state_body(body, sizeof(body), position_ticks, paused, muted, volume_percent);
+    g_playback_report_active = true;
+    g_playback_last_report_ms = osGetTime();
+    return api_post_silent("/Sessions/Playing", body);
+}
+
+static bool report_playback_progress(u64 position_ticks, bool paused, bool muted, int volume_percent)
+{
+    if (!playback_report_ready()) {
+        return false;
+    }
+
+    char body[1024];
+    build_playback_state_body(body, sizeof(body), position_ticks, paused, muted, volume_percent);
+    g_playback_last_report_ms = osGetTime();
+    return api_post_silent("/Sessions/Playing/Progress", body);
+}
+
+static void report_playback_progress_periodic(u64 position_ticks, bool paused, bool muted, int volume_percent)
+{
+    if (!g_playback_report_active) {
+        return;
+    }
+
+    u64 now_ms = osGetTime();
+    if (g_playback_last_report_ms == 0 || now_ms - g_playback_last_report_ms >= PLAYBACK_REPORT_INTERVAL_MS) {
+        report_playback_progress(position_ticks, paused, muted, volume_percent);
+    }
+}
+
+static bool report_playback_stopped(u64 position_ticks)
+{
+    if (!g_playback_report_active) {
+        return false;
+    }
+    g_playback_report_active = false;
+    g_playback_last_report_ms = 0;
+
+    if (!playback_report_ready()) {
+        return false;
+    }
+
+    char body[1024];
+    build_playback_stop_body(body, sizeof(body), position_ticks);
+    if (app_system_closing()) {
+        return remote_http_post_json_quick("/Sessions/Playing/Stopped", body, 350);
+    }
+    return api_post_silent("/Sessions/Playing/Stopped", body);
+}
+
 static void stop_active_encoding(void)
 {
     if (!g_cfg.device_id[0] || !g_play_session[0]) {
@@ -425,6 +599,8 @@ static bool login_jellyfin(void)
     }
 
     save_config();
+    g_session_capabilities_reported = false;
+    report_session_capabilities();
     set_status("Logged in as %s.", g_cfg.username);
     return true;
 }
@@ -434,6 +610,7 @@ static bool load_libraries(void)
     if (!g_cfg.token[0] || !g_cfg.user_id[0]) {
         return false;
     }
+    report_session_capabilities();
 
     char path[256];
     snprintf(path, sizeof(path), "/Users/%s/Views?Fields=PrimaryImageAspectRatio", g_cfg.user_id);
@@ -845,4 +1022,3 @@ static bool request_playback_info(u64 start_time_ticks)
     set_status("%s", g_play_status);
     return true;
 }
-
