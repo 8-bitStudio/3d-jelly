@@ -9,7 +9,7 @@ The project is early, there will be bugs. 3dJelly is being actively worked on.
 - Username and password login through Jellyfin
 - Saved server, user, and token configuration on the SD card
 - Library and item browsing
-- 144p, 240p, and 240HQ available on old Nintendo 3ds systems. 360p and 480p are available on New Nintendo 3ds systems 
+- 144p, 240p, and 240HQ available on old Nintendo 3ds systems. 360p and 480p are available on New Nintendo 3ds systems. 240M1 is **experimental**. It may be removed later. 240M1 uses an older codec so the 3ds deocodes it faster
 - Experimental New 3DS H.264 hardware decode path
 
 ## Downloads
@@ -87,14 +87,12 @@ Makefile            devkitPro build file
 ## Known Issues
 
 - Korean/Hangul text is romanized because the default 3DS font does not render Hangul glyphs.
-- Playback may crash, particularly at higher resolutions. Lower quality modes are recommended for stability.
 - playback may hitch when audio is loud
 
 ### Roadmap
 
 Planned amd possible future features or changes
 
-- being able to skip through videos
 - a continue watching and up next
 - translations. 3dJelly only currently supports English
 - Possibly making 3dJelly work on emulators
