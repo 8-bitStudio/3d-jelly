@@ -1,8 +1,8 @@
 # 3dJelly
 
-3dJelly is a native Nintendo 3DS homebrew client for Jellyfin. It is built for browsing and playing media from a Jellyfin server on 3DS hardware and emulators.
+3dJelly is a 3rd party Nintendo 3DS homebrew client for Jellyfin. It is built for browsing and playing media from a Jellyfin server.
 
-The project is early, but it already includes login, library browsing, item browsing, a Jellyfin inspired 3DS interface, CIA packaging, and experimental playback support.
+The project is early, there will be bugs. 3dJelly is being actively worked on.
 
 ## Features
 
@@ -24,6 +24,8 @@ Download the latest CIA from the Releases page:
 https://github.com/8-bitStudio/3d-jelly/releases
 
 Install `3dJelly.cia` on a modded Nintendo 3DS, or use it with an emulator that supports CIA installation.
+
+3dJelly works best on the 'New Nintendo 3ds' but works on the originl Nintendo 3ds.
 
 ## Current Status
 
@@ -94,9 +96,10 @@ Makefile            devkitPro build file
 - MJPEG playback can be heavy on Old 3DS hardware.
 - Audio support is still being tuned.
 - Some Jellyfin server transcoding settings may affect playback.
+- does not close right
 
 ## Credits
 
 3dJelly is developed by 8 Bit Studio.
 
-Jellyfin is a separate open source media server project. 3dJelly is an unofficial client.
+[Jellyfin](https://github.com/jellyfin/jellyfin) is a separate open source media server project. 3dJelly is an unofficial client and not affiliated with jellyfin.
