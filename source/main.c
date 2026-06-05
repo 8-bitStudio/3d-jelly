@@ -43,6 +43,10 @@
 #define MVD_OUT_CAP (1024 * 1024)
 #define MJPEG_READ_SIZE 8192
 #define STREAM_READER_BUFFER_COUNT 256
+#define SETTINGS_BUFFER_KB_DEFAULT 2048
+#define SETTINGS_BUFFER_KB_MIN 1024
+#define SETTINGS_BUFFER_KB_MAX 4096
+#define SETTINGS_BUFFER_KB_STEP 1024
 #define STREAM_READER_PREBUFFER_CHUNKS 64
 #define STREAM_READER_PREBUFFER_MS 3000
 #define STREAM_READER_STACK_SIZE (16 * 1024)
@@ -96,11 +100,18 @@
 
 typedef enum {
     VIEW_SETUP,
+    VIEW_SETTINGS,
     VIEW_LIBRARIES,
     VIEW_ITEMS,
     VIEW_DETAIL,
     VIEW_PLAYBACK
 } View;
+
+typedef enum {
+    PLAYBACK_MODE_AUTO,
+    PLAYBACK_MODE_H264,
+    PLAYBACK_MODE_MJPEG
+} PlaybackMode;
 
 typedef enum {
     MJPEG_PLAY_FAILED,
@@ -138,6 +149,8 @@ typedef struct {
     char user_id[80];
     char device_id[80];
     int quality; /* 144, 240, 241 (Old3DS 240HQ), 360, or 480 */
+    int playback_mode;
+    int stream_buffer_kb;
     int volume_percent;
 } Config;
 
@@ -179,6 +192,12 @@ static int g_stack_depth;
 static int g_selected;
 static int g_scroll;
 static int g_setup_row;
+static int g_settings_row;
+static int g_settings_scroll;
+static int g_settings_confirm_row = -1;
+static u64 g_settings_confirm_until_ms;
+static u64 g_settings_popup_until_ms;
+static char g_settings_popup[128];
 static char g_screen_title[96] = "Libraries";
 static char g_current_parent_id[80];
 static char g_status[192] = "Press Y to configure a Jellyfin server.";
@@ -188,6 +207,7 @@ static char g_play_session[96];
 static char g_play_media_source_id[128];
 static char g_play_status[192];
 static View g_return_view = VIEW_ITEMS;
+static View g_settings_return_view = VIEW_LIBRARIES;
 static u64 g_mjpeg_resume_ticks;
 static u32 g_stream_switch_serial;
 static u64 g_seek_osd_until_ms;
@@ -260,8 +280,8 @@ static u64 monotonic_ns(void);
 static u64 clamp_media_ticks(u64 ticks);
 static bool remote_http_post_json_quick(const char *path, const char *body, int timeout_ms);
 
-static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 360, 480};
-static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241, 242};
+static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 241, 360, 480};
+static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
 
 
 #include "parts/app_core.inc"

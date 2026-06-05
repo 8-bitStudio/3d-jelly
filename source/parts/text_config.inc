@@ -691,6 +691,10 @@ static void ensure_defaults(void)
     if (!is_supported_quality(g_cfg.quality)) {
         g_cfg.quality = default_quality();
     }
+    if (!is_supported_playback_mode(g_cfg.playback_mode)) {
+        g_cfg.playback_mode = PLAYBACK_MODE_AUTO;
+    }
+    g_cfg.stream_buffer_kb = settings_buffer_normalized_kb(g_cfg.stream_buffer_kb);
     if (g_cfg.volume_percent < VOLUME_MIN_PERCENT || g_cfg.volume_percent > VOLUME_MAX_PERCENT) {
         g_cfg.volume_percent = VOLUME_DEFAULT_PERCENT;
     }
@@ -711,6 +715,8 @@ static void save_config(void)
     fprintf(f, "user_id=%s\n", g_cfg.user_id);
     fprintf(f, "device_id=%s\n", g_cfg.device_id);
     fprintf(f, "quality=%d\n", g_cfg.quality);
+    fprintf(f, "playback_mode=%d\n", g_cfg.playback_mode);
+    fprintf(f, "stream_buffer_kb=%d\n", g_cfg.stream_buffer_kb);
     fprintf(f, "volume_percent=%d\n", g_cfg.volume_percent);
     fclose(f);
 }
@@ -718,6 +724,8 @@ static void save_config(void)
 static void load_config(void)
 {
     memset(&g_cfg, 0, sizeof(g_cfg));
+    g_cfg.playback_mode = PLAYBACK_MODE_AUTO;
+    g_cfg.stream_buffer_kb = SETTINGS_BUFFER_KB_DEFAULT;
     g_cfg.volume_percent = -1;
     FILE *f = fopen(CONFIG_PATH, "r");
     if (!f) {
@@ -753,6 +761,10 @@ static void load_config(void)
             copy_safe(g_cfg.device_id, sizeof(g_cfg.device_id), eq);
         } else if (strcmp(line, "quality") == 0) {
             g_cfg.quality = atoi(eq);
+        } else if (strcmp(line, "playback_mode") == 0) {
+            g_cfg.playback_mode = atoi(eq);
+        } else if (strcmp(line, "stream_buffer_kb") == 0) {
+            g_cfg.stream_buffer_kb = atoi(eq);
         } else if (strcmp(line, "volume_percent") == 0) {
             g_cfg.volume_percent = atoi(eq);
         }

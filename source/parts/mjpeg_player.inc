@@ -3465,7 +3465,10 @@ static bool play_current_item_video(void)
     g_quality_osd_pending = false;
     g_quality_osd_until_ms = 0;
 
-    if (g_is_new_3ds) {
+    bool prefer_h264 = g_cfg.playback_mode == PLAYBACK_MODE_AUTO || g_cfg.playback_mode == PLAYBACK_MODE_H264;
+    bool prefer_mpeg1 = false;
+
+    if (g_is_new_3ds && prefer_h264) {
         set_play_status("New3DS detected: using H.264/MVD playback.");
         if (play_stream_url(g_play_url)) {
             return true;
@@ -3474,12 +3477,14 @@ static bool play_current_item_video(void)
             return false;
         }
         set_play_status("MVD unavailable; falling back to MJPEG software playback.");
+    } else if (g_is_new_3ds) {
+        set_play_status("New3DS detected: using selected software playback.");
     } else {
         set_play_status("Old3DS detected: using MJPEG software playback.");
     }
 
     u64 start_ticks = 0;
-    if (g_cfg.quality == 242) {
+    if (prefer_mpeg1) {
         char mpeg_url[STREAM_URL_CAP];
         for (int alias = 0; alias < 2; alias++) {
             build_mpeg1_stream_url(&g_current, mpeg_url, sizeof(mpeg_url), start_ticks, alias != 0);
@@ -3494,7 +3499,8 @@ static bool play_current_item_video(void)
                     playback_graphics_exit();
                     return false;
                 }
-                if (g_cfg.quality != 242) {
+                prefer_mpeg1 = false;
+                if (!prefer_mpeg1) {
                     break;
                 }
                 alias = -1;

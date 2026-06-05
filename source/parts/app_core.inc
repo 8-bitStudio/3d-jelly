@@ -92,6 +92,35 @@ static bool is_supported_quality(int quality)
     return quality_index(quality) >= 0;
 }
 
+static const char *playback_mode_label(int mode)
+{
+    switch (mode) {
+    case PLAYBACK_MODE_H264:
+        return "H.264 New3DS";
+    case PLAYBACK_MODE_MJPEG:
+        return "MJPEG";
+    case PLAYBACK_MODE_AUTO:
+    default:
+        return "Auto";
+    }
+}
+
+static bool is_supported_playback_mode(int mode)
+{
+    return mode >= PLAYBACK_MODE_AUTO && mode <= PLAYBACK_MODE_MJPEG;
+}
+
+static int settings_buffer_normalized_kb(int kb)
+{
+    if (kb < SETTINGS_BUFFER_KB_MIN || kb > SETTINGS_BUFFER_KB_MAX) {
+        return SETTINGS_BUFFER_KB_DEFAULT;
+    }
+    if ((kb - SETTINGS_BUFFER_KB_MIN) % SETTINGS_BUFFER_KB_STEP != 0) {
+        return SETTINGS_BUFFER_KB_DEFAULT;
+    }
+    return kb;
+}
+
 static int default_quality(void)
 {
     return g_is_new_3ds ? 240 : 144;
@@ -99,7 +128,7 @@ static int default_quality(void)
 
 static int quality_display_height(int quality)
 {
-    return (quality == 241 || quality == 242) ? 240 : quality;
+    return quality == 241 ? 240 : quality;
 }
 
 static void format_quality_label(char *out, size_t outsz, int quality)
@@ -109,8 +138,6 @@ static void format_quality_label(char *out, size_t outsz, int quality)
     }
     if (quality == 241) {
         snprintf(out, outsz, "240HQ");
-    } else if (quality == 242) {
-        snprintf(out, outsz, "240M1");
     } else {
         snprintf(out, outsz, "%dP", quality);
     }
@@ -133,10 +160,6 @@ static QualityProfile quality_profile(void)
     }
     case 241: {
         QualityProfile q = {400, 240, 1100000, 64000, 24};
-        return q;
-    }
-    case 242: {
-        QualityProfile q = {400, 240, 520000, 64000, 24};
         return q;
     }
     case 240:
@@ -163,7 +186,6 @@ static int mjpeg_target_fps(void)
         }
     }
     switch (g_cfg.quality) {
-    case 242:
     case 241:
         return 10;
     case 360:
@@ -195,8 +217,6 @@ static int mjpeg_target_bitrate(void)
     switch (g_cfg.quality) {
     case 144:
         return 420000;
-    case 242:
-        return 520000;
     case 241:
         return 1100000;
     case 360:
@@ -232,13 +252,25 @@ static void enable_playback_performance_mode(void)
 
 static void apply_hardware_defaults(void)
 {
+    bool changed = false;
     if (!g_is_new_3ds && (g_cfg.quality == 360 || g_cfg.quality == 480)) {
         g_cfg.quality = 241;
-        save_config();
-        return;
+        changed = true;
     }
     if (!is_supported_quality(g_cfg.quality)) {
         g_cfg.quality = default_quality();
+        changed = true;
+    }
+    if (!is_supported_playback_mode(g_cfg.playback_mode)) {
+        g_cfg.playback_mode = PLAYBACK_MODE_AUTO;
+        changed = true;
+    }
+    int buffer_kb = settings_buffer_normalized_kb(g_cfg.stream_buffer_kb);
+    if (g_cfg.stream_buffer_kb != buffer_kb) {
+        g_cfg.stream_buffer_kb = buffer_kb;
+        changed = true;
+    }
+    if (changed) {
         save_config();
     }
 }
