@@ -45,11 +45,14 @@ Do not use `localhost` unless Jellyfin is running inside the same device or emul
 ## Controls
 
 ```text
-A      Open or play selected item
-B      Back or stop playback
-X      Refresh current view
-Y      Setup, or audio mute toggle during MJPEG playback
-L/R    Change quality mode
+A              Open/play selected item, pause/resume during playback
+B              Back, stop playback, or cancel autoplay countdown
+X              Refresh current view
+Y              Settings from browse screens, mute/unmute during playback
+D-Pad Up/Down  Volume during playback
+D-Pad Left/Right Change quality during playback
+L/R            Scrub backward/forward during playback
+START          Exit
 ```
 
 ## Building
@@ -91,14 +94,14 @@ Makefile            devkitPro build file
 
 ### Roadmap
 
-Planned amd possible future features or changes
+Planned and possible future features or changes:
 
-- a continue watching and up next
-- Possibly making 3dJelly work on emulators
-- a massive rework on UI including seeing metadata, trailers, libraries displayed better
-- downloading feature to watch offline
-- subtitle support
-- add intro skipper and other plugin support
+- Continue watching and up next
+- Better emulator compatibility
+- Improved UI with metadata, trailers, and better library views
+- Offline downloads
+- Subtitle support
+- Intro skipper and plugin support
 
 ## Credits
 
