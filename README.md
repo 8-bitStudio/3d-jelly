@@ -9,7 +9,7 @@ The project is early, there will be bugs. 3dJelly is being actively worked on.
 - Username and password login through Jellyfin
 - Saved server, user, and token configuration on the SD card
 - Library and item browsing
-- 144p, 240p, and 240HQ available on old Nintendo 3ds systems. 360p and 480p are available on New Nintendo 3ds systems. 240M1 is **experimental**. It may be removed later. 240M1 uses an older codec so the 3ds deocodes it faster
+- 144p, 240p, and 240HQ available on old Nintendo 3ds systems. 360p and 480p are available on New Nintendo 3ds systems.
 - Experimental New 3DS H.264 hardware decode path
 
 ## Downloads
@@ -94,8 +94,6 @@ Makefile            devkitPro build file
 Planned amd possible future features or changes
 
 - a continue watching and up next
-- auto play
-- translations. 3dJelly only currently supports English
 - Possibly making 3dJelly work on emulators
 - a massive rework on UI including seeing metadata, trailers, libraries displayed better
 - downloading feature to watch offline
@@ -104,6 +102,17 @@ Planned amd possible future features or changes
 
 ## Credits
 
-3dJelly is developed by 8 Bit Studio.
+Developed by [8-bit Studio](https://github.com/8-bitStudio) and [contributors](https://github.com/8-bitStudio/3d-jelly/graphs/contributors). 
 
-[Jellyfin](https://github.com/jellyfin/jellyfin) is a separate open source media server project. 3dJelly is an unofficial client and not affiliated with jellyfin.
+## Built With
+
+- C and Make
+- [devkitPro / devkitARM](https://github.com/devkitPro) for Nintendo 3DS homebrew building
+- [libctru](https://github.com/devkitPro/libctru) for 3DS system services, input, filesystem, networking, HTTP, audio, and app lifecycle
+- [citro2d](https://github.com/devkitPro/citro2d) and [citro3d](https://github.com/devkitPro/citro3d) for native 3DS rendering
+- [Mbed TLS / mbedcrypto](https://github.com/Mbed-TLS/mbedtls) for AES and SHA-256 used by saved credential encryption
+- [picojpeg](https://github.com/richgel999/picojpeg) for JPEG/MJPEG frame decoding
+- [pl_mpeg](https://github.com/phoboslab/pl_mpeg) for the experimental MPEG-1/MP2 playback code path
+- [Project_CTR makerom](https://github.com/3DSGuy/Project_CTR) for CIA packaging
+
+[Jellyfin](https://github.com/jellyfin/jellyfin) is a separate open source media server project. 3dJelly is an unofficial client and not affiliated with Jellyfin.
