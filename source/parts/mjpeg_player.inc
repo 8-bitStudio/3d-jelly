@@ -1198,6 +1198,7 @@ static const u8 *bottom_glyph(char ch)
     static const u8 plus[7] = {0, 4, 4, 31, 4, 4, 0};
     static const u8 slash[7] = {1, 2, 2, 4, 8, 8, 16};
     static const u8 apostrophe[7] = {4, 4, 8, 0, 0, 0, 0};
+    static const u8 ampersand[7] = {12, 18, 20, 8, 21, 18, 13};
     static const u8 zero[7] = {14, 17, 19, 21, 25, 17, 14};
     static const u8 one[7] = {4, 12, 4, 4, 4, 4, 14};
     static const u8 two[7] = {14, 17, 1, 2, 4, 8, 31};
@@ -1253,6 +1254,8 @@ static const u8 *bottom_glyph(char ch)
         return slash;
     case '\'':
         return apostrophe;
+    case '&':
+        return ampersand;
     case '0':
         return zero;
     case '1':
