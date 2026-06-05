@@ -167,28 +167,74 @@ static void draw_language_selector(void)
         g_language_select_scroll = max_scroll;
     }
 
-    const float x = 82.0f;
-    const float y = 62.0f;
-    const float w = 236.0f;
-    const float h = 116.0f;
+    const float x = 38.0f;
+    const float y = 35.0f;
+    const float w = 324.0f;
+    const float h = 178.0f;
+    const float row_x = x + 30.0f;
+    const float row_y0 = y + 58.0f;
+    const float row_w = 244.0f;
+    const float row_h = 25.0f;
+    const float row_gap = 7.0f;
+    const float rail_x = x + w - 28.0f;
+    const float rail_y = row_y0 - 1.0f;
+    const float rail_h = visible_rows * row_h + (visible_rows - 1) * row_gap + 2.0f;
     const float panel_z = 0.70f;
     const float text_z = 0.86f;
-    C2D_DrawRectSolid(x, y, panel_z + 0.01f, w, h, COL_PAPER);
-    C2D_DrawRectSolid(x, y, panel_z + 0.02f, w, 4, COL_SECONDARY);
-    C2D_DrawRectSolid(x, y + h - 4, panel_z + 0.02f, w, 4, COL_PRIMARY);
-    draw_text_centered_plain_z(x + w * 0.5f, y + 14, text_z, 0.42f, COL_WHITE, tr(TR_LANGUAGE_SELECT_TITLE));
+    C2D_DrawRectSolid(0, 35, panel_z, 400, 205, 0xAA090B0F);
+    C2D_DrawRectSolid(x + 5.0f, y + 6.0f, panel_z + 0.01f, w, h, 0x99000000);
+    C2D_DrawRectSolid(x, y, panel_z + 0.02f, w, h, 0xFF171A20);
+    C2D_DrawRectSolid(x, y, panel_z + 0.03f, w, 1, 0xFF4E5663);
+    C2D_DrawRectSolid(x, y + h - 1.0f, panel_z + 0.03f, w, 1, 0xFF07080B);
+    C2D_DrawRectSolid(x, y, panel_z + 0.03f, 1, h, 0xFF4E5663);
+    C2D_DrawRectSolid(x + w - 1.0f, y, panel_z + 0.03f, 1, h, 0xFF07080B);
+    C2D_DrawRectSolid(x, y, panel_z + 0.04f, w, 4, COL_SECONDARY);
+    C2D_DrawRectSolid(x, y + 4.0f, panel_z + 0.04f, w, 2, COL_PRIMARY);
+    C2D_DrawRectSolid(x + 18.0f, y + 48.0f, panel_z + 0.04f, w - 36.0f, 1, 0xFF3B4450);
+
+    draw_text_plain_z(x + 22.0f, y + 13.0f, text_z, 0.56f, COL_WHITE, tr(TR_LANGUAGE_SELECT_TITLE));
+    char counter[16];
+    snprintf(counter, sizeof(counter), "%d/%d", g_language_select_row + 1, LANG_COUNT);
+    draw_text_plain_z(x + w - 60.0f, y + 17.0f, text_z, 0.42f, COL_MUTED, counter);
+
+    C2D_DrawRectSolid(rail_x, rail_y, panel_z + 0.04f, 4, rail_h, 0xFF303742);
+    float thumb_h = ((float)visible_rows / (float)LANG_COUNT) * rail_h;
+    if (thumb_h < 17.0f) {
+        thumb_h = 17.0f;
+    }
+    if (thumb_h > rail_h) {
+        thumb_h = rail_h;
+    }
+    float thumb_y = rail_y;
+    if (max_scroll > 0) {
+        thumb_y += ((rail_h - thumb_h) * (float)g_language_select_scroll) / (float)max_scroll;
+    }
+    C2D_DrawRectSolid(rail_x, thumb_y, panel_z + 0.05f, 4, thumb_h, COL_PRIMARY);
+    if (g_language_select_scroll > 0) {
+        draw_text_centered_plain_z(rail_x + 2.0f, rail_y - 12.0f, text_z, 0.25f, COL_SECONDARY, "^");
+    }
+    if (g_language_select_scroll < max_scroll) {
+        draw_text_centered_plain_z(rail_x + 2.0f, rail_y + rail_h - 9.0f, text_z, 0.25f, COL_SECONDARY, "v");
+    }
 
     for (int row = 0; row < visible_rows && g_language_select_scroll + row < LANG_COUNT; row++) {
         int idx = g_language_select_scroll + row;
         bool selected = idx == g_language_select_row;
-        float row_y = y + 43.0f + row * 25.0f;
-        C2D_DrawRectSolid(x + 16, row_y - 3, panel_z + 0.03f, w - 32, 21, selected ? COL_PRIMARY_DARK : ((idx & 1) ? COL_CARD_2 : COL_CARD));
-        C2D_DrawRectSolid(x + 16, row_y + 17, panel_z + 0.04f, w - 32, 1, selected ? COL_SECONDARY : 0x55000000);
-        draw_text_plain_z(x + 28, row_y + 2, text_z, 0.40f, selected ? COL_WHITE : COL_MUTED, language_label(idx));
-        if (idx == language_normalized(g_cfg.language)) {
-            draw_text_plain_z(x + w - 58, row_y + 2, text_z, 0.34f, COL_SECONDARY, "*");
+        bool current = idx == language_normalized(g_cfg.language);
+        float row_y = row_y0 + row * (row_h + row_gap);
+        u32 fill = selected ? COL_PRIMARY_DARK : (current ? 0xFF22313A : ((idx & 1) ? 0xFF1C2E35 : 0xFF18252C));
+        C2D_DrawRectSolid(row_x + 2.0f, row_y + 2.0f, panel_z + 0.03f, row_w, row_h, 0x66000000);
+        C2D_DrawRectSolid(row_x, row_y, panel_z + 0.04f, row_w, row_h, fill);
+        C2D_DrawRectSolid(row_x, row_y, panel_z + 0.05f, 4, row_h, selected ? COL_SECONDARY : (current ? COL_PRIMARY : 0xFF48515D));
+        C2D_DrawRectSolid(row_x, row_y, panel_z + 0.05f, row_w, 1, selected ? 0xFF63DFF0 : 0xFF34404A);
+        C2D_DrawRectSolid(row_x, row_y + row_h - 1.0f, panel_z + 0.05f, row_w, 1, selected ? COL_SECONDARY : 0xFF0C1015);
+        draw_text_plain_z(row_x + 16.0f, row_y + 5.0f, text_z, 0.40f, selected ? COL_WHITE : COL_MUTED, language_label(idx));
+        if (current) {
+            C2D_DrawRectSolid(row_x + row_w - 19.0f, row_y + 8.0f, panel_z + 0.06f, 8, 8, COL_SECONDARY);
+            C2D_DrawRectSolid(row_x + row_w - 17.0f, row_y + 10.0f, panel_z + 0.07f, 4, 4, COL_WHITE);
         }
     }
+
 }
 
 static const char *display_item_kind(const MediaItem *item)
@@ -196,7 +242,7 @@ static const char *display_item_kind(const MediaItem *item)
     const char *kind = item && item->collection_type[0] ? item->collection_type : (item ? item->type : "");
     int language = language_normalized(g_cfg.language);
     if (language != LANG_ES && language != LANG_JA && language != LANG_FR && language != LANG_DE &&
-        language != LANG_IT && language != LANG_RU) {
+        language != LANG_IT && language != LANG_RU && language != LANG_NL && language != LANG_PT) {
         return kind;
     }
     if (strcmp(kind, "movies") == 0 || strcmp(kind, "Movie") == 0) {
@@ -211,6 +257,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "film";
         case LANG_RU:
             return "фильм";
+        case LANG_NL:
+            return "film";
+        case LANG_PT:
+            return "filme";
         default:
             return "pel" "\xC3\xAD" "cula";
         }
@@ -227,6 +277,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "serie";
         case LANG_RU:
             return "сериал";
+        case LANG_NL:
+            return "serie";
+        case LANG_PT:
+            return "série";
         default:
             return "serie";
         }
@@ -243,6 +297,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "episodio";
         case LANG_RU:
             return "эпизод";
+        case LANG_NL:
+            return "aflevering";
+        case LANG_PT:
+            return "episódio";
         default:
             return "episodio";
         }
@@ -259,6 +317,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "stagione";
         case LANG_RU:
             return "сезон";
+        case LANG_NL:
+            return "seizoen";
+        case LANG_PT:
+            return "temporada";
         default:
             return "temporada";
         }
@@ -275,6 +337,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "cartella";
         case LANG_RU:
             return "папка";
+        case LANG_NL:
+            return "map";
+        case LANG_PT:
+            return "pasta";
         default:
             return "carpeta";
         }
@@ -291,6 +357,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "video";
         case LANG_RU:
             return "видео";
+        case LANG_NL:
+            return "video";
+        case LANG_PT:
+            return "vídeo";
         default:
             return "video";
         }

@@ -828,6 +828,12 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     case LANG_RU:
         cancel_label = "Отмена";
         break;
+    case LANG_NL:
+        cancel_label = "Annuleren";
+        break;
+    case LANG_PT:
+        cancel_label = "Cancelar";
+        break;
     default:
         break;
     }

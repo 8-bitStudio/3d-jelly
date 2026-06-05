@@ -126,6 +126,8 @@ typedef enum {
     LANG_DE,
     LANG_IT,
     LANG_RU,
+    LANG_NL,
+    LANG_PT,
     LANG_COUNT
 } AppLanguage;
 
