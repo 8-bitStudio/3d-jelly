@@ -128,6 +128,7 @@ typedef enum {
     LANG_RU,
     LANG_NL,
     LANG_PT,
+    LANG_KO,
     LANG_COUNT
 } AppLanguage;
 
@@ -205,7 +206,9 @@ static View g_view = VIEW_SETUP;
 static C3D_RenderTarget *g_top;
 static C3D_RenderTarget *g_bottom;
 static C2D_TextBuf g_text;
+static C2D_Font g_font_kor;
 static bool g_ui_ready;
+static bool g_cfgu_ready;
 
 static MediaItem g_libraries[MAX_LIBRARIES];
 static int g_library_count;

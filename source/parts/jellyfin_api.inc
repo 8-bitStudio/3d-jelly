@@ -834,6 +834,9 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     case LANG_PT:
         cancel_label = "Cancelar";
         break;
+    case LANG_KO:
+        cancel_label = "취소";
+        break;
     default:
         break;
     }

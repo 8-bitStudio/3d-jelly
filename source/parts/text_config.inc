@@ -68,99 +68,10 @@ static bool append_utf8_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
     return true;
 }
 
-static bool append_hangul_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
-{
-    static const char *initials[] = {
-        "g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s",
-        "ss", "", "j", "jj", "ch", "k", "t", "p", "h"
-    };
-    static const char *vowels[] = {
-        "a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa",
-        "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"
-    };
-    static const char *finals[] = {
-        "", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lk",
-        "lm", "lb", "ls", "lt", "lp", "lh", "m", "p", "ps", "t",
-        "t", "ng", "t", "t", "k", "t", "p", "t"
-    };
-
-    if (cp >= 0xAC00 && cp <= 0xD7A3) {
-        u32 s = cp - 0xAC00;
-        u32 initial = s / (21 * 28);
-        u32 vowel = (s % (21 * 28)) / 28;
-        u32 final = s % 28;
-        return append_text(out, outsz, w, initials[initial]) &&
-               append_text(out, outsz, w, vowels[vowel]) &&
-               append_text(out, outsz, w, finals[final]);
-    }
-
-    switch (cp) {
-    case 0x3131:
-    case 0x1100:
-        return append_text(out, outsz, w, "g");
-    case 0x3132:
-    case 0x1101:
-        return append_text(out, outsz, w, "kk");
-    case 0x3134:
-    case 0x1102:
-        return append_text(out, outsz, w, "n");
-    case 0x3137:
-    case 0x1103:
-        return append_text(out, outsz, w, "d");
-    case 0x3138:
-    case 0x1104:
-        return append_text(out, outsz, w, "tt");
-    case 0x3139:
-    case 0x1105:
-        return append_text(out, outsz, w, "r");
-    case 0x3141:
-    case 0x1106:
-        return append_text(out, outsz, w, "m");
-    case 0x3142:
-    case 0x1107:
-        return append_text(out, outsz, w, "b");
-    case 0x3143:
-    case 0x1108:
-        return append_text(out, outsz, w, "pp");
-    case 0x3145:
-    case 0x1109:
-        return append_text(out, outsz, w, "s");
-    case 0x3146:
-    case 0x110A:
-        return append_text(out, outsz, w, "ss");
-    case 0x3147:
-    case 0x110B:
-        return append_text(out, outsz, w, "ng");
-    case 0x3148:
-    case 0x110C:
-        return append_text(out, outsz, w, "j");
-    case 0x3149:
-    case 0x110D:
-        return append_text(out, outsz, w, "jj");
-    case 0x314A:
-    case 0x110E:
-        return append_text(out, outsz, w, "ch");
-    case 0x314B:
-    case 0x110F:
-        return append_text(out, outsz, w, "k");
-    case 0x314C:
-    case 0x1110:
-        return append_text(out, outsz, w, "t");
-    case 0x314D:
-    case 0x1111:
-        return append_text(out, outsz, w, "p");
-    case 0x314E:
-    case 0x1112:
-        return append_text(out, outsz, w, "h");
-    default:
-        return false;
-    }
-}
-
 static bool append_display_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
 {
     if ((cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0x3130 && cp <= 0x318F) || (cp >= 0x1100 && cp <= 0x11FF)) {
-        return append_hangul_codepoint(out, outsz, w, cp);
+        return append_utf8_codepoint(out, outsz, w, cp);
     }
 
     switch (cp) {

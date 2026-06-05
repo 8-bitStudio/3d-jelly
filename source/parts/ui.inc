@@ -28,6 +28,42 @@ static void clipped_name(const char *src, char *out, size_t outsz, size_t max_ch
     }
 }
 
+static bool ui_codepoint_is_hangul(u32 cp)
+{
+    return (cp >= 0xAC00 && cp <= 0xD7A3) ||
+           (cp >= 0x3130 && cp <= 0x318F) ||
+           (cp >= 0x1100 && cp <= 0x11FF);
+}
+
+static bool ui_text_has_hangul(const char *text)
+{
+    const char *p = text ? text : "";
+    const char *end = p + strlen(p);
+    while (p < end) {
+        u32 cp = 0;
+        size_t len = read_utf8_codepoint(p, end, &cp);
+        if (len == 0) {
+            p++;
+            continue;
+        }
+        if (ui_codepoint_is_hangul(cp)) {
+            return true;
+        }
+        p += len;
+    }
+    return false;
+}
+
+static void ui_text_parse(C2D_Text *text, const char *src)
+{
+    const char *safe = src ? src : "";
+    if (g_font_kor && ui_text_has_hangul(safe)) {
+        C2D_TextFontParse(text, g_font_kor, g_text, safe);
+    } else {
+        C2D_TextParse(text, g_text, safe);
+    }
+}
+
 static void draw_text(float x, float y, float scale, u32 color, const char *fmt, ...)
 {
     char buf[384];
@@ -37,7 +73,7 @@ static void draw_text(float x, float y, float scale, u32 color, const char *fmt,
     va_end(ap);
 
     C2D_Text t;
-    C2D_TextParse(&t, g_text, buf);
+    ui_text_parse(&t, buf);
     C2D_TextOptimize(&t);
     C2D_DrawText(&t, C2D_WithColor, x, y, 0.5f, scale, scale, color);
 }
@@ -51,7 +87,7 @@ static void draw_text_wrap(float x, float y, float scale, float wrap, u32 color,
     va_end(ap);
 
     C2D_Text t;
-    C2D_TextParse(&t, g_text, buf);
+    ui_text_parse(&t, buf);
     C2D_TextOptimize(&t);
     C2D_DrawText(&t, C2D_WithColor | C2D_WordWrap, x, y, 0.5f, scale, scale, color, wrap);
 }
@@ -65,7 +101,7 @@ static void draw_text_centered(float center_x, float y, float scale, u32 color, 
     va_end(ap);
 
     C2D_Text t;
-    C2D_TextParse(&t, g_text, buf);
+    ui_text_parse(&t, buf);
     C2D_TextOptimize(&t);
     float width = 0.0f;
     float height = 0.0f;
@@ -77,7 +113,7 @@ static void draw_text_centered(float center_x, float y, float scale, u32 color, 
 static void draw_text_plain_z(float x, float y, float z, float scale, u32 color, const char *text)
 {
     C2D_Text t;
-    C2D_TextParse(&t, g_text, text ? text : "");
+    ui_text_parse(&t, text ? text : "");
     C2D_TextOptimize(&t);
     C2D_DrawText(&t, C2D_WithColor, x, y, z, scale, scale, color);
 }
@@ -85,7 +121,7 @@ static void draw_text_plain_z(float x, float y, float z, float scale, u32 color,
 static void draw_text_centered_plain_z(float center_x, float y, float z, float scale, u32 color, const char *text)
 {
     C2D_Text t;
-    C2D_TextParse(&t, g_text, text ? text : "");
+    ui_text_parse(&t, text ? text : "");
     C2D_TextOptimize(&t);
     float width = 0.0f;
     float height = 0.0f;
@@ -242,13 +278,16 @@ static const char *display_item_kind(const MediaItem *item)
     const char *kind = item && item->collection_type[0] ? item->collection_type : (item ? item->type : "");
     int language = language_normalized(g_cfg.language);
     if (language != LANG_ES && language != LANG_JA && language != LANG_FR && language != LANG_DE &&
-        language != LANG_IT && language != LANG_RU && language != LANG_NL && language != LANG_PT) {
+        language != LANG_IT && language != LANG_RU && language != LANG_NL && language != LANG_PT &&
+        language != LANG_KO) {
         return kind;
     }
     if (strcmp(kind, "movies") == 0 || strcmp(kind, "Movie") == 0) {
         switch (language) {
         case LANG_JA:
             return "映画";
+        case LANG_KO:
+            return "영화";
         case LANG_FR:
             return "film";
         case LANG_DE:
@@ -269,6 +308,8 @@ static const char *display_item_kind(const MediaItem *item)
         switch (language) {
         case LANG_JA:
             return "シリーズ";
+        case LANG_KO:
+            return "시리즈";
         case LANG_FR:
             return "série";
         case LANG_DE:
@@ -289,6 +330,8 @@ static const char *display_item_kind(const MediaItem *item)
         switch (language) {
         case LANG_JA:
             return "エピソード";
+        case LANG_KO:
+            return "에피소드";
         case LANG_FR:
             return "épisode";
         case LANG_DE:
@@ -309,6 +352,8 @@ static const char *display_item_kind(const MediaItem *item)
         switch (language) {
         case LANG_JA:
             return "シーズン";
+        case LANG_KO:
+            return "시즌";
         case LANG_FR:
             return "saison";
         case LANG_DE:
@@ -329,6 +374,8 @@ static const char *display_item_kind(const MediaItem *item)
         switch (language) {
         case LANG_JA:
             return "フォルダ";
+        case LANG_KO:
+            return "폴더";
         case LANG_FR:
             return "dossier";
         case LANG_DE:
@@ -349,6 +396,8 @@ static const char *display_item_kind(const MediaItem *item)
         switch (language) {
         case LANG_JA:
             return "動画";
+        case LANG_KO:
+            return "동영상";
         case LANG_FR:
             return "vidéo";
         case LANG_DE:
@@ -683,6 +732,7 @@ static void ui_graphics_init(void)
     }
 
     gfxInitDefault();
+    g_cfgu_ready = R_SUCCEEDED(cfguInit());
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
     C2D_Prepare();
@@ -690,6 +740,9 @@ static void ui_graphics_init(void)
     g_top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
     g_bottom = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
     g_text = C2D_TextBufNew(8192);
+    if (g_cfgu_ready) {
+        g_font_kor = C2D_FontLoadSystem(CFG_REGION_KOR);
+    }
     g_ui_ready = true;
 }
 
@@ -703,8 +756,16 @@ static void ui_graphics_exit(void)
         C2D_TextBufDelete(g_text);
         g_text = NULL;
     }
+    if (g_font_kor) {
+        C2D_FontFree(g_font_kor);
+        g_font_kor = NULL;
+    }
     C2D_Fini();
     C3D_Fini();
+    if (g_cfgu_ready) {
+        cfguExit();
+        g_cfgu_ready = false;
+    }
     gfxExit();
 
     g_top = NULL;

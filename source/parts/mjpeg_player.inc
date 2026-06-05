@@ -767,6 +767,427 @@ static void bottom_stroke_rect(u8 *fb, int x, int y, int w, int h, u8 r, u8 g, u
     bottom_fill_rect(fb, x + w - 1, y, 1, h, r, g, b);
 }
 
+#define HANGUL_CELL_SIZE 12
+#define HANGUL_ADVANCE 13
+
+typedef void (*GlyphFillRectFn)(void *target, int x, int y, int w, int h, u32 color, int alpha);
+
+static void glyph_fill_rect_bottom(void *target, int x, int y, int w, int h, u32 color, int alpha)
+{
+    (void)alpha;
+    bottom_fill_rect((u8 *)target, x, y, w, h,
+                     (u8)((color >> 16) & 0xFF),
+                     (u8)((color >> 8) & 0xFF),
+                     (u8)(color & 0xFF));
+}
+
+static void glyph_fill_rect_top(void *target, int x, int y, int w, int h, u32 color, int alpha)
+{
+    fb_fill_rect_blend((u16 *)target, x, y, w, h, (u16)color, alpha);
+}
+
+static bool text_next_codepoint(const char **p, u32 *cp)
+{
+    if (!p || !*p || !**p || !cp) {
+        return false;
+    }
+
+    const char *end = *p + strlen(*p);
+    size_t len = read_utf8_codepoint(*p, end, cp);
+    if (len == 0) {
+        *cp = '?';
+        (*p)++;
+        return true;
+    }
+    *p += len;
+    return true;
+}
+
+static bool codepoint_is_hangul_syllable(u32 cp)
+{
+    return cp >= 0xAC00 && cp <= 0xD7A3;
+}
+
+static int glyph_advance_for_codepoint(u32 cp, int scale)
+{
+    return (codepoint_is_hangul_syllable(cp) ? HANGUL_ADVANCE : 6) * scale;
+}
+
+static void hangul_rect(void *target, GlyphFillRectFn fill, int ox, int oy, int scale,
+                        u32 color, int alpha, int x, int y, int w, int h)
+{
+    if (!target || !fill || scale <= 0 || w <= 0 || h <= 0) {
+        return;
+    }
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if (x + w > HANGUL_CELL_SIZE) {
+        w = HANGUL_CELL_SIZE - x;
+    }
+    if (y + h > HANGUL_CELL_SIZE) {
+        h = HANGUL_CELL_SIZE - y;
+    }
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    fill(target, ox + x * scale, oy + y * scale, w * scale, h * scale, color, alpha);
+}
+
+static void hangul_dot(void *target, GlyphFillRectFn fill, int ox, int oy, int scale,
+                       u32 color, int alpha, int x, int y)
+{
+    hangul_rect(target, fill, ox, oy, scale, color, alpha, x, y, 1, 1);
+}
+
+static void hangul_hline(void *target, GlyphFillRectFn fill, int ox, int oy, int scale,
+                         u32 color, int alpha, int x0, int x1, int y)
+{
+    if (x1 < x0) {
+        int tmp = x0;
+        x0 = x1;
+        x1 = tmp;
+    }
+    hangul_rect(target, fill, ox, oy, scale, color, alpha, x0, y, x1 - x0 + 1, 1);
+}
+
+static void hangul_vline(void *target, GlyphFillRectFn fill, int ox, int oy, int scale,
+                         u32 color, int alpha, int x, int y0, int y1)
+{
+    if (y1 < y0) {
+        int tmp = y0;
+        y0 = y1;
+        y1 = tmp;
+    }
+    hangul_rect(target, fill, ox, oy, scale, color, alpha, x, y0, 1, y1 - y0 + 1);
+}
+
+static void hangul_line(void *target, GlyphFillRectFn fill, int ox, int oy, int scale,
+                        u32 color, int alpha, int x0, int y0, int x1, int y1)
+{
+    int dx = x1 > x0 ? x1 - x0 : x0 - x1;
+    int sx = x0 < x1 ? 1 : -1;
+    int dy = y1 > y0 ? y0 - y1 : y1 - y0;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    for (;;) {
+        hangul_dot(target, fill, ox, oy, scale, color, alpha, x0, y0);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        int e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+static void hangul_draw_consonant(void *target, GlyphFillRectFn fill, int ox, int oy, int scale,
+                                  u32 color, int alpha, int consonant, int x, int y, int w, int h)
+{
+    if (w < 2 || h < 2) {
+        return;
+    }
+
+    if (consonant == 1 || consonant == 4 || consonant == 8 || consonant == 10 || consonant == 13) {
+        int half = w / 2;
+        int base = consonant == 1 ? 0 : (consonant == 4 ? 3 : (consonant == 8 ? 7 : (consonant == 10 ? 9 : 12)));
+        hangul_draw_consonant(target, fill, ox, oy, scale, color, alpha, base, x, y, half, h);
+        hangul_draw_consonant(target, fill, ox, oy, scale, color, alpha, base, x + half, y, w - half, h);
+        return;
+    }
+
+    int l = x;
+    int r = x + w - 1;
+    int t = y;
+    int b = y + h - 1;
+    int mx = (l + r) / 2;
+    int my = (t + b) / 2;
+    int lower_mid = my + (b > my ? 1 : 0);
+
+    switch (consonant) {
+    case 0: /* ㄱ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, t);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t, b);
+        break;
+    case 2: /* ㄴ */
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, l, t, b);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, b);
+        break;
+    case 3: /* ㄷ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, t);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, l, t, b);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, b);
+        break;
+    case 5: /* ㄹ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, t);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t, my);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, my);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, l, my, b);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, b);
+        break;
+    case 6: /* ㅁ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, t);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, l, t, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t, b);
+        break;
+    case 7: /* ㅂ */
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, l, t, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t, b);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, my);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, b);
+        break;
+    case 9: /* ㅅ */
+        hangul_line(target, fill, ox, oy, scale, color, alpha, mx, t, l, b);
+        hangul_line(target, fill, ox, oy, scale, color, alpha, mx, t, r, b);
+        break;
+    case 11: /* ㅇ */
+        if (w > 3 && h > 3) {
+            hangul_hline(target, fill, ox, oy, scale, color, alpha, l + 1, r - 1, t);
+            hangul_hline(target, fill, ox, oy, scale, color, alpha, l + 1, r - 1, b);
+            hangul_vline(target, fill, ox, oy, scale, color, alpha, l, t + 1, b - 1);
+            hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t + 1, b - 1);
+        } else {
+            hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, my);
+        }
+        break;
+    case 12: /* ㅈ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, t);
+        hangul_line(target, fill, ox, oy, scale, color, alpha, mx, t + 1, l, b);
+        hangul_line(target, fill, ox, oy, scale, color, alpha, mx, t + 1, r, b);
+        break;
+    case 14: /* ㅊ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, mx - 1, mx + 1, t);
+        hangul_draw_consonant(target, fill, ox, oy, scale, color, alpha, 12, x, y + 2, w, h - 2);
+        break;
+    case 15: /* ㅋ */
+        hangul_draw_consonant(target, fill, ox, oy, scale, color, alpha, 0, x, y, w, h);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, my);
+        break;
+    case 16: /* ㅌ */
+        hangul_draw_consonant(target, fill, ox, oy, scale, color, alpha, 3, x, y, w, h);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, my);
+        break;
+    case 17: /* ㅍ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, t);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, l, t, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, mx, t, b);
+        break;
+    case 18: /* ㅎ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, mx - 1, mx + 1, t);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l + 1, r - 1, my);
+        hangul_draw_consonant(target, fill, ox, oy, scale, color, alpha, 11, x + 1, lower_mid, w - 2, b - lower_mid + 1);
+        break;
+    default:
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, my);
+        break;
+    }
+}
+
+static void hangul_draw_vertical_vowel(void *target, GlyphFillRectFn fill, int ox, int oy, int scale,
+                                       u32 color, int alpha, int vowel, int x, int y, int w, int h)
+{
+    int l = x;
+    int r = x + w - 1;
+    int t = y;
+    int b = y + h - 1;
+    int mx = (l + r) / 2;
+    int y1 = y + h / 3;
+    int y2 = y + (2 * h) / 3;
+
+    switch (vowel) {
+    case 0: /* ㅏ */
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, mx, t, b);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, mx, r, (t + b) / 2);
+        break;
+    case 1: /* ㅐ */
+        hangul_draw_vertical_vowel(target, fill, ox, oy, scale, color, alpha, 0, x, y, w - 1, h);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t, b);
+        break;
+    case 2: /* ㅑ */
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, mx, t, b);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, mx, r, y1);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, mx, r, y2);
+        break;
+    case 3: /* ㅒ */
+        hangul_draw_vertical_vowel(target, fill, ox, oy, scale, color, alpha, 2, x, y, w - 1, h);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t, b);
+        break;
+    case 4: /* ㅓ */
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, mx, t, b);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, mx, (t + b) / 2);
+        break;
+    case 5: /* ㅔ */
+        hangul_draw_vertical_vowel(target, fill, ox, oy, scale, color, alpha, 4, x, y, w - 1, h);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t, b);
+        break;
+    case 6: /* ㅕ */
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, mx, t, b);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, mx, y1);
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, mx, y2);
+        break;
+    case 7: /* ㅖ */
+        hangul_draw_vertical_vowel(target, fill, ox, oy, scale, color, alpha, 6, x, y, w - 1, h);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, r, t, b);
+        break;
+    case 20: /* ㅣ */
+    default:
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, mx, t, b);
+        break;
+    }
+}
+
+static void hangul_draw_horizontal_vowel(void *target, GlyphFillRectFn fill, int ox, int oy, int scale,
+                                         u32 color, int alpha, int vowel, int x, int y, int w, int h)
+{
+    int l = x;
+    int r = x + w - 1;
+    int t = y;
+    int b = y + h - 1;
+    int mx = (l + r) / 2;
+    int my = (t + b) / 2;
+    int x1 = x + w / 3;
+    int x2 = x + (2 * w) / 3;
+
+    switch (vowel) {
+    case 8: /* ㅗ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, mx, t, b);
+        break;
+    case 12: /* ㅛ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, x1, t, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, x2, t, b);
+        break;
+    case 13: /* ㅜ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, t);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, mx, t, b);
+        break;
+    case 17: /* ㅠ */
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, t);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, x1, t, b);
+        hangul_vline(target, fill, ox, oy, scale, color, alpha, x2, t, b);
+        break;
+    case 18: /* ㅡ */
+    default:
+        hangul_hline(target, fill, ox, oy, scale, color, alpha, l, r, my);
+        break;
+    }
+}
+
+static void hangul_draw_final(void *target, GlyphFillRectFn fill, int ox, int oy, int scale,
+                              u32 color, int alpha, int final, int x, int y, int w, int h)
+{
+    static const int single_map[28] = {
+        -1, 0, 1, -1, 2, -1, -1, 3, 5, -1, -1, -1, -1, -1,
+        -1, -1, 6, 7, -1, 9, 10, 11, 12, 14, 15, 16, 17, 18
+    };
+    int first = -1;
+    int second = -1;
+
+    switch (final) {
+    case 3:
+        first = 0; second = 9; break;
+    case 5:
+        first = 2; second = 12; break;
+    case 6:
+        first = 2; second = 18; break;
+    case 9:
+        first = 5; second = 0; break;
+    case 10:
+        first = 5; second = 6; break;
+    case 11:
+        first = 5; second = 7; break;
+    case 12:
+        first = 5; second = 9; break;
+    case 13:
+        first = 5; second = 16; break;
+    case 14:
+        first = 5; second = 17; break;
+    case 15:
+        first = 5; second = 18; break;
+    case 18:
+        first = 7; second = 9; break;
+    default:
+        first = final >= 0 && final < 28 ? single_map[final] : -1;
+        break;
+    }
+
+    if (first < 0) {
+        return;
+    }
+    if (second >= 0 && w >= 6) {
+        int half = w / 2;
+        hangul_draw_consonant(target, fill, ox, oy, scale, color, alpha, first, x, y, half, h);
+        hangul_draw_consonant(target, fill, ox, oy, scale, color, alpha, second, x + half, y, w - half, h);
+    } else {
+        hangul_draw_consonant(target, fill, ox, oy, scale, color, alpha, first, x, y, w, h);
+    }
+}
+
+static void hangul_draw_syllable(void *target, GlyphFillRectFn fill, int x, int y, int scale,
+                                 u32 color, int alpha, u32 cp)
+{
+    if (!codepoint_is_hangul_syllable(cp)) {
+        return;
+    }
+
+    u32 s = cp - 0xAC00;
+    int initial = (int)(s / (21 * 28));
+    int vowel = (int)((s % (21 * 28)) / 28);
+    int final = (int)(s % 28);
+    bool has_final = final != 0;
+    bool vertical = vowel <= 7 || vowel == 20;
+    bool horizontal = vowel == 8 || vowel == 12 || vowel == 13 || vowel == 17 || vowel == 18;
+
+    if (vertical) {
+        int top_h = has_final ? 7 : 11;
+        hangul_draw_consonant(target, fill, x, y, scale, color, alpha, initial, 0, 0, 7, top_h);
+        hangul_draw_vertical_vowel(target, fill, x, y, scale, color, alpha, vowel, 8, 0, 4, top_h);
+    } else if (horizontal) {
+        int cons_h = has_final ? 5 : 6;
+        int vowel_y = has_final ? 5 : 7;
+        int vowel_h = has_final ? 3 : 5;
+        hangul_draw_consonant(target, fill, x, y, scale, color, alpha, initial, 2, 0, 8, cons_h);
+        hangul_draw_horizontal_vowel(target, fill, x, y, scale, color, alpha, vowel, 1, vowel_y, 10, vowel_h);
+    } else {
+        int horiz_vowel = vowel >= 14 && vowel <= 16 ? 13 : (vowel == 19 ? 18 : 8);
+        int vert_vowel = 20;
+        switch (vowel) {
+        case 9: vert_vowel = 0; break;
+        case 10: vert_vowel = 1; break;
+        case 11: vert_vowel = 20; break;
+        case 14: vert_vowel = 4; break;
+        case 15: vert_vowel = 5; break;
+        case 16: vert_vowel = 20; break;
+        case 19: vert_vowel = 20; break;
+        default: break;
+        }
+        int top_h = has_final ? 7 : 10;
+        hangul_draw_consonant(target, fill, x, y, scale, color, alpha, initial, 0, 0, 6, top_h);
+        hangul_draw_horizontal_vowel(target, fill, x, y, scale, color, alpha, horiz_vowel, 0, 6, 8, has_final ? 3 : 5);
+        hangul_draw_vertical_vowel(target, fill, x, y, scale, color, alpha, vert_vowel, 8, 0, 4, has_final ? 9 : 11);
+    }
+
+    if (has_final) {
+        hangul_draw_final(target, fill, x, y, scale, color, alpha, final, 2, 8, 8, 4);
+    }
+}
+
 static const u8 *bottom_glyph(char ch)
 {
     static const u8 sp[7] = {0, 0, 0, 0, 0, 0, 0};
@@ -911,11 +1332,33 @@ static const u8 *bottom_glyph(char ch)
 
 static int bottom_text_width(const char *text, int scale)
 {
+    int width = 0;
     int count = 0;
-    for (size_t i = 0; text && text[i]; i++) {
+    const char *p = text ? text : "";
+    while (*p) {
+        u32 cp = 0;
+        if (!text_next_codepoint(&p, &cp)) {
+            break;
+        }
+        width += glyph_advance_for_codepoint(cp, scale);
         count++;
     }
-    return count > 0 ? count * 6 * scale - scale : 0;
+    return count > 0 ? width - scale : 0;
+}
+
+static int bottom_text_height(const char *text, int scale)
+{
+    const char *p = text ? text : "";
+    while (*p) {
+        u32 cp = 0;
+        if (!text_next_codepoint(&p, &cp)) {
+            break;
+        }
+        if (codepoint_is_hangul_syllable(cp)) {
+            return HANGUL_CELL_SIZE * scale;
+        }
+    }
+    return 7 * scale;
 }
 
 static void fb_draw_text(u16 *fb, int x, int y, const char *text, int scale, u16 color, int alpha)
@@ -925,18 +1368,26 @@ static void fb_draw_text(u16 *fb, int x, int y, const char *text, int scale, u16
     }
 
     int cx = x;
-    for (size_t i = 0; text[i]; i++) {
-        unsigned char raw = (unsigned char)text[i];
-        char c = raw < 0x80 ? (char)raw : '?';
-        const u8 *glyph = bottom_glyph(c);
-        for (int row = 0; row < 7; row++) {
-            for (int col = 0; col < 5; col++) {
-                if (glyph[row] & (1 << (4 - col))) {
-                    fb_fill_rect_blend(fb, cx + col * scale, y + row * scale, scale, scale, color, alpha);
+    const char *p = text;
+    while (*p) {
+        u32 cp = 0;
+        if (!text_next_codepoint(&p, &cp)) {
+            break;
+        }
+        if (codepoint_is_hangul_syllable(cp)) {
+            hangul_draw_syllable(fb, glyph_fill_rect_top, cx, y, scale, color, alpha, cp);
+        } else {
+            char c = cp < 0x80 ? (char)cp : '?';
+            const u8 *glyph = bottom_glyph(c);
+            for (int row = 0; row < 7; row++) {
+                for (int col = 0; col < 5; col++) {
+                    if (glyph[row] & (1 << (4 - col))) {
+                        fb_fill_rect_blend(fb, cx + col * scale, y + row * scale, scale, scale, color, alpha);
+                    }
                 }
             }
         }
-        cx += 6 * scale;
+        cx += glyph_advance_for_codepoint(cp, scale);
     }
 }
 
@@ -1460,18 +1911,27 @@ static void bottom_draw_text(u8 *fb, int x, int y, const char *text, int scale, 
     }
 
     int cx = x;
-    for (size_t i = 0; text[i]; i++) {
-        unsigned char raw = (unsigned char)text[i];
-        char c = raw < 0x80 ? (char)raw : '?';
-        const u8 *glyph = bottom_glyph(c);
-        for (int row = 0; row < 7; row++) {
-            for (int col = 0; col < 5; col++) {
-                if (glyph[row] & (1 << (4 - col))) {
-                    bottom_fill_rect(fb, cx + col * scale, y + row * scale, scale, scale, r, g, b);
+    u32 color = ((u32)r << 16) | ((u32)g << 8) | (u32)b;
+    const char *p = text;
+    while (*p) {
+        u32 cp = 0;
+        if (!text_next_codepoint(&p, &cp)) {
+            break;
+        }
+        if (codepoint_is_hangul_syllable(cp)) {
+            hangul_draw_syllable(fb, glyph_fill_rect_bottom, cx, y, scale, color, 255, cp);
+        } else {
+            char c = cp < 0x80 ? (char)cp : '?';
+            const u8 *glyph = bottom_glyph(c);
+            for (int row = 0; row < 7; row++) {
+                for (int col = 0; col < 5; col++) {
+                    if (glyph[row] & (1 << (4 - col))) {
+                        bottom_fill_rect(fb, cx + col * scale, y + row * scale, scale, scale, r, g, b);
+                    }
                 }
             }
         }
-        cx += 6 * scale;
+        cx += glyph_advance_for_codepoint(cp, scale);
     }
 }
 
@@ -1594,7 +2054,7 @@ static void bottom_draw_button(u8 *fb, int x, int y, int w, int h, const char *l
     bottom_fill_rect(fb, x, y, w, h, 28, 31, 39);
     bottom_fill_rect(fb, x, y, w, 2, 37, 41, 52);
     bottom_stroke_rect(fb, x, y, w, h, fr, fg, fbcol);
-    bottom_draw_text_centered(fb, x + w / 2, y + (h - 7) / 2, label, 1, 238, 241, 246);
+    bottom_draw_text_centered(fb, x + w / 2, y + (h - bottom_text_height(label, 1)) / 2, label, 1, 238, 241, 246);
 }
 
 static const char *playback_button_y(const AudioPlayer *audio)
@@ -1620,7 +2080,10 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "fallita") || strstr(line, "Fallita") || strstr(line, "errore") ||
                  strstr(line, "Errore") || strstr(line, "impossibile") ||
                  strstr(line, "ошиб") || strstr(line, "Ошибка") || strstr(line, "не удалось") ||
-                 strstr(line, "недостаточно") || strstr(line, "переполн"))) {
+                 strstr(line, "недостаточно") || strstr(line, "переполн") ||
+                 strstr(line, "실패") || strstr(line, "부족") || strstr(line, "할당할 수 없습니다") ||
+                 strstr(line, "넘쳤") || strstr(line, "너무 큽니다") || strstr(line, "사용할 수 없습니다") ||
+                 strstr(line, "열기 실패"))) {
         return tr(TR_STATE_ERROR);
     }
     if (line && (strstr(line, "Opening") || strstr(line, "Requesting") || strstr(line, "Abriendo") ||
@@ -1635,7 +2098,9 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "Buffering") || strstr(line, "Avvio") || strstr(line, "Provo") ||
                  strstr(line, "Открытие") || strstr(line, "Запрос") || strstr(line, "Загрузка") ||
                  strstr(line, "Буферизация") || strstr(line, "Запуск") || strstr(line, "Пробую") ||
-                 strstr(line, "Переключение"))) {
+                 strstr(line, "Переключение") || strstr(line, "여는 중") || strstr(line, "요청 중") ||
+                 strstr(line, "불러오는 중") || strstr(line, "버퍼링 중") || strstr(line, "시작 중") ||
+                 strstr(line, "시도 중") || strstr(line, "전환 중"))) {
         return tr(TR_STATE_LOADING);
     }
     if (line && (strstr(line, "stopped") || strstr(line, "Stopped") || strstr(line, "end") ||
@@ -1646,7 +2111,9 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "Ende") || strstr(line, "gestoppt") || strstr(line, "Gestoppt") ||
                  strstr(line, "beendet") || strstr(line, "abgebrochen") || strstr(line, "fine") ||
                  strstr(line, "terminata") || strstr(line, "fermato") || strstr(line, "annull") ||
-                 strstr(line, "конца") || strstr(line, "останов") || strstr(line, "отмен"))) {
+                 strstr(line, "конца") || strstr(line, "останов") || strstr(line, "отмен") ||
+                 strstr(line, "중지") || strstr(line, "끝") || strstr(line, "도달") ||
+                 strstr(line, "취소") || strstr(line, "완료"))) {
         return tr(TR_STATE_STOPPED);
     }
     return tr(TR_STATE_PLAYING);
