@@ -58,6 +58,8 @@
 #define MJPEG_STREAM_READ_RECONNECT_FRAMES 6
 #define JPEG_PIXELS_CAP (854 * 480)
 #define AUDIO_SAMPLE_RATE 22050
+#define AUDIO_SAMPLE_RATE_DEFAULT_OLD3DS 40000
+#define AUDIO_SAMPLE_RATE_DEFAULT_NEW3DS 44100
 #define AUDIO_CHANNELS 1
 #define AUDIO_WAVEBUF_COUNT 6
 #define AUDIO_WAVEBUF_SAMPLES 1024
@@ -151,6 +153,7 @@ typedef struct {
     int quality; /* 144, 240, 241 (Old3DS 240HQ), 360, or 480 */
     int playback_mode;
     int stream_buffer_kb;
+    int audio_sample_rate;
     int volume_percent;
 } Config;
 
@@ -282,6 +285,8 @@ static bool remote_http_post_json_quick(const char *path, const char *body, int 
 
 static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 241, 360, 480};
 static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
+static const int AUDIO_RATE_LEVELS_NEW3DS[] = {22050, 32000, 44100};
+static const int AUDIO_RATE_LEVELS_OLD3DS[] = {22050, 32000, 40000};
 
 
 #include "parts/app_core.inc"

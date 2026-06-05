@@ -919,6 +919,7 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
     QualityProfile q = quality_profile();
     int fps = mjpeg_target_fps();
     int bitrate = mjpeg_target_bitrate();
+    int audio_sample_rate = mjpeg_target_audio_sample_rate();
     char id[160];
     char token[256];
     char dev[160];
@@ -946,7 +947,7 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
     if (avi_container) {
         snprintf(out, outsz,
                  "%s/Videos/%s/stream?Container=avi&DeviceId=%s%s%s%s%s&VideoCodec=mjpeg&AudioCodec=pcm_s16le&VideoBitRate=%d&AudioBitRate=%d&AudioSampleRate=%d&AudioChannels=1&MaxAudioChannels=1&TranscodingMaxAudioChannels=1&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported&ApiKey=%s",
-                 g_cfg.server, id, dev, media_q, session_q, start_q, refresh_q, bitrate, AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * 16, AUDIO_SAMPLE_RATE, q.width, q.height, q.width, q.height, fps, fps, token);
+                 g_cfg.server, id, dev, media_q, session_q, start_q, refresh_q, bitrate, audio_sample_rate * AUDIO_CHANNELS * 16, audio_sample_rate, q.width, q.height, q.width, q.height, fps, fps, token);
     } else {
         snprintf(out, outsz,
                  "%s/Videos/%s/stream?Container=mjpeg&DeviceId=%s%s%s%s%s&VideoCodec=mjpeg&VideoBitRate=%d&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported&ApiKey=%s",

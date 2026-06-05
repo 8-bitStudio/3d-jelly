@@ -1900,7 +1900,7 @@ static bool audio_start(AudioPlayer *audio, const char *url)
     audio->format_tag = 1;
     audio->channels = AUDIO_CHANNELS;
     audio->bits_per_sample = 16;
-    audio->sample_rate = AUDIO_SAMPLE_RATE;
+    audio->sample_rate = (u32)mjpeg_target_audio_sample_rate();
     audio->volume_percent = clamp_int(g_cfg.volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
     audio->muted = audio->volume_percent == 0;
 
@@ -1915,7 +1915,7 @@ static bool audio_start(AudioPlayer *audio, const char *url)
     ndspSetClippingMode(NDSP_CLIP_SOFT);
     ndspChnReset(0);
     ndspChnSetInterp(0, NDSP_INTERP_LINEAR);
-    ndspChnSetRate(0, AUDIO_SAMPLE_RATE);
+    ndspChnSetRate(0, (float)audio->sample_rate);
     ndspChnSetFormat(0, NDSP_FORMAT_MONO_PCM16);
 
     float mix[12];

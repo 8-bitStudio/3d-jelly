@@ -75,6 +75,16 @@ static const int *quality_levels(int *count)
     return QUALITY_LEVELS_OLD3DS;
 }
 
+static const int *audio_rate_levels(int *count)
+{
+    if (g_is_new_3ds) {
+        *count = (int)(sizeof(AUDIO_RATE_LEVELS_NEW3DS) / sizeof(AUDIO_RATE_LEVELS_NEW3DS[0]));
+        return AUDIO_RATE_LEVELS_NEW3DS;
+    }
+    *count = (int)(sizeof(AUDIO_RATE_LEVELS_OLD3DS) / sizeof(AUDIO_RATE_LEVELS_OLD3DS[0]));
+    return AUDIO_RATE_LEVELS_OLD3DS;
+}
+
 static int quality_index(int quality)
 {
     int count = 0;
@@ -87,9 +97,39 @@ static int quality_index(int quality)
     return -1;
 }
 
+static int audio_rate_index(int rate)
+{
+    int count = 0;
+    const int *levels = audio_rate_levels(&count);
+    for (int i = 0; i < count; i++) {
+        if (levels[i] == rate) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static bool is_supported_quality(int quality)
 {
     return quality_index(quality) >= 0;
+}
+
+static int default_audio_sample_rate(void)
+{
+    return g_is_new_3ds ? AUDIO_SAMPLE_RATE_DEFAULT_NEW3DS : AUDIO_SAMPLE_RATE_DEFAULT_OLD3DS;
+}
+
+static int settings_audio_sample_rate_normalized(int rate)
+{
+    return audio_rate_index(rate) >= 0 ? rate : default_audio_sample_rate();
+}
+
+static void format_audio_rate_label(char *out, size_t outsz, int rate)
+{
+    if (!out || outsz == 0) {
+        return;
+    }
+    snprintf(out, outsz, "%d Hz", settings_audio_sample_rate_normalized(rate));
 }
 
 static const char *playback_mode_label(int mode)
@@ -229,6 +269,12 @@ static int mjpeg_target_bitrate(void)
     }
 }
 
+static int mjpeg_target_audio_sample_rate(void)
+{
+    return (g_cfg.quality == 240 || g_cfg.quality == 241) ?
+        settings_audio_sample_rate_normalized(g_cfg.audio_sample_rate) : AUDIO_SAMPLE_RATE;
+}
+
 static void detect_hardware(void)
 {
     bool is_new = false;
@@ -268,6 +314,11 @@ static void apply_hardware_defaults(void)
     int buffer_kb = settings_buffer_normalized_kb(g_cfg.stream_buffer_kb);
     if (g_cfg.stream_buffer_kb != buffer_kb) {
         g_cfg.stream_buffer_kb = buffer_kb;
+        changed = true;
+    }
+    int audio_rate = settings_audio_sample_rate_normalized(g_cfg.audio_sample_rate);
+    if (g_cfg.audio_sample_rate != audio_rate) {
+        g_cfg.audio_sample_rate = audio_rate;
         changed = true;
     }
     if (changed) {

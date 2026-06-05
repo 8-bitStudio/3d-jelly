@@ -695,6 +695,7 @@ static void ensure_defaults(void)
         g_cfg.playback_mode = PLAYBACK_MODE_AUTO;
     }
     g_cfg.stream_buffer_kb = settings_buffer_normalized_kb(g_cfg.stream_buffer_kb);
+    g_cfg.audio_sample_rate = settings_audio_sample_rate_normalized(g_cfg.audio_sample_rate);
     if (g_cfg.volume_percent < VOLUME_MIN_PERCENT || g_cfg.volume_percent > VOLUME_MAX_PERCENT) {
         g_cfg.volume_percent = VOLUME_DEFAULT_PERCENT;
     }
@@ -717,6 +718,7 @@ static void save_config(void)
     fprintf(f, "quality=%d\n", g_cfg.quality);
     fprintf(f, "playback_mode=%d\n", g_cfg.playback_mode);
     fprintf(f, "stream_buffer_kb=%d\n", g_cfg.stream_buffer_kb);
+    fprintf(f, "audio_sample_rate=%d\n", g_cfg.audio_sample_rate);
     fprintf(f, "volume_percent=%d\n", g_cfg.volume_percent);
     fclose(f);
 }
@@ -726,6 +728,7 @@ static void load_config(void)
     memset(&g_cfg, 0, sizeof(g_cfg));
     g_cfg.playback_mode = PLAYBACK_MODE_AUTO;
     g_cfg.stream_buffer_kb = SETTINGS_BUFFER_KB_DEFAULT;
+    g_cfg.audio_sample_rate = 0;
     g_cfg.volume_percent = -1;
     FILE *f = fopen(CONFIG_PATH, "r");
     if (!f) {
@@ -765,6 +768,8 @@ static void load_config(void)
             g_cfg.playback_mode = atoi(eq);
         } else if (strcmp(line, "stream_buffer_kb") == 0) {
             g_cfg.stream_buffer_kb = atoi(eq);
+        } else if (strcmp(line, "audio_sample_rate") == 0) {
+            g_cfg.audio_sample_rate = atoi(eq);
         } else if (strcmp(line, "volume_percent") == 0) {
             g_cfg.volume_percent = atoi(eq);
         }

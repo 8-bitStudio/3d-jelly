@@ -185,6 +185,7 @@ enum {
     SETTINGS_ROW_QUALITY,
     SETTINGS_ROW_PLAYBACK,
     SETTINGS_ROW_BUFFER,
+    SETTINGS_ROW_AUDIO,
     SETTINGS_ROW_SERVER,
     SETTINGS_ROW_USERNAME,
     SETTINGS_ROW_CLEAR_LOGIN,
@@ -209,6 +210,9 @@ static void settings_value(int row, char *out, size_t outsz)
         break;
     case SETTINGS_ROW_BUFFER:
         snprintf(out, outsz, "%d KB", settings_buffer_normalized_kb(g_cfg.stream_buffer_kb));
+        break;
+    case SETTINGS_ROW_AUDIO:
+        format_audio_rate_label(out, outsz, g_cfg.audio_sample_rate);
         break;
     case SETTINGS_ROW_SERVER:
         clipped_name(g_cfg.server[0] ? g_cfg.server : "not set", out, outsz, 25);
@@ -243,6 +247,8 @@ static const char *settings_label(int row)
         return "Playback mode";
     case SETTINGS_ROW_BUFFER:
         return "Stream buffer";
+    case SETTINGS_ROW_AUDIO:
+        return "Audio rate";
     case SETTINGS_ROW_SERVER:
         return "Server URL";
     case SETTINGS_ROW_USERNAME:
@@ -294,6 +300,15 @@ static void draw_settings(void)
     if (g_settings_row == SETTINGS_ROW_BUFFER) {
         draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
                        "Saved preference. Playback uses stable 2048 KB in this build.");
+    } else if (g_settings_row == SETTINGS_ROW_AUDIO) {
+        int rate = settings_audio_sample_rate_normalized(g_cfg.audio_sample_rate);
+        if (!g_is_new_3ds && rate == 40000) {
+            draw_text_wrap(28, 217, 0.31f, 344, COL_SECONDARY,
+                           "40000 Hz sounds cleaner but may cause tiny micro hitches. 32000 Hz is safer.");
+        } else {
+            draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
+                           "Applies to 240p and 240HQ. 144p stays at 22050 Hz.");
+        }
     } else if (g_settings_row == SETTINGS_ROW_LANGUAGE) {
         draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
                        "Press A to view translation status.");
@@ -536,6 +551,31 @@ static void change_buffer_preference(int dir)
     }
 }
 
+static void change_audio_rate_setting(int dir)
+{
+    int count = 0;
+    const int *levels = audio_rate_levels(&count);
+    if (count <= 0) {
+        return;
+    }
+    int idx = audio_rate_index(g_cfg.audio_sample_rate);
+    if (idx < 0) {
+        idx = audio_rate_index(default_audio_sample_rate());
+    }
+    if (idx < 0) {
+        idx = 0;
+    }
+    idx = (idx + (dir >= 0 ? 1 : -1) + count) % count;
+    g_cfg.audio_sample_rate = levels[idx];
+    save_config();
+    settings_cancel_confirm();
+    if (!g_is_new_3ds && g_cfg.audio_sample_rate == 40000) {
+        set_status("Audio set to 40000 Hz. May cause tiny micro hitches.");
+    } else {
+        set_status("Audio set to %d Hz.", g_cfg.audio_sample_rate);
+    }
+}
+
 static void settings_clear_saved_login(void)
 {
     g_cfg.password[0] = 0;
@@ -567,10 +607,11 @@ static void settings_reset_defaults(void)
     g_cfg.quality = default_quality();
     g_cfg.playback_mode = PLAYBACK_MODE_AUTO;
     g_cfg.stream_buffer_kb = SETTINGS_BUFFER_KB_DEFAULT;
+    g_cfg.audio_sample_rate = default_audio_sample_rate();
     save_config();
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-    set_status("Defaults restored: %s, Auto, %d KB.", quality_label, g_cfg.stream_buffer_kb);
+    set_status("Defaults restored: %s, Auto, %d KB, %d Hz.", quality_label, g_cfg.stream_buffer_kb, g_cfg.audio_sample_rate);
 }
 
 static void handle_settings(u32 down)
@@ -608,6 +649,8 @@ static void handle_settings(u32 down)
             change_playback_mode(dir);
         } else if (g_settings_row == SETTINGS_ROW_BUFFER) {
             change_buffer_preference(dir);
+        } else if (g_settings_row == SETTINGS_ROW_AUDIO) {
+            change_audio_rate_setting(dir);
         }
     }
 
@@ -624,6 +667,9 @@ static void handle_settings(u32 down)
         break;
     case SETTINGS_ROW_BUFFER:
         change_buffer_preference(1);
+        break;
+    case SETTINGS_ROW_AUDIO:
+        change_audio_rate_setting(1);
         break;
     case SETTINGS_ROW_SERVER: {
         char old_server[sizeof(g_cfg.server)];
