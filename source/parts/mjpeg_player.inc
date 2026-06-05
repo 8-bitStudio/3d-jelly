@@ -130,9 +130,9 @@ static s16 audio_limit_sample(int value)
 static const char *audio_y_action(const AudioPlayer *audio)
 {
     if (!audio || !audio->ndsp_open) {
-        return "Y audio";
+        return tr(TR_AUDIO_ACTION_AUDIO);
     }
-    return audio->muted ? "Y unmute" : "Y mute";
+    return audio->muted ? tr(TR_AUDIO_ACTION_UNMUTE) : tr(TR_AUDIO_ACTION_MUTE);
 }
 
 static void audio_show_volume_osd(AudioPlayer *audio)
@@ -279,10 +279,10 @@ static int audio_volume_for_report(const AudioPlayer *audio)
 static const char *audio_volume_range_label(const AudioPlayer *audio)
 {
     if (!audio || audio->muted || audio->volume_percent == 0) {
-        return "muted";
+        return language_normalized(g_cfg.language) == LANG_ES ? "silencio" : "muted";
     }
     if (audio->volume_percent > 100) {
-        return "boost";
+        return language_normalized(g_cfg.language) == LANG_ES ? "extra" : "boost";
     }
     return "normal";
 }
@@ -290,11 +290,11 @@ static const char *audio_volume_range_label(const AudioPlayer *audio)
 static void audio_set_play_status(AudioPlayer *audio, const char *prefix)
 {
     if (!audio_can_control(audio)) {
-        set_play_status("Audio unavailable on this stream.");
+        set_play_status("%s", tr(TR_AUDIO_UNAVAILABLE));
         return;
     }
 
-    set_play_status("%s Volume %d%% %s. %s.",
+    set_play_status(tr(TR_AUDIO_STATUS_FMT),
                     prefix ? prefix : "Audio",
                     audio->muted ? 0 : audio->volume_percent,
                     audio_volume_range_label(audio),
@@ -304,7 +304,7 @@ static void audio_set_play_status(AudioPlayer *audio, const char *prefix)
 static bool audio_change_volume(AudioPlayer *audio, int delta)
 {
     if (!audio_can_control(audio)) {
-        set_play_status("Audio unavailable on this stream.");
+        set_play_status("%s", tr(TR_AUDIO_UNAVAILABLE));
         return false;
     }
 
@@ -318,14 +318,14 @@ static bool audio_change_volume(AudioPlayer *audio, int delta)
     g_cfg.volume_percent = audio->volume_percent;
     g_volume_save_pending = true;
     audio_show_volume_osd(audio);
-    audio_set_play_status(audio, delta >= 0 ? "Volume up." : "Volume down.");
+    audio_set_play_status(audio, delta >= 0 ? tr(TR_AUDIO_VOLUME_UP) : tr(TR_AUDIO_VOLUME_DOWN));
     return true;
 }
 
 static bool audio_set_volume_percent(AudioPlayer *audio, int volume_percent)
 {
     if (!audio_can_control(audio)) {
-        set_play_status("Audio unavailable on this stream.");
+        set_play_status("%s", tr(TR_AUDIO_UNAVAILABLE));
         return false;
     }
 
@@ -334,14 +334,14 @@ static bool audio_set_volume_percent(AudioPlayer *audio, int volume_percent)
     g_cfg.volume_percent = audio->volume_percent;
     g_volume_save_pending = true;
     audio_show_volume_osd(audio);
-    audio_set_play_status(audio, "Remote volume.");
+    audio_set_play_status(audio, tr(TR_AUDIO_REMOTE_VOLUME));
     return true;
 }
 
 static bool audio_toggle_mute(AudioPlayer *audio)
 {
     if (!audio_can_control(audio)) {
-        set_play_status("Audio unavailable on this stream.");
+        set_play_status("%s", tr(TR_AUDIO_UNAVAILABLE));
         return false;
     }
 
@@ -351,7 +351,7 @@ static bool audio_toggle_mute(AudioPlayer *audio)
     }
     audio->pcm_staging_size = 0;
     audio_show_volume_osd(audio);
-    audio_set_play_status(audio, audio->muted ? "Muted." : "Unmuted.");
+    audio_set_play_status(audio, audio->muted ? tr(TR_AUDIO_MUTED) : tr(TR_AUDIO_UNMUTED));
     return true;
 }
 
@@ -1054,7 +1054,7 @@ static void autoplay_start_next_now(MjpegPlayer *player, MjpegPlayResult *result
     player->position_ticks = g_mjpeg_resume_ticks;
     player->position_clock_ns = 0;
     g_playback_ended_naturally = true;
-    set_play_status("Starting next episode.");
+    set_play_status("%s", tr(TR_STARTING_NEXT_EPISODE));
     *result = MJPEG_PLAY_ENDED;
 }
 
@@ -1083,8 +1083,8 @@ static void draw_next_episode_osd(MjpegPlayer *player, u16 *fb)
 
     char label[32];
     char action[24];
-    snprintf(label, sizeof(label), "NEXT EPISODE IN %d", seconds);
-    snprintf(action, sizeof(action), "A NEXT  B CANCEL");
+    snprintf(label, sizeof(label), tr(TR_NEXT_EPISODE_IN_FMT), seconds);
+    snprintf(action, sizeof(action), "%s", tr(TR_NEXT_EPISODE_ACTIONS));
     int text_w = bottom_text_width(label, 1);
     int dock_w = text_w + 20;
     int dock_h = 23;
@@ -1527,7 +1527,7 @@ static void bottom_draw_title_fit(u8 *fb, int x, int y, int max_w, const char *s
     char title[96];
     size_t len = bottom_prepare_title(src, title, sizeof(title));
     if (len == 0) {
-        bottom_draw_text(fb, x, y, "VIDEO", 2, 240, 244, 248);
+        bottom_draw_text(fb, x, y, tr(TR_BOTTOM_VIDEO), 2, 240, 244, 248);
         return;
     }
 
@@ -1599,26 +1599,29 @@ static void bottom_draw_button(u8 *fb, int x, int y, int w, int h, const char *l
 static const char *playback_button_y(const AudioPlayer *audio)
 {
     if (!audio || !audio->ndsp_open || audio->failed) {
-        return "Y AUDIO";
+        return tr(TR_BOTTOM_AUDIO);
     }
-    return audio->muted ? "Y UNMUTE" : "Y MUTE";
+    return audio->muted ? tr(TR_BOTTOM_UNMUTE) : tr(TR_BOTTOM_MUTE);
 }
 
 static const char *playback_state_label(const MjpegPlayer *player, const char *line)
 {
     if (player && player->paused) {
-        return "PAUSED";
+        return tr(TR_STATE_PAUSED);
     }
-    if (line && (strstr(line, "failed") || strstr(line, "Failed") || strstr(line, "decode"))) {
-        return "ERROR";
+    if (line && (strstr(line, "failed") || strstr(line, "Failed") || strstr(line, "fallo") ||
+                 strstr(line, "Fallo") || strstr(line, "decode") || strstr(line, "decod"))) {
+        return tr(TR_STATE_ERROR);
     }
-    if (line && (strstr(line, "Opening") || strstr(line, "Requesting"))) {
-        return "LOADING";
+    if (line && (strstr(line, "Opening") || strstr(line, "Requesting") || strstr(line, "Abriendo") ||
+                 strstr(line, "Solicitando") || strstr(line, "Cargando"))) {
+        return tr(TR_STATE_LOADING);
     }
-    if (line && (strstr(line, "stopped") || strstr(line, "end"))) {
-        return "STOPPED";
+    if (line && (strstr(line, "stopped") || strstr(line, "Stopped") || strstr(line, "end") ||
+                 strstr(line, "detenida") || strstr(line, "Detenido") || strstr(line, "final"))) {
+        return tr(TR_STATE_STOPPED);
     }
-    return "PLAYING";
+    return tr(TR_STATE_PLAYING);
 }
 
 static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
@@ -1646,18 +1649,18 @@ static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
     bottom_stroke_rect(fb, 308 - badge_w, 27, badge_w, 18, paused ? 141 : 55, paused ? 148 : 206, paused ? 170 : 224);
     bottom_draw_text_centered(fb, 308 - badge_w / 2, 33, state, 1, 245, 247, 250);
 
-    bottom_draw_title_fit(fb, 22, 58, 276, g_current.name[0] ? g_current.name : "Video");
+    bottom_draw_title_fit(fb, 22, 58, 276, g_current.name[0] ? g_current.name : tr(TR_BOTTOM_VIDEO));
 
     bottom_fill_rect(fb, 12, 120, 296, 104, 19, 21, 27);
     bottom_fill_rect(fb, 12, 120, 296, 1, 55, 206, 224);
     bottom_stroke_rect(fb, 12, 120, 296, 104, 40, 45, 57);
 
-    bottom_draw_button(fb, 24, 138, 78, 24, paused ? "A RESUME" : "A PAUSE", true);
-    bottom_draw_button(fb, 112, 138, 62, 24, "B BACK", false);
+    bottom_draw_button(fb, 24, 138, 78, 24, paused ? tr(TR_BOTTOM_RESUME) : tr(TR_BOTTOM_PAUSE), true);
+    bottom_draw_button(fb, 112, 138, 62, 24, tr(TR_BOTTOM_BACK), false);
     bottom_draw_button(fb, 184, 138, 100, 24, playback_button_y(player ? player->audio : NULL), false);
-    bottom_draw_button(fb, 20, 180, 82, 24, "L/R SEEK", true);
-    bottom_draw_button(fb, 112, 180, 86, 24, "D-PAD Q", false);
-    bottom_draw_button(fb, 208, 180, 92, 24, "UP/DN VOL", false);
+    bottom_draw_button(fb, 20, 180, 82, 24, tr(TR_BOTTOM_SEEK), true);
+    bottom_draw_button(fb, 112, 180, 86, 24, tr(TR_BOTTOM_QUALITY), false);
+    bottom_draw_button(fb, 208, 180, 92, 24, tr(TR_BOTTOM_VOLUME), false);
     bottom_draw_text_centered(fb, 155, 212, quality_label, 1, 178, 187, 201);
 }
 
@@ -1681,11 +1684,11 @@ static void mjpeg_set_paused(MjpegPlayer *player, bool paused)
     player->paused = paused;
     audio_set_paused(player->audio, paused);
     if (paused) {
-        set_play_status("Paused.");
+        set_play_status("%s", tr(TR_PAUSED));
     } else {
         player->position_clock_ns = monotonic_ns();
         player->next_frame_time_ns = monotonic_ns() + player->frame_interval_ns;
-        set_play_status("Playing.");
+        set_play_status("%s", tr(TR_PLAYING));
     }
     mjpeg_redraw_last_frame(player);
     mjpeg_console(player, g_play_status);
@@ -1721,11 +1724,11 @@ static bool mjpeg_preview_seek(MjpegPlayer *player, int requested_seconds, u64 b
     char at[16];
     format_playback_time(target, at, sizeof(at));
     if (target == current) {
-        set_play_status("Seek boundary at %s.", at);
+        set_play_status(tr(TR_SEEK_BOUNDARY_FMT), at);
         return false;
     }
 
-    set_play_status("Scrubbing to %s.", at);
+    set_play_status(tr(TR_SCRUBBING_FMT), at);
     return true;
 }
 
@@ -1737,7 +1740,7 @@ static void mjpeg_commit_seek(void)
 
     char at[16];
     format_playback_time(g_mjpeg_resume_ticks, at, sizeof(at));
-    set_play_status("Seeking to %s.", at);
+    set_play_status(tr(TR_SEEKING_FMT), at);
 }
 
 static bool mjpeg_apply_remote_command(MjpegPlayer *player, AudioPlayer *audio, const RemoteCommand *cmd, MjpegPlayResult *result)
@@ -1760,7 +1763,7 @@ static bool mjpeg_apply_remote_command(MjpegPlayer *player, AudioPlayer *audio, 
         report_playback_progress(mjpeg_current_ticks(player), player->paused, audio_muted_for_report(audio), audio_volume_for_report(audio));
         return false;
     case REMOTE_CMD_STOP:
-        set_play_status("Stopped from Jellyfin dashboard.");
+        set_play_status("%s", tr(TR_REMOTE_STOPPED));
         if (result) {
             *result = MJPEG_PLAY_OK;
         }
@@ -1778,7 +1781,7 @@ static bool mjpeg_apply_remote_command(MjpegPlayer *player, AudioPlayer *audio, 
         seek_show_osd();
         char at[16];
         format_playback_time(g_mjpeg_resume_ticks, at, sizeof(at));
-        set_play_status("Remote seek to %s.", at);
+        set_play_status(tr(TR_REMOTE_SEEK_FMT), at);
         report_playback_progress(g_mjpeg_resume_ticks, true, audio_muted_for_report(audio), audio_volume_for_report(audio));
         if (result) {
             *result = MJPEG_PLAY_RESTART;
@@ -1787,7 +1790,7 @@ static bool mjpeg_apply_remote_command(MjpegPlayer *player, AudioPlayer *audio, 
     }
     case REMOTE_CMD_MESSAGE:
         remote_show_message(cmd->header, cmd->text, cmd->timeout_ms ? cmd->timeout_ms : REMOTE_MESSAGE_OSD_MS);
-        set_play_status("Jellyfin message received.");
+        set_play_status("%s", tr(TR_JELLYFIN_MESSAGE_RECEIVED));
         mjpeg_redraw_last_frame(player);
         mjpeg_console(player, g_play_status);
         return false;
@@ -2348,7 +2351,7 @@ static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t siz
     if (size > MJPEG_FRAME_CAP - player->size) {
         player->size = 0;
         player->avi_in_movi = false;
-        set_play_status("AVI buffer overflow; resyncing stream.");
+        set_play_status("%s", tr(TR_AVI_BUFFER_OVERFLOW));
         return true;
     }
 
@@ -2429,7 +2432,7 @@ static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t siz
         u32 chunk_size = read_le32(chunk + 4);
         if (chunk_size > MJPEG_FRAME_CAP - 16) {
             player->size = 0;
-            set_play_status("AVI chunk too large; resyncing.");
+            set_play_status("%s", tr(TR_AVI_CHUNK_TOO_LARGE));
             return true;
         }
         size_t total = 8 + (size_t)chunk_size + (chunk_size & 1U);
@@ -2468,11 +2471,11 @@ static bool process_mjpeg_frame(MjpegPlayer *player, const u8 *jpeg, size_t len)
         player->last_jpeg_status = status;
         player->decode_fail_count++;
         if (player->frame_count == 0 && player->decode_fail_count >= 12) {
-            set_play_status("MJPEG JPEG decode failed: %u.", status);
+            set_play_status(tr(TR_MJPEG_JPEG_DECODE_FAIL_FMT), status);
             return false;
         }
         if ((player->decode_fail_count & 0x07) == 0) {
-            set_play_status("Skipped unsupported MJPEG frame: %u.", status);
+            set_play_status(tr(TR_MJPEG_UNSUPPORTED_FRAME_FMT), status);
         }
         return true;
     }
@@ -2494,7 +2497,7 @@ static bool feed_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t size)
 
     if (size > MJPEG_FRAME_CAP - player->size) {
         player->size = 0;
-        set_play_status("MJPEG buffer overflow; dropping pending bytes.");
+        set_play_status("%s", tr(TR_MJPEG_BUFFER_OVERFLOW));
         return true;
     }
 
@@ -2558,9 +2561,9 @@ static bool mjpeg_open_retryable(Result ret, u32 status)
 static void set_mjpeg_open_failure_status(const char *prefix, Result ret, u32 status)
 {
     if (status == HTTP_STATUS_NONE || status == 0) {
-        set_play_status("%s: no HTTP status result 0x%08lX.", prefix, (unsigned long)ret);
+        set_play_status(tr(TR_MJPEG_OPEN_NO_STATUS_FMT), prefix, (unsigned long)ret);
     } else {
-        set_play_status("%s: HTTP %lu result 0x%08lX.", prefix, (unsigned long)status, (unsigned long)ret);
+        set_play_status(tr(TR_MJPEG_OPEN_HTTP_FMT), prefix, (unsigned long)status, (unsigned long)ret);
     }
 }
 
@@ -2999,7 +3002,7 @@ static void mpeg1_seek_restart(MjpegPlayer *player, int seconds)
 static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_ticks)
 {
     if (!url || !url[0]) {
-        set_play_status("No MPEG-1 playback URL.");
+        set_play_status("%s", tr(TR_NO_MPEG_URL));
         return MJPEG_PLAY_FAILED;
     }
 
@@ -3023,7 +3026,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
     player.frame_interval_ns = 1000000000ULL / (player.target_fps ? player.target_fps : 1);
     player.avi_mode = false;
 
-    mjpeg_console(&player, "Opening Jellyfin MPEG-1 stream...");
+    mjpeg_console(&player, tr(TR_OPENING_MPEG_STREAM));
 
     httpcContext context;
     char active_url[STREAM_URL_CAP];
@@ -3031,7 +3034,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
     u32 status = HTTP_STATUS_NONE;
     Result ret = open_stream_context(&context, active_url, &status);
     if (R_FAILED(ret)) {
-        set_mjpeg_open_failure_status("MPEG-1 stream failed", ret, status);
+        set_mjpeg_open_failure_status(tr(TR_MPEG_STREAM_FAILED), ret, status);
         mjpeg_console(&player, g_play_status);
         app_wait_or_exit(1500000000ULL);
         playback_graphics_exit();
@@ -3042,7 +3045,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
     memset(&audio, 0, sizeof(audio));
     player.audio = &audio;
     if (!audio_start(&audio, NULL)) {
-        set_play_status("MPEG-1 audio init failed; video only.");
+        set_play_status("%s", tr(TR_MPEG_AUDIO_INIT_FAIL));
     } else {
         audio_show_volume_osd(&audio);
     }
@@ -3050,7 +3053,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
     StreamReader reader;
     bool reader_active = stream_reader_start(&reader, &context);
     if (reader_active) {
-        set_play_status("Buffering stream...");
+        set_play_status("%s", tr(TR_BUFFERING_STREAM));
         mjpeg_console(&player, g_play_status);
         stream_reader_prebuffer(&reader);
     }
@@ -3063,7 +3066,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
     bool remote_started = false;
 
     if (!chunk || !plm) {
-        set_play_status("Not enough memory for MPEG-1 playback.");
+        set_play_status("%s", tr(TR_MPEG_NO_MEMORY));
     } else {
         plm_set_video_enabled(plm, true);
         plm_set_audio_enabled(plm, true);
@@ -3083,7 +3086,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
             g_seek_osd_pending = false;
         }
 
-        set_play_status("Buffering MPEG-1 test stream.");
+        set_play_status("%s", tr(TR_BUFFERING_MPEG));
         player.position_clock_ns = monotonic_ns();
         mjpeg_console(&player, g_play_status);
 
@@ -3094,19 +3097,19 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
             u32 down = hidKeysDown();
             if (down & KEY_START) {
                 g_exit_requested = true;
-                set_play_status("Playback stopped.");
+                set_play_status("%s", tr(TR_PLAYBACK_STOPPED));
                 break;
             }
             if (down & KEY_B) {
                 if (autoplay_countdown_visible(&player)) {
                     g_autoplay_cancelled = true;
                     player.next_episode_countdown_ready_ms = 0;
-                    set_play_status("Next episode cancelled.");
+                    set_play_status("%s", tr(TR_NEXT_EPISODE_CANCELLED));
                     mjpeg_redraw_last_frame(&player);
                     mjpeg_console(&player, g_play_status);
                     continue;
                 }
-                set_play_status("Playback stopped.");
+                set_play_status("%s", tr(TR_PLAYBACK_STOPPED));
                 result = MJPEG_PLAY_OK;
                 break;
             }
@@ -3200,15 +3203,15 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
                     if (playback_position_near_end(position_ticks)) {
                         g_mjpeg_resume_ticks = g_current.runtime_ticks;
                         g_playback_ended_naturally = true;
-                        set_play_status("MPEG-1 reached end of stream.");
+                        set_play_status("%s", tr(TR_MPEG_REACHED_END));
                         result = MJPEG_PLAY_ENDED;
                     } else if (player.frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES) {
                         g_mjpeg_resume_ticks = position_ticks;
                         g_stream_switch_serial++;
-                        set_play_status("MPEG-1 stream interrupted; reconnecting.");
+                        set_play_status("%s", tr(TR_MPEG_INTERRUPTED));
                         result = MJPEG_PLAY_RESTART;
                     } else {
-                        set_play_status("MPEG-1 read failed: 0x%08lX.", (unsigned long)ret);
+                        set_play_status(tr(TR_MPEG_READ_FAIL_FMT), (unsigned long)ret);
                     }
                     break;
                 }
@@ -3220,7 +3223,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
                 headers_ready = plm_has_headers(plm);
                 if (headers_ready) {
                     mpeg1_apply_audio_rate(plm, &audio);
-                    set_play_status("Playing MPEG-1 test.");
+                    set_play_status("%s", tr(TR_PLAYING_MPEG_TEST));
                     mjpeg_console(&player, g_play_status);
                 } else {
                     if (!read_size && reader_active) {
@@ -3255,7 +3258,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
             if (plm_has_ended(plm)) {
                 g_mjpeg_resume_ticks = g_current.runtime_ticks ? g_current.runtime_ticks : mjpeg_current_ticks(&player);
                 g_playback_ended_naturally = true;
-                set_play_status("MPEG-1 reached end of stream.");
+                set_play_status("%s", tr(TR_MPEG_REACHED_END));
                 result = MJPEG_PLAY_ENDED;
                 break;
             }
@@ -3315,7 +3318,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
 static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container, u64 start_time_ticks)
 {
     if (!url || !url[0]) {
-        set_play_status("No MJPEG playback URL.");
+        set_play_status("%s", tr(TR_NO_MJPEG_URL));
         return MJPEG_PLAY_FAILED;
     }
 
@@ -3341,7 +3344,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     player.buf = (u8 *)malloc(MJPEG_FRAME_CAP);
     player.pixels = (u16 *)linearMemAlign(JPEG_PIXELS_CAP * sizeof(u16), 0x40);
     if (!player.buf || !player.pixels) {
-        set_play_status("Not enough memory for MJPEG playback.");
+        set_play_status("%s", tr(TR_MJPEG_NO_MEMORY));
         if (!app_system_closing()) {
             report_playback_stopped(player.position_ticks);
         }
@@ -3354,7 +3357,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
         return MJPEG_PLAY_FAILED;
     }
 
-    mjpeg_console(&player, "Opening Jellyfin MJPEG stream...");
+    mjpeg_console(&player, tr(TR_OPENING_MJPEG_STREAM));
 
     httpcContext context;
     char active_url[STREAM_URL_CAP];
@@ -3362,7 +3365,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     u32 status = HTTP_STATUS_NONE;
     Result ret = 0;
     if (!open_mjpeg_stream_with_retries(&context, active_url, sizeof(active_url), avi_container, start_time_ticks, &player, &ret, &status)) {
-        set_mjpeg_open_failure_status("MJPEG stream failed", ret, status);
+        set_mjpeg_open_failure_status(tr(TR_MJPEG_STREAM_FAILED), ret, status);
         if (!app_system_closing()) {
             report_playback_stopped(player.position_ticks);
         }
@@ -3379,7 +3382,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     memset(&audio, 0, sizeof(audio));
     player.audio = &audio;
     if (avi_container && !audio_start(&audio, NULL)) {
-        set_play_status("Audio init failed; playing video only.");
+        set_play_status("%s", tr(TR_AUDIO_INIT_FAIL_VIDEO_ONLY));
     } else if (avi_container) {
         audio_show_volume_osd(&audio);
     }
@@ -3391,12 +3394,12 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     u8 *chunk = (u8 *)malloc(MJPEG_READ_SIZE);
     MjpegPlayResult result = MJPEG_PLAY_FAILED;
     if (!chunk) {
-        set_play_status("Could not allocate MJPEG read buffer.");
+        set_play_status("%s", tr(TR_MJPEG_ALLOC_READ_FAIL));
     } else {
         StreamReader reader;
         bool reader_active = stream_reader_start(&reader, &context);
         if (reader_active) {
-            set_play_status("Buffering stream...");
+            set_play_status("%s", tr(TR_BUFFERING_STREAM));
             mjpeg_console(&player, g_play_status);
             stream_reader_prebuffer(&reader);
         }
@@ -3408,7 +3411,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             seek_show_osd();
             g_seek_osd_pending = false;
         }
-        set_play_status("Playing.");
+        set_play_status("%s", tr(TR_PLAYING));
         player.position_clock_ns = monotonic_ns();
         mjpeg_console(&player, g_play_status);
         bool paused_osd_was_visible = false;
@@ -3423,19 +3426,19 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             u32 held = hidKeysHeld();
             if (down & KEY_START) {
                 g_exit_requested = true;
-                set_play_status("Playback stopped.");
+                set_play_status("%s", tr(TR_PLAYBACK_STOPPED));
                 break;
             }
             if (down & KEY_B) {
                 if (autoplay_countdown_visible(&player)) {
                     g_autoplay_cancelled = true;
                     player.next_episode_countdown_ready_ms = 0;
-                    set_play_status("Next episode cancelled.");
+                    set_play_status("%s", tr(TR_NEXT_EPISODE_CANCELLED));
                     mjpeg_redraw_last_frame(&player);
                     mjpeg_console(&player, g_play_status);
                     continue;
                 }
-                set_play_status("Playback stopped.");
+                set_play_status("%s", tr(TR_PLAYBACK_STOPPED));
                 result = MJPEG_PLAY_OK;
                 break;
             }
@@ -3543,7 +3546,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
                 quality_show_osd();
                 g_quality_osd_pending = true;
-                set_play_status("Switching to %s.", quality_label);
+                set_play_status(tr(TR_SWITCHING_QUALITY_FMT), quality_label);
                 mjpeg_redraw_last_frame(&player);
                 mjpeg_console(&player, g_play_status);
                 result = MJPEG_PLAY_RESTART;
@@ -3558,7 +3561,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
                 quality_show_osd();
                 g_quality_osd_pending = true;
-                set_play_status("Switching to %s.", quality_label);
+                set_play_status(tr(TR_SWITCHING_QUALITY_FMT), quality_label);
                 mjpeg_redraw_last_frame(&player);
                 mjpeg_console(&player, g_play_status);
                 result = MJPEG_PLAY_RESTART;
@@ -3602,23 +3605,23 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 if (playback_position_near_end(position_ticks)) {
                     g_mjpeg_resume_ticks = g_current.runtime_ticks;
                     g_playback_ended_naturally = true;
-                    set_play_status("MJPEG reached end of stream.");
+                    set_play_status("%s", tr(TR_MJPEG_REACHED_END));
                     result = MJPEG_PLAY_ENDED;
                 } else if (player.frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES) {
                     g_mjpeg_resume_ticks = position_ticks;
                     g_stream_switch_serial++;
-                    set_play_status("MJPEG stream interrupted; reconnecting.");
+                    set_play_status("%s", tr(TR_MJPEG_INTERRUPTED));
                     mjpeg_redraw_last_frame(&player);
                     mjpeg_console(&player, g_play_status);
                     result = MJPEG_PLAY_RESTART;
                 } else {
-                    set_play_status("MJPEG read failed: 0x%08lX.", (unsigned long)ret);
+                    set_play_status(tr(TR_MJPEG_READ_FAIL_FMT), (unsigned long)ret);
                 }
                 break;
             }
             g_mjpeg_resume_ticks = g_current.runtime_ticks ? g_current.runtime_ticks : mjpeg_current_ticks(&player);
             g_playback_ended_naturally = true;
-            set_play_status("MJPEG reached end of stream.");
+            set_play_status("%s", tr(TR_MJPEG_REACHED_END));
             result = MJPEG_PLAY_ENDED;
             break;
         }
@@ -3685,18 +3688,18 @@ static bool play_current_item_video(void)
     bool prefer_mpeg1 = false;
 
     if (g_is_new_3ds && prefer_h264) {
-        set_play_status("New3DS detected: using H.264/MVD playback.");
+        set_play_status("%s", tr(TR_NEW3DS_H264_PLAYBACK));
         if (play_stream_url(g_play_url)) {
             return true;
         }
         if (g_exit_requested) {
             return false;
         }
-        set_play_status("MVD unavailable; falling back to MJPEG software playback.");
+        set_play_status("%s", tr(TR_MVD_FALLBACK_MJPEG));
     } else if (g_is_new_3ds) {
-        set_play_status("New3DS detected: using selected software playback.");
+        set_play_status("%s", tr(TR_NEW3DS_SELECTED_SOFTWARE));
     } else {
-        set_play_status("Old3DS detected: using MJPEG software playback.");
+        set_play_status("%s", tr(TR_OLD3DS_MJPEG_PLAYBACK));
     }
 
     u64 start_ticks = 0;
@@ -3706,7 +3709,7 @@ static bool play_current_item_video(void)
             build_mpeg1_stream_url(&g_current, mpeg_url, sizeof(mpeg_url), start_ticks, alias != 0);
             copy_safe(g_play_url, sizeof(g_play_url), mpeg_url);
             copy_safe(g_play_method, sizeof(g_play_method), alias ? "mpeg1-mp2-mpg-test" : "mpeg1-mp2-test");
-            set_play_status(alias ? "Trying MPEG-1 mpg alias..." : "Trying MPEG-1 test stream...");
+            set_play_status("%s", alias ? tr(TR_TRYING_MPEG_ALIAS) : tr(TR_TRYING_MPEG_TEST));
             MjpegPlayResult result = play_mpeg1_stream_url(g_play_url, start_ticks);
             if (result == MJPEG_PLAY_RESTART) {
                 start_ticks = g_mjpeg_resume_ticks;
@@ -3729,7 +3732,7 @@ static bool play_current_item_video(void)
                 return false;
             }
         }
-        set_play_status("MPEG-1 test failed; falling back to MJPEG.");
+        set_play_status("%s", tr(TR_MPEG_FAILED_FALLBACK));
     }
 
     char mjpeg_url[STREAM_URL_CAP];
@@ -3761,7 +3764,7 @@ static bool play_current_item_video(void)
         build_mjpeg_stream_url(&g_current, mjpeg_url, sizeof(mjpeg_url), false, start_ticks);
         copy_safe(g_play_url, sizeof(g_play_url), mjpeg_url);
         copy_safe(g_play_method, sizeof(g_play_method), g_is_new_3ds ? "raw-mjpeg-fallback" : "old3ds-raw-mjpeg");
-        set_play_status("Trying raw MJPEG fallback...");
+        set_play_status("%s", tr(TR_TRYING_RAW_MJPEG));
         MjpegPlayResult result = play_mjpeg_stream_url(g_play_url, false, start_ticks);
         if (result == MJPEG_PLAY_RESTART) {
             start_ticks = g_mjpeg_resume_ticks;
@@ -3832,10 +3835,10 @@ static bool probe_playback(void)
         }
 
         if (!select_autoplay_next_episode()) {
-            set_status("Finished %s. No next playable item.", g_current.name[0] ? g_current.name : "video");
+            set_status(tr(TR_FINISHED_NO_NEXT_FMT), g_current.name[0] ? g_current.name : tr(TR_STREAM));
             break;
         }
-        set_status("Playing next: %s", g_current.name[0] ? g_current.name : "video");
+        set_status(tr(TR_PLAYING_NEXT_FMT), g_current.name[0] ? g_current.name : tr(TR_STREAM));
     }
 
     if (!g_exit_requested) {

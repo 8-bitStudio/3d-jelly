@@ -140,6 +140,131 @@ static void auth_header(char *out, size_t outsz, bool include_token)
     }
 }
 
+static bool http_status_is_redirect(u32 status)
+{
+    return (status >= 301 && status <= 303) || (status >= 307 && status <= 308);
+}
+
+static Result http_redirect_location(httpcContext *context, char *out, size_t outsz)
+{
+    static const char *const names[] = {"Location", "location", "LOCATION"};
+    Result last_ret = (Result)0xD9000002;
+    if (!context || !out || outsz == 0) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        out[0] = 0;
+        Result ret = httpcGetResponseHeader(context, names[i], out, outsz);
+        if (R_SUCCEEDED(ret) && out[0]) {
+            trim_edges(out);
+            if (out[0]) {
+                return 0;
+            }
+        }
+        last_ret = ret;
+    }
+    out[0] = 0;
+    return last_ret;
+}
+
+static bool url_origin_from(const char *url, char *out, size_t outsz)
+{
+    const char *scheme_end = url ? strstr(url, "://") : NULL;
+    if (!scheme_end || !out || outsz == 0) {
+        return false;
+    }
+
+    const char *host = scheme_end + 3;
+    const char *path = strchr(host, '/');
+    size_t len = path ? (size_t)(path - url) : strlen(url);
+    if (len >= outsz) {
+        len = outsz - 1;
+    }
+    memcpy(out, url, len);
+    out[len] = 0;
+    return len > 0;
+}
+
+static bool url_directory_from(const char *url, char *out, size_t outsz)
+{
+    const char *scheme_end = url ? strstr(url, "://") : NULL;
+    if (!scheme_end || !out || outsz == 0) {
+        return false;
+    }
+
+    const char *host = scheme_end + 3;
+    const char *limit = strchr(host, '?');
+    if (!limit) {
+        limit = url + strlen(url);
+    }
+
+    const char *last_slash = NULL;
+    for (const char *p = host; p < limit; p++) {
+        if (*p == '/') {
+            last_slash = p;
+        }
+    }
+
+    if (!last_slash) {
+        if (!url_origin_from(url, out, outsz)) {
+            return false;
+        }
+        size_t len = strlen(out);
+        if (len + 1 < outsz) {
+            out[len] = '/';
+            out[len + 1] = 0;
+        }
+        return true;
+    }
+
+    size_t len = (size_t)(last_slash - url + 1);
+    if (len >= outsz) {
+        len = outsz - 1;
+    }
+    memcpy(out, url, len);
+    out[len] = 0;
+    return len > 0;
+}
+
+static void resolve_redirect_url(char *out, size_t outsz, const char *base_url, const char *location)
+{
+    if (!out || outsz == 0) {
+        return;
+    }
+    out[0] = 0;
+    if (!location || !location[0]) {
+        return;
+    }
+
+    if (starts_with_http(location)) {
+        snprintf(out, outsz, "%s", location);
+        return;
+    }
+
+    if (location[0] == '/' && location[1] == '/') {
+        const char *scheme_end = base_url ? strstr(base_url, "://") : NULL;
+        if (scheme_end) {
+            int scheme_len = (int)(scheme_end - base_url);
+            snprintf(out, outsz, "%.*s:%s", scheme_len, base_url, location);
+        }
+        return;
+    }
+
+    char prefix[STREAM_URL_CAP];
+    if (location[0] == '/') {
+        if (url_origin_from(base_url, prefix, sizeof(prefix))) {
+            snprintf(out, outsz, "%s%s", prefix, location);
+            return;
+        }
+    } else if (url_directory_from(base_url, prefix, sizeof(prefix))) {
+        snprintf(out, outsz, "%s%s", prefix, location);
+        return;
+    }
+
+    build_url(out, outsz, location);
+}
+
 static Result http_request_full(HTTPC_RequestMethod method, const char *url, const char *body, bool include_token, HttpResponse *out)
 {
     memset(out, 0, sizeof(*out));
@@ -164,7 +289,7 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
     memset(&context, 0, sizeof(context));
     bool context_open = false;
 
-    for (int redirects = 0; redirects < 4; redirects++) {
+    for (int redirects = 0; redirects < HTTP_REDIRECT_LIMIT; redirects++) {
         copy_safe(out->url, sizeof(out->url), active_url);
         ret = httpcOpenContext(&context, method, active_url, method == HTTPC_METHOD_POST ? 0 : 1);
         if (R_FAILED(ret)) {
@@ -220,7 +345,14 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
             break;
         }
 
-        if ((status >= 301 && status <= 303) || (status >= 307 && status <= 308)) {
+        if (http_status_is_redirect(status)) {
+            if (redirects + 1 >= HTTP_REDIRECT_LIMIT) {
+                ret = (Result)0xD9000004;
+                httpcCancelConnection(&context);
+                httpcCloseContext(&context);
+                context_open = false;
+                break;
+            }
             if (!redirect_url) {
                 redirect_url = (char *)malloc(1024);
             }
@@ -232,7 +364,7 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
                 break;
             }
             memset(redirect_url, 0, 1024);
-            ret = httpcGetResponseHeader(&context, "Location", redirect_url, 1024);
+            ret = http_redirect_location(&context, redirect_url, 1024);
             httpcCancelConnection(&context);
             httpcCloseContext(&context);
             context_open = false;
@@ -240,7 +372,11 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
                 break;
             }
             char full[STREAM_URL_CAP];
-            build_url(full, sizeof(full), redirect_url);
+            resolve_redirect_url(full, sizeof(full), active_url, redirect_url);
+            if (!full[0]) {
+                ret = -1;
+                break;
+            }
             free(active_url);
             active_url = strdup(full);
             if (!active_url) {
@@ -633,7 +769,7 @@ static void stop_active_encoding(void)
     HttpResponse res;
     Result ret = api_delete(path, &res);
     if (R_FAILED(ret) && res.status != 404) {
-        set_status("Transcode refresh returned HTTP %lu result 0x%08lX.", (unsigned long)res.status, (unsigned long)ret);
+        set_status(tr(TR_TRANSCODE_REFRESH_FAIL_FMT), (unsigned long)res.status, (unsigned long)ret);
     }
     free_response(&res);
 }
@@ -641,26 +777,26 @@ static void stop_active_encoding(void)
 static void set_http_failure(const char *prefix, const HttpResponse *res, Result ret)
 {
     if (res->status == HTTP_STATUS_NONE) {
-        set_status("%s: no HTTP response. Check URL/WiFi: %.72s", prefix, res->url);
+        set_status(tr(TR_HTTP_NO_RESPONSE_FMT), prefix, res->url);
     } else if (ret == (Result)HTTPC_RESULTCODE_TIMEDOUT) {
-        set_status("%s: timed out waiting for Jellyfin.", prefix);
+        set_status(tr(TR_HTTP_TIMEOUT_FMT), prefix);
     } else if (res->status == 401) {
-        set_status("%s: HTTP 401. Check username/password.", prefix);
+        set_status(tr(TR_HTTP_401_FMT), prefix);
     } else {
-        set_status("%s: HTTP %lu result 0x%08lX", prefix, (unsigned long)res->status, (unsigned long)ret);
+        set_status(tr(TR_HTTP_FAIL_FMT), prefix, (unsigned long)res->status, (unsigned long)ret);
     }
 }
 
 static void format_http_failure(char *out, size_t outsz, const char *prefix, const HttpResponse *res, Result ret)
 {
     if (res->status == HTTP_STATUS_NONE) {
-        snprintf(out, outsz, "%s: no HTTP response. Check URL/WiFi.", prefix);
+        snprintf(out, outsz, tr(TR_HTTP_NO_RESPONSE_SHORT_FMT), prefix);
     } else if (ret == (Result)HTTPC_RESULTCODE_TIMEDOUT) {
-        snprintf(out, outsz, "%s: timed out waiting for Jellyfin.", prefix);
+        snprintf(out, outsz, tr(TR_HTTP_TIMEOUT_FMT), prefix);
     } else if (res->status == 401) {
-        snprintf(out, outsz, "%s: HTTP 401. Check username/password.", prefix);
+        snprintf(out, outsz, tr(TR_HTTP_401_FMT), prefix);
     } else {
-        snprintf(out, outsz, "%s: HTTP %lu result 0x%08lX", prefix, (unsigned long)res->status, (unsigned long)ret);
+        snprintf(out, outsz, tr(TR_HTTP_FAIL_FMT), prefix, (unsigned long)res->status, (unsigned long)ret);
     }
 }
 
@@ -672,7 +808,7 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     swkbdSetHintText(&kb, hint);
     swkbdSetValidation(&kb, password ? SWKBD_ANYTHING : SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
     swkbdSetFeatures(&kb, SWKBD_DARKEN_TOP_SCREEN | SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET | SWKBD_ALLOW_POWER);
-    swkbdSetButton(&kb, SWKBD_BUTTON_LEFT, "Cancel", false);
+    swkbdSetButton(&kb, SWKBD_BUTTON_LEFT, language_normalized(g_cfg.language) == LANG_ES ? "Cancelar" : "Cancel", false);
     swkbdSetButton(&kb, SWKBD_BUTTON_RIGHT, "OK", true);
     if (password) {
         swkbdSetPasswordMode(&kb, SWKBD_PASSWORD_HIDE_DELAY);
@@ -690,7 +826,7 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
 static bool login_jellyfin(void)
 {
     if (!starts_with_http(g_cfg.server) || !g_cfg.username[0]) {
-        set_status("Set server and username first.");
+        set_status("%s", tr(TR_STATUS_SET_SERVER_USER_FIRST));
         return false;
     }
 
@@ -703,10 +839,10 @@ static bool login_jellyfin(void)
     snprintf(body, sizeof(body), "{\"Username\":\"%s\",\"Pw\":\"%s\"}", user, pass);
 
     HttpResponse res;
-    set_status("Logging in...");
+    set_status("%s", tr(TR_STATUS_LOGGING_IN));
     Result ret = api_post("/Users/AuthenticateByName", body, false, &res);
     if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
-        set_http_failure("Login failed", &res, ret);
+        set_http_failure(tr(TR_PREFIX_LOGIN_FAILED), &res, ret);
         free_response(&res);
         return false;
     }
@@ -721,14 +857,14 @@ static bool login_jellyfin(void)
 
     free_response(&res);
     if (!ok || !g_cfg.token[0] || !g_cfg.user_id[0]) {
-        set_status("Login response was missing token/user id.");
+        set_status("%s", tr(TR_STATUS_LOGIN_MISSING));
         return false;
     }
 
     save_config();
     g_session_capabilities_reported = false;
     report_session_capabilities();
-    set_status("Logged in as %s.", g_cfg.username);
+    set_status(tr(TR_STATUS_LOGGED_IN_FMT), g_cfg.username);
     return true;
 }
 
@@ -745,7 +881,7 @@ static bool load_libraries(void)
     HttpResponse res;
     Result ret = api_get(path, &res);
     if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
-        set_http_failure("Could not load libraries", &res, ret);
+        set_http_failure(tr(TR_PREFIX_LOAD_LIBRARIES_FAILED), &res, ret);
         free_response(&res);
         return false;
     }
@@ -758,9 +894,9 @@ static bool load_libraries(void)
     g_scroll = 0;
     g_stack_depth = 0;
     g_current_parent_id[0] = 0;
-    copy_safe(g_screen_title, sizeof(g_screen_title), "Libraries");
+    copy_safe(g_screen_title, sizeof(g_screen_title), tr(TR_LIBRARIES));
     g_view = VIEW_LIBRARIES;
-    set_status("Loaded %d libraries.", g_library_count);
+    set_status(tr(TR_STATUS_LOADED_LIBRARIES_FMT), g_library_count);
     return true;
 }
 
@@ -791,7 +927,7 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
 
     for (;;) {
         HttpResponse res;
-        set_status("Loading %s... %d", title && title[0] ? title : "items", g_item_count);
+        set_status(tr(TR_STATUS_LOADING_ITEMS_FMT), title && title[0] ? title : tr(TR_ITEMS_GENERIC), g_item_count);
         build_items_page_path(path, sizeof(path), enc_parent, start, ITEM_PAGE_SIZE, user_endpoint);
         Result ret = api_get(path, &res);
         if (!user_endpoint && start == 0 && parent_id[0] &&
@@ -802,14 +938,14 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
             ret = api_get(path, &res);
         }
         if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
-            set_http_failure("Could not load items", &res, ret);
+            set_http_failure(tr(TR_PREFIX_LOAD_ITEMS_FAILED), &res, ret);
             free_response(&res);
             return false;
         }
 
         int raw_count = 0;
         if (!parse_items(res.body, g_items, &g_item_count, MAX_ITEMS, true, &raw_count)) {
-            set_status("Could not parse items response.");
+            set_status("%s", tr(TR_STATUS_PARSE_ITEMS_FAIL));
             free_response(&res);
             return false;
         }
@@ -840,12 +976,12 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
     g_selected = 0;
     g_scroll = 0;
     copy_safe(g_current_parent_id, sizeof(g_current_parent_id), parent_id);
-    copy_safe(g_screen_title, sizeof(g_screen_title), title && title[0] ? title : "Items");
+    copy_safe(g_screen_title, sizeof(g_screen_title), title && title[0] ? title : tr(TR_ITEMS_GENERIC));
     g_view = VIEW_ITEMS;
     if (hit_cap) {
-        set_status("%s: first %d entries shown.", g_screen_title, g_item_count);
+        set_status(tr(TR_STATUS_FIRST_ENTRIES_FMT), g_screen_title, g_item_count);
     } else {
-        set_status("%s: %d entries.", g_screen_title, g_item_count);
+        set_status(tr(TR_STATUS_ENTRIES_FMT), g_screen_title, g_item_count);
     }
     return true;
 }
@@ -1267,11 +1403,11 @@ static bool request_playback_info(u64 start_time_ticks)
     HttpResponse res;
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-    snprintf(g_play_status, sizeof(g_play_status), "Requesting %s playback session...", quality_label);
+    snprintf(g_play_status, sizeof(g_play_status), tr(TR_PLAYBACK_REQUESTING_FMT), quality_label);
     set_status("%s", g_play_status);
     Result ret = api_post(path, body, true, &res);
     if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
-        format_http_failure(g_play_status, sizeof(g_play_status), "PlaybackInfo failed", &res, ret);
+        format_http_failure(g_play_status, sizeof(g_play_status), tr(TR_PREFIX_PLAYBACK_INFO_FAILED), &res, ret);
         set_status("%s", g_play_status);
         free_response(&res);
         return false;
@@ -1310,10 +1446,10 @@ static bool request_playback_info(u64 start_time_ticks)
     free_response(&res);
 
     snprintf(g_play_status, sizeof(g_play_status),
-             "%s session OK. Transcode:%s Direct:%s",
+             tr(TR_PLAYBACK_SESSION_OK_FMT),
              quality_label,
-             supports_transcoding ? "yes" : "no",
-             supports_direct ? "yes" : "no");
+             supports_transcoding ? tr(TR_YES) : tr(TR_NO),
+             supports_direct ? tr(TR_YES) : tr(TR_NO));
     set_status("%s", g_play_status);
     return true;
 }

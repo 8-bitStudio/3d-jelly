@@ -78,7 +78,7 @@ static void draw_header(const char *title)
 {
     C2D_DrawRectSolid(0, 0, 0, 400, 34, COL_PAPER);
     C2D_DrawRectSolid(0, 33, 0, 400, 2, COL_PRIMARY);
-    draw_text(12, 8, 0.55f, COL_WHITE, "3dJelly");
+    draw_text(12, 8, 0.55f, COL_WHITE, "%s", tr(TR_APP_TITLE));
 
     char centered[72];
     clipped_name(title ? title : "", centered, sizeof(centered), 24);
@@ -107,7 +107,34 @@ static void draw_settings_bottom_popup(void)
     C2D_DrawRectSolid(18, 42, 0, 284, 4, COL_SECONDARY);
     C2D_DrawRectSolid(18, 160, 0, 284, 4, COL_PRIMARY);
     draw_text_wrap(36, 64, 0.44f, 248, COL_WHITE, "%s", g_settings_popup);
-    draw_text_wrap(36, 181, 0.35f, 248, COL_MUTED, "B close. Press A again when confirming a reset.");
+    draw_text_wrap(36, 181, 0.35f, 248, COL_MUTED, "%s", tr(TR_POPUP_RESET_HELP));
+}
+
+static const char *display_item_kind(const MediaItem *item)
+{
+    const char *kind = item && item->collection_type[0] ? item->collection_type : (item ? item->type : "");
+    if (language_normalized(g_cfg.language) != LANG_ES) {
+        return kind;
+    }
+    if (strcmp(kind, "movies") == 0 || strcmp(kind, "Movie") == 0) {
+        return "pel" "\xC3\xAD" "cula";
+    }
+    if (strcmp(kind, "tvshows") == 0 || strcmp(kind, "Series") == 0) {
+        return "serie";
+    }
+    if (strcmp(kind, "Episode") == 0) {
+        return "episodio";
+    }
+    if (strcmp(kind, "Season") == 0) {
+        return "temporada";
+    }
+    if (strcmp(kind, "Folder") == 0) {
+        return "carpeta";
+    }
+    if (strcmp(kind, "Video") == 0) {
+        return "video";
+    }
+    return kind;
 }
 
 static void draw_list(MediaItem *items, int count, const char *title)
@@ -116,8 +143,8 @@ static void draw_list(MediaItem *items, int count, const char *title)
 
     if (count <= 0) {
         C2D_DrawRectSolid(24, 72, 0, 352, 86, COL_PAPER);
-        draw_text(40, 88, 0.55f, COL_WHITE, "No items found");
-        draw_text_wrap(40, 116, 0.42f, 310, COL_MUTED, "Refresh with X or go back with B.");
+        draw_text(40, 88, 0.55f, COL_WHITE, "%s", tr(TR_NO_ITEMS_FOUND));
+        draw_text_wrap(40, 116, 0.42f, 310, COL_MUTED, "%s", tr(TR_REFRESH_X_BACK_B));
         return;
     }
 
@@ -146,7 +173,7 @@ static void draw_list(MediaItem *items, int count, const char *title)
         clipped_name(items[idx].name, name, sizeof(name), 42);
         draw_text(25, y + 6, 0.43f, COL_WHITE, "%s", name);
 
-        const char *kind = items[idx].collection_type[0] ? items[idx].collection_type : items[idx].type;
+        const char *kind = display_item_kind(&items[idx]);
         draw_text(290, y + 8, 0.35f, COL_MUTED, "%s", kind);
     }
 
@@ -155,15 +182,15 @@ static void draw_list(MediaItem *items, int count, const char *title)
 
 static void draw_setup(void)
 {
-    draw_header("Setup");
+    draw_header(tr(TR_SETUP));
     C2D_DrawRectSolid(18, 48, 0, 364, 146, COL_PAPER);
 
-    const char *labels[] = {"Server", "Username", "Password", "Login"};
+    const char *labels[] = {tr(TR_SERVER), tr(TR_USERNAME), tr(TR_PASSWORD), tr(TR_LOGIN)};
     char values[4][256];
     snprintf(values[0], sizeof(values[0]), "%s", g_cfg.server);
-    snprintf(values[1], sizeof(values[1]), "%s", g_cfg.username[0] ? g_cfg.username : "not set");
-    snprintf(values[2], sizeof(values[2]), "%s", g_cfg.password[0] ? "stored" : "not set");
-    snprintf(values[3], sizeof(values[3]), "%s", g_cfg.token[0] ? "refresh token/session" : "authenticate");
+    snprintf(values[1], sizeof(values[1]), "%s", g_cfg.username[0] ? g_cfg.username : tr(TR_NOT_SET));
+    snprintf(values[2], sizeof(values[2]), "%s", g_cfg.password[0] ? tr(TR_STORED) : tr(TR_NOT_SET));
+    snprintf(values[3], sizeof(values[3]), "%s", g_cfg.token[0] ? tr(TR_REFRESH_TOKEN_SESSION) : tr(TR_AUTHENTICATE));
     QualityProfile q = quality_profile();
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
@@ -177,8 +204,8 @@ static void draw_setup(void)
         draw_text(130, y, 0.39f, i == g_setup_row ? COL_WHITE : COL_MUTED, "%s", values[i]);
     }
 
-    draw_text(28, 204, 0.34f, COL_MUTED, "Quality: %s (%dx%d), changed during playback", quality_label, q.width, q.height);
-    draw_text(28, 220, 0.34f, COL_MUTED, "Playback: %s", g_is_new_3ds ? "New3DS H264/MVD + MJPEG fallback" : "Old3DS MJPEG software");
+    draw_text(28, 204, 0.34f, COL_MUTED, tr(TR_QUALITY_SETUP_FMT), quality_label, q.width, q.height);
+    draw_text(28, 220, 0.34f, COL_MUTED, tr(TR_PLAYBACK_SETUP_FMT), g_is_new_3ds ? tr(TR_PLAYBACK_NEW3DS_LABEL) : tr(TR_PLAYBACK_OLD3DS_LABEL));
 }
 
 enum {
@@ -215,22 +242,22 @@ static void settings_value(int row, char *out, size_t outsz)
         format_audio_rate_label(out, outsz, g_cfg.audio_sample_rate);
         break;
     case SETTINGS_ROW_SERVER:
-        clipped_name(g_cfg.server[0] ? g_cfg.server : "not set", out, outsz, 25);
+        clipped_name(g_cfg.server[0] ? g_cfg.server : tr(TR_NOT_SET), out, outsz, 25);
         break;
     case SETTINGS_ROW_USERNAME:
-        clipped_name(g_cfg.username[0] ? g_cfg.username : "not set", out, outsz, 20);
+        clipped_name(g_cfg.username[0] ? g_cfg.username : tr(TR_NOT_SET), out, outsz, 20);
         break;
     case SETTINGS_ROW_CLEAR_LOGIN:
-        snprintf(out, outsz, "%s", (g_cfg.password[0] || g_cfg.token[0]) ? "password/token" : "already clear");
+        snprintf(out, outsz, "%s", (g_cfg.password[0] || g_cfg.token[0]) ? tr(TR_PASSWORD_TOKEN) : tr(TR_ALREADY_CLEAR));
         break;
     case SETTINGS_ROW_RESET_SERVER_USER:
-        snprintf(out, outsz, "server/user");
+        snprintf(out, outsz, "%s", tr(TR_SERVER_USER));
         break;
     case SETTINGS_ROW_RESET_DEFAULTS:
-        snprintf(out, outsz, "quality/mode/buffer");
+        snprintf(out, outsz, "%s", tr(TR_QUALITY_MODE_BUFFER));
         break;
     case SETTINGS_ROW_LANGUAGE:
-        snprintf(out, outsz, "English");
+        snprintf(out, outsz, "%s", language_label(g_cfg.language));
         break;
     default:
         snprintf(out, outsz, "-");
@@ -242,25 +269,25 @@ static const char *settings_label(int row)
 {
     switch (row) {
     case SETTINGS_ROW_QUALITY:
-        return "Default quality";
+        return tr(TR_DEFAULT_QUALITY);
     case SETTINGS_ROW_PLAYBACK:
-        return "Playback mode";
+        return tr(TR_PLAYBACK_MODE);
     case SETTINGS_ROW_BUFFER:
-        return "Stream buffer";
+        return tr(TR_STREAM_BUFFER);
     case SETTINGS_ROW_AUDIO:
-        return "Audio rate";
+        return tr(TR_AUDIO_RATE);
     case SETTINGS_ROW_SERVER:
-        return "Server URL";
+        return tr(TR_SERVER_URL);
     case SETTINGS_ROW_USERNAME:
-        return "Username";
+        return tr(TR_USERNAME);
     case SETTINGS_ROW_CLEAR_LOGIN:
-        return "Clear saved login";
+        return tr(TR_CLEAR_SAVED_LOGIN);
     case SETTINGS_ROW_RESET_SERVER_USER:
-        return "Reset server/user";
+        return tr(TR_RESET_SERVER_USER);
     case SETTINGS_ROW_RESET_DEFAULTS:
-        return "Reset defaults";
+        return tr(TR_RESET_DEFAULTS);
     case SETTINGS_ROW_LANGUAGE:
-        return "Language";
+        return tr(TR_LANGUAGE);
     default:
         return "";
     }
@@ -268,7 +295,7 @@ static const char *settings_label(int row)
 
 static void draw_settings(void)
 {
-    draw_header("Settings");
+    draw_header(tr(TR_SETTINGS));
 
     if (g_settings_row < 0) {
         g_settings_row = 0;
@@ -299,25 +326,25 @@ static void draw_settings(void)
 
     if (g_settings_row == SETTINGS_ROW_BUFFER) {
         draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
-                       "Saved preference. Playback uses stable 2048 KB in this build.");
+                       "%s", tr(TR_BUFFER_NOTE));
     } else if (g_settings_row == SETTINGS_ROW_AUDIO) {
         int rate = settings_audio_sample_rate_normalized(g_cfg.audio_sample_rate);
         if (!g_is_new_3ds && rate == 40000) {
             draw_text_wrap(28, 217, 0.31f, 344, COL_SECONDARY,
-                           "40000 Hz sounds cleaner but may cause tiny micro hitches. 32000 Hz is safer.");
+                           "%s", tr(TR_AUDIO_40000_NOTE));
         } else {
             draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
-                           "Applies to 240p and 240HQ. 144p stays at 22050 Hz.");
+                           "%s", tr(TR_AUDIO_240_NOTE));
         }
     } else if (g_settings_row == SETTINGS_ROW_LANGUAGE) {
         draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
-                       "Press A to view translation status.");
+                       "%s", tr(TR_LANGUAGE_NOTE));
     } else if (g_settings_confirm_row == g_settings_row && osGetTime() < g_settings_confirm_until_ms) {
         draw_text_wrap(28, 217, 0.31f, 344, COL_SECONDARY,
-                       "Press A again to confirm.");
+                       "%s", tr(TR_CONFIRM_AGAIN));
     } else {
         draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
-                       "Use Left/Right or A to change selected settings.");
+                       "%s", tr(TR_SETTINGS_HINT));
     }
 }
 
@@ -325,24 +352,24 @@ static void draw_detail(void)
 {
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-    draw_header("Item");
+    draw_header(tr(TR_ITEM));
     C2D_DrawRectSolid(18, 50, 0, 364, 140, COL_PAPER);
     C2D_DrawRectSolid(18, 50, 0, 8, 140, COL_PRIMARY);
     draw_text_wrap(38, 64, 0.62f, 330, COL_WHITE, "%s", g_current.name);
-    draw_text(38, 106, 0.43f, COL_MUTED, "Type: %s", g_current.type);
+    draw_text(38, 106, 0.43f, COL_MUTED, tr(TR_TYPE_FMT), display_item_kind(&g_current));
     if (g_current.year) {
-        draw_text(38, 128, 0.43f, COL_MUTED, "Year: %d", g_current.year);
+        draw_text(38, 128, 0.43f, COL_MUTED, tr(TR_YEAR_FMT), g_current.year);
     }
     if (g_current.runtime_ticks) {
         unsigned long long minutes = g_current.runtime_ticks / 600000000ULL;
-        draw_text(38, 150, 0.43f, COL_MUTED, "Runtime: %llumin", minutes);
+        draw_text(38, 150, 0.43f, COL_MUTED, tr(TR_RUNTIME_FMT), minutes);
     }
-    draw_text(38, 174, 0.40f, COL_PRIMARY, "A: request %s transcode", quality_label);
+    draw_text(38, 174, 0.40f, COL_PRIMARY, tr(TR_REQUEST_TRANSCODE_FMT), quality_label);
 }
 
 static void draw_playback(void)
 {
-    draw_header("Playback");
+    draw_header(tr(TR_PLAYBACK));
     QualityProfile q = quality_profile();
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
@@ -354,11 +381,11 @@ static void draw_playback(void)
     C2D_DrawRectSolid(24, 58, 0, preview_w, 74, COL_CARD);
     C2D_DrawRectSolid(24, 58, 0, (float)(g_frame_counter % (int)preview_w), 4, COL_PRIMARY);
     draw_text(36, 76, 0.55f, COL_WHITE, "%s", quality_label);
-    draw_text(36, 103, 0.38f, COL_MUTED, "%s", g_play_method[0] ? g_play_method : "stream");
+    draw_text(36, 103, 0.38f, COL_MUTED, "%s", g_play_method[0] ? g_play_method : tr(TR_STREAM));
 
     draw_text_wrap(220, 58, 0.38f, 150, COL_WHITE, "%s", g_current.name);
-    draw_text_wrap(24, 145, 0.35f, 344, COL_MUTED, "%s", g_play_status[0] ? g_play_status : "No probe yet.");
-    draw_text_wrap(24, 178, 0.31f, 344, COL_MUTED, "%s", g_play_url[0] ? g_play_url : "No URL.");
+    draw_text_wrap(24, 145, 0.35f, 344, COL_MUTED, "%s", g_play_status[0] ? g_play_status : tr(TR_NO_PROBE_YET));
+    draw_text_wrap(24, 178, 0.31f, 344, COL_MUTED, "%s", g_play_url[0] ? g_play_url : tr(TR_NO_URL));
 }
 
 static void render(void)
@@ -376,7 +403,7 @@ static void render(void)
         draw_settings();
         break;
     case VIEW_LIBRARIES:
-        draw_list(g_libraries, g_library_count, "Libraries");
+        draw_list(g_libraries, g_library_count, tr(TR_LIBRARIES));
         break;
     case VIEW_ITEMS:
         draw_list(g_items, g_item_count, g_screen_title);
@@ -394,19 +421,19 @@ static void render(void)
     if (settings_popup_visible()) {
         draw_settings_bottom_popup();
     } else if (g_view == VIEW_SETUP) {
-        draw_bottom_help("A edit/select  D-Pad move  START exit",
-                         "Quality is controlled from the bottom screen while video is playing.");
+        draw_bottom_help(tr(TR_SETUP_HELP_1),
+                         tr(TR_SETUP_HELP_2));
     } else if (g_view == VIEW_SETTINGS) {
-        draw_bottom_help("A edit/change  B back  D-Pad move",
-                         "Left/Right changes quality, playback mode, and buffer preference.");
+        draw_bottom_help(tr(TR_SETTINGS_HELP_1),
+                         tr(TR_SETTINGS_HELP_2));
     } else if (g_view == VIEW_PLAYBACK) {
-        draw_bottom_help("B back  X play again",
-                         "This screen only appears when playback did not stay open.");
+        draw_bottom_help(tr(TR_PLAYBACK_HELP_1),
+                         tr(TR_PLAYBACK_HELP_2));
     } else if (g_view == VIEW_LIBRARIES) {
-        draw_bottom_help("A open  B setup  X refresh  Y settings",
+        draw_bottom_help(tr(TR_LIBRARIES_HELP_1),
                          "");
     } else {
-        draw_bottom_help("A open/play  B back  X refresh  Y settings",
+        draw_bottom_help(tr(TR_ITEMS_HELP_1),
                          "");
     }
 
@@ -480,7 +507,7 @@ static void change_quality(int dir)
     save_config();
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-    set_status("Quality target set to %s.", quality_label);
+    set_status(tr(TR_STATUS_QUALITY_TARGET_FMT), quality_label);
 }
 
 static void settings_show_popup(const char *message, u64 duration_ms)
@@ -502,7 +529,7 @@ static void open_settings(void)
     g_settings_return_view = g_view;
     g_view = VIEW_SETTINGS;
     settings_cancel_confirm();
-    set_status("Settings opened.");
+    set_status("%s", tr(TR_STATUS_SETTINGS_OPENED));
 }
 
 static bool settings_confirm_action(int row, const char *message)
@@ -527,7 +554,7 @@ static void change_playback_mode(int dir)
     g_cfg.playback_mode = mode;
     save_config();
     settings_cancel_confirm();
-    set_status("Playback mode preference set to %s.", playback_mode_label(g_cfg.playback_mode));
+    set_status(tr(TR_STATUS_PLAYBACK_MODE_FMT), playback_mode_label(g_cfg.playback_mode));
 }
 
 static void change_buffer_preference(int dir)
@@ -543,11 +570,11 @@ static void change_buffer_preference(int dir)
     save_config();
     settings_cancel_confirm();
     if (kb > SETTINGS_BUFFER_KB_DEFAULT) {
-        set_status("Buffer preference %d KB saved. Higher buffers may use too much memory.", kb);
+        set_status(tr(TR_STATUS_BUFFER_HIGH_FMT), kb);
     } else if (kb < SETTINGS_BUFFER_KB_DEFAULT) {
-        set_status("Buffer preference %d KB saved. Lower buffers may cause lag.", kb);
+        set_status(tr(TR_STATUS_BUFFER_LOW_FMT), kb);
     } else {
-        set_status("Buffer preference %d KB saved. Stable playback still uses this value.", kb);
+        set_status(tr(TR_STATUS_BUFFER_STABLE_FMT), kb);
     }
 }
 
@@ -570,10 +597,20 @@ static void change_audio_rate_setting(int dir)
     save_config();
     settings_cancel_confirm();
     if (!g_is_new_3ds && g_cfg.audio_sample_rate == 40000) {
-        set_status("Audio set to 40000 Hz. May cause tiny micro hitches.");
+        set_status("%s", tr(TR_STATUS_AUDIO_40000));
     } else {
-        set_status("Audio set to %d Hz.", g_cfg.audio_sample_rate);
+        set_status(tr(TR_STATUS_AUDIO_FMT), g_cfg.audio_sample_rate);
     }
+}
+
+static void change_language_setting(int dir)
+{
+    int lang = language_normalized(g_cfg.language);
+    lang = (lang + (dir >= 0 ? 1 : -1) + LANG_COUNT) % LANG_COUNT;
+    g_cfg.language = lang;
+    save_config();
+    settings_cancel_confirm();
+    set_status(tr(TR_STATUS_LANGUAGE_FMT), language_label(g_cfg.language));
 }
 
 static void settings_clear_saved_login(void)
@@ -585,7 +622,7 @@ static void settings_clear_saved_login(void)
     g_library_count = 0;
     g_item_count = 0;
     save_config();
-    set_status("Saved password and token cleared.");
+    set_status("%s", tr(TR_STATUS_LOGIN_CLEARED));
 }
 
 static void settings_reset_server_user(void)
@@ -599,7 +636,7 @@ static void settings_reset_server_user(void)
     g_library_count = 0;
     g_item_count = 0;
     save_config();
-    set_status("Server, username, password, and token reset.");
+    set_status("%s", tr(TR_STATUS_SERVER_USER_RESET));
 }
 
 static void settings_reset_defaults(void)
@@ -611,7 +648,7 @@ static void settings_reset_defaults(void)
     save_config();
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-    set_status("Defaults restored: %s, Auto, %d KB, %d Hz.", quality_label, g_cfg.stream_buffer_kb, g_cfg.audio_sample_rate);
+    set_status(tr(TR_STATUS_DEFAULTS_FMT), quality_label, g_cfg.stream_buffer_kb, g_cfg.audio_sample_rate);
 }
 
 static void handle_settings(u32 down)
@@ -627,12 +664,12 @@ static void handle_settings(u32 down)
     if (down & KEY_B) {
         if (settings_popup_visible()) {
             settings_cancel_confirm();
-            set_status("Settings prompt closed.");
+            set_status("%s", tr(TR_STATUS_PROMPT_CLOSED));
             return;
         }
         settings_cancel_confirm();
         g_view = (!g_cfg.token[0] || !g_cfg.user_id[0]) ? VIEW_SETUP : g_settings_return_view;
-        set_status("Settings closed.");
+        set_status("%s", tr(TR_STATUS_SETTINGS_CLOSED));
         return;
     }
 
@@ -651,6 +688,8 @@ static void handle_settings(u32 down)
             change_buffer_preference(dir);
         } else if (g_settings_row == SETTINGS_ROW_AUDIO) {
             change_audio_rate_setting(dir);
+        } else if (g_settings_row == SETTINGS_ROW_LANGUAGE) {
+            change_language_setting(dir);
         }
     }
 
@@ -674,14 +713,14 @@ static void handle_settings(u32 down)
     case SETTINGS_ROW_SERVER: {
         char old_server[sizeof(g_cfg.server)];
         copy_safe(old_server, sizeof(old_server), g_cfg.server);
-        if (edit_text("Jellyfin server URL", g_cfg.server, sizeof(g_cfg.server), false)) {
+        if (edit_text(tr(TR_SERVER_URL), g_cfg.server, sizeof(g_cfg.server), false)) {
             normalize_server_url(g_cfg.server);
             if (strcmp(old_server, g_cfg.server) != 0) {
                 g_cfg.token[0] = 0;
                 g_cfg.user_id[0] = 0;
             }
             save_config();
-            set_status("Server URL saved.");
+            set_status("%s", tr(TR_STATUS_SERVER_SAVED));
         }
         settings_cancel_confirm();
         break;
@@ -689,36 +728,34 @@ static void handle_settings(u32 down)
     case SETTINGS_ROW_USERNAME: {
         char old_username[sizeof(g_cfg.username)];
         copy_safe(old_username, sizeof(old_username), g_cfg.username);
-        if (edit_text("Jellyfin username", g_cfg.username, sizeof(g_cfg.username), false)) {
+        if (edit_text(tr(TR_USERNAME), g_cfg.username, sizeof(g_cfg.username), false)) {
             if (strcmp(old_username, g_cfg.username) != 0) {
                 g_cfg.token[0] = 0;
                 g_cfg.user_id[0] = 0;
             }
             save_config();
-            set_status("Username saved.");
+            set_status("%s", tr(TR_STATUS_USERNAME_SAVED));
         }
         settings_cancel_confirm();
         break;
     }
     case SETTINGS_ROW_CLEAR_LOGIN:
-        if (settings_confirm_action(g_settings_row, "Are you sure you want to clear saved login? Press A again.")) {
+        if (settings_confirm_action(g_settings_row, tr(TR_CONFIRM_CLEAR_LOGIN))) {
             settings_clear_saved_login();
         }
         break;
     case SETTINGS_ROW_RESET_SERVER_USER:
-        if (settings_confirm_action(g_settings_row, "Are you sure you want to reset server and username? Press A again.")) {
+        if (settings_confirm_action(g_settings_row, tr(TR_CONFIRM_RESET_SERVER))) {
             settings_reset_server_user();
         }
         break;
     case SETTINGS_ROW_RESET_DEFAULTS:
-        if (settings_confirm_action(g_settings_row, "Are you sure you want to reset settings to defaults? Press A again.")) {
+        if (settings_confirm_action(g_settings_row, tr(TR_CONFIRM_RESET_DEFAULTS))) {
             settings_reset_defaults();
         }
         break;
     case SETTINGS_ROW_LANGUAGE:
-        settings_cancel_confirm();
-        settings_show_popup("Translations are coming in a future update.", 2800);
-        set_status("Translations are coming in a future update.");
+        change_language_setting(1);
         break;
     default:
         break;
@@ -739,14 +776,14 @@ static void handle_setup(u32 down)
         }
     }
     if (down & KEY_A) {
-        if (g_setup_row == 0 && edit_text("Jellyfin server URL", g_cfg.server, sizeof(g_cfg.server), false)) {
+        if (g_setup_row == 0 && edit_text(tr(TR_SERVER_URL), g_cfg.server, sizeof(g_cfg.server), false)) {
             normalize_server_url(g_cfg.server);
             save_config();
-        } else if (g_setup_row == 1 && edit_text("Jellyfin username", g_cfg.username, sizeof(g_cfg.username), false)) {
+        } else if (g_setup_row == 1 && edit_text(tr(TR_USERNAME), g_cfg.username, sizeof(g_cfg.username), false)) {
             g_cfg.token[0] = 0;
             g_cfg.user_id[0] = 0;
             save_config();
-        } else if (g_setup_row == 2 && edit_text("Jellyfin password", g_cfg.password, sizeof(g_cfg.password), true)) {
+        } else if (g_setup_row == 2 && edit_text(tr(TR_PASSWORD), g_cfg.password, sizeof(g_cfg.password), true)) {
             g_cfg.token[0] = 0;
             g_cfg.user_id[0] = 0;
             save_config();
@@ -791,10 +828,10 @@ static void handle_input(u32 down)
         }
         if (down & KEY_B) {
             g_view = VIEW_SETUP;
-            set_status("Setup opened.");
+            set_status("%s", tr(TR_SETUP_OPENED));
         }
         if ((down & KEY_A) && g_library_count > 0) {
-            push_nav("", "Libraries");
+            push_nav("", tr(TR_LIBRARIES));
             load_items_for_parent(g_libraries[g_selected].id, g_libraries[g_selected].name);
         }
     } else if (g_view == VIEW_ITEMS) {

@@ -33,6 +33,7 @@
 #define HTTP_CAP (1024 * 1024)
 #define HTTP_STATUS_NONE 0xFFFFFFFFu
 #define HTTP_STATUS_TIMEOUT_NS 15000000000ULL
+#define HTTP_REDIRECT_LIMIT 6
 #define STREAM_READ_TIMEOUT_NS 100000000ULL
 #define STREAM_READER_EMPTY_SLEEP_NS 2500000ULL
 #define EXIT_POLL_SLEEP_NS 50000000ULL
@@ -118,6 +119,12 @@ typedef enum {
 } PlaybackMode;
 
 typedef enum {
+    LANG_EN,
+    LANG_ES,
+    LANG_COUNT
+} AppLanguage;
+
+typedef enum {
     MJPEG_PLAY_FAILED,
     MJPEG_PLAY_OK,
     MJPEG_PLAY_ENDED,
@@ -162,6 +169,7 @@ typedef struct {
     int stream_buffer_kb;
     int audio_sample_rate;
     int volume_percent;
+    int language;
 } Config;
 
 typedef struct {
@@ -301,6 +309,7 @@ static const int AUDIO_RATE_LEVELS_NEW3DS[] = {22050, 32000, 44100};
 static const int AUDIO_RATE_LEVELS_OLD3DS[] = {22050, 32000, 40000};
 
 
+#include "parts/lang.inc"
 #include "parts/app_core.inc"
 #include "parts/text_config.inc"
 #include "parts/jellyfin_api.inc"
@@ -322,7 +331,7 @@ int main(void)
     if (R_SUCCEEDED(http_ret)) {
         g_http_ready = true;
     } else {
-        set_status("HTTP service failed: 0x%08lX", (unsigned long)http_ret);
+        set_status(tr(TR_STATUS_HTTP_INIT_FAIL_FMT), (unsigned long)http_ret);
     }
 
     load_config();

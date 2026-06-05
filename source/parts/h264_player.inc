@@ -68,7 +68,7 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
     }
 
     Result ret = 0;
-    for (int redirects = 0; redirects < 4; redirects++) {
+    for (int redirects = 0; redirects < HTTP_REDIRECT_LIMIT; redirects++) {
         memset(context, 0, sizeof(*context));
         ret = httpcOpenContext(context, HTTPC_METHOD_GET, active_url, 1);
         if (R_FAILED(ret)) {
@@ -91,7 +91,13 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
             break;
         }
 
-        if ((*status_out >= 301 && *status_out <= 303) || (*status_out >= 307 && *status_out <= 308)) {
+        if (http_status_is_redirect(*status_out)) {
+            if (redirects + 1 >= HTTP_REDIRECT_LIMIT) {
+                ret = (Result)0xD9000004;
+                httpcCancelConnection(context);
+                httpcCloseContext(context);
+                break;
+            }
             if (!redirect_url) {
                 redirect_url = (char *)malloc(1024);
             }
@@ -103,7 +109,7 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
             }
 
             memset(redirect_url, 0, 1024);
-            ret = httpcGetResponseHeader(context, "Location", redirect_url, 1024);
+            ret = http_redirect_location(context, redirect_url, 1024);
             httpcCancelConnection(context);
             httpcCloseContext(context);
             if (R_FAILED(ret) || !redirect_url[0]) {
@@ -111,7 +117,11 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
             }
 
             char full[STREAM_URL_CAP];
-            build_url(full, sizeof(full), redirect_url);
+            resolve_redirect_url(full, sizeof(full), active_url, redirect_url);
+            if (!full[0]) {
+                ret = -1;
+                break;
+            }
             free(active_url);
             active_url = strdup(full);
             if (!active_url) {
@@ -186,7 +196,7 @@ static bool process_h264_nal(StreamPlayer *player, const u8 *data, size_t size)
         return true;
     }
     if (size > MVD_IN_CAP) {
-        set_play_status("H.264 NAL too large: %lu bytes.", (unsigned long)size);
+        set_play_status(tr(TR_H264_NAL_TOO_LARGE_FMT), (unsigned long)size);
         return false;
     }
 
@@ -200,7 +210,7 @@ static bool process_h264_nal(StreamPlayer *player, const u8 *data, size_t size)
     player->nal_count++;
 
     if (!MVD_CHECKNALUPROC_SUCCESS(ret)) {
-        set_play_status("MVD decode failed: 0x%08lX.", (unsigned long)ret);
+        set_play_status(tr(TR_H264_MVD_DECODE_FAIL_FMT), (unsigned long)ret);
         return false;
     }
 
@@ -210,7 +220,7 @@ static bool process_h264_nal(StreamPlayer *player, const u8 *data, size_t size)
         ret = mvdstdRenderVideoFrame(&player->config, true);
         player->last_result = ret;
         if (ret != MVD_STATUS_OK) {
-            set_play_status("MVD render failed: 0x%08lX.", (unsigned long)ret);
+            set_play_status(tr(TR_H264_MVD_RENDER_FAIL_FMT), (unsigned long)ret);
             return false;
         }
         gfxSwapBuffersGpu();
@@ -227,7 +237,7 @@ static bool append_h264_bytes(StreamPlayer *player, const u8 *data, size_t size)
     }
     if (size > H264_BUFFER_CAP - player->h264_size) {
         player->h264_size = 0;
-        set_play_status("H.264 stream buffer overflow; dropping pending data.");
+        set_play_status("%s", tr(TR_H264_BUFFER_OVERFLOW));
         return true;
     }
 
@@ -457,19 +467,19 @@ static bool player_init(StreamPlayer *player)
     player->mvd_in = (u8 *)linearMemAlign(MVD_IN_CAP, 0x40);
     player->mvd_out = (u8 *)linearMemAlign(MVD_OUT_CAP, 0x40);
     if (!player->h264_buf || !player->mvd_in || !player->mvd_out) {
-        set_play_status("Not enough memory for video playback buffers.");
+        set_play_status("%s", tr(TR_H264_VIDEO_BUFFER_FAIL));
         return false;
     }
 
     if (!g_is_new_3ds) {
-        set_play_status("Video playback needs New3DS MVD hardware.");
+        set_play_status("%s", tr(TR_H264_NEEDS_NEW3DS));
         return false;
     }
 
     Result ret = mvdstdInit(MVDMODE_VIDEOPROCESSING, MVD_INPUT_H264, MVD_OUTPUT_BGR565, MVD_DEFAULT_WORKBUF_SIZE, NULL);
     player->last_result = ret;
     if (R_FAILED(ret)) {
-        set_play_status("Could not start MVD decoder: 0x%08lX.", (unsigned long)ret);
+        set_play_status(tr(TR_H264_DECODER_START_FAIL_FMT), (unsigned long)ret);
         return false;
     }
 
@@ -504,7 +514,7 @@ static void player_free(StreamPlayer *player, bool mvd_started)
 static bool play_stream_url(const char *url)
 {
     if (!url || !url[0]) {
-        set_play_status("No playback URL.");
+        set_play_status("%s", tr(TR_H264_NO_URL));
         return false;
     }
 
@@ -516,20 +526,20 @@ static bool play_stream_url(const char *url)
     bool ok = false;
     bool mvd_started = false;
     bool remote_started = false;
-    player_console(NULL, "Starting decoder...");
+    player_console(NULL, tr(TR_H264_STARTING_DECODER));
     if (!player_init(&player)) {
         player_free(&player, false);
         playback_graphics_exit();
         return false;
     }
     mvd_started = true;
-    player_console(&player, "Opening Jellyfin stream...");
+    player_console(&player, tr(TR_H264_OPENING_STREAM));
 
     httpcContext context;
     u32 status = HTTP_STATUS_NONE;
     Result ret = open_stream_context(&context, url, &status);
     if (R_FAILED(ret)) {
-        set_play_status("Stream open failed: HTTP %lu result 0x%08lX.", (unsigned long)status, (unsigned long)ret);
+        set_play_status(tr(TR_H264_OPEN_FAIL_FMT), (unsigned long)status, (unsigned long)ret);
         if (!app_system_closing()) {
             player_console(&player, g_play_status);
         }
@@ -550,12 +560,12 @@ static bool play_stream_url(const char *url)
         g_session_capabilities_reported = false;
     }
     if (!chunk) {
-        set_play_status("Could not allocate stream read buffer.");
+        set_play_status("%s", tr(TR_H264_ALLOC_FAIL));
     } else {
         h264_report_start_ms = osGetTime();
         h264_report_started = true;
         report_playback_start(0, false, false, g_cfg.volume_percent);
-        set_play_status("Playing. Press B to stop.");
+        set_play_status("%s", tr(TR_H264_PLAYING_STOP));
         player_console(&player, g_play_status);
         u64 last_console_ms = osGetTime();
         while (app_keep_running()) {
@@ -563,11 +573,11 @@ static bool play_stream_url(const char *url)
             u32 down = hidKeysDown();
             if (down & KEY_START) {
                 g_exit_requested = true;
-                set_play_status("Playback stopped.");
+                set_play_status("%s", tr(TR_PLAYBACK_STOPPED));
                 break;
             }
             if (down & KEY_B) {
-                set_play_status("Playback stopped.");
+                set_play_status("%s", tr(TR_PLAYBACK_STOPPED));
                 ok = true;
                 break;
             }
@@ -582,7 +592,7 @@ static bool play_stream_url(const char *url)
             RemoteCommand remote_cmd;
             if (remote_control_poll(&remote_cmd)) {
                 if (remote_cmd.type == REMOTE_CMD_STOP) {
-                    set_play_status("Stopped from Jellyfin dashboard.");
+                    set_play_status("%s", tr(TR_REMOTE_STOPPED));
                     ok = true;
                     break;
                 } else if (remote_cmd.type == REMOTE_CMD_PAUSE) {
@@ -590,7 +600,7 @@ static bool play_stream_url(const char *url)
                         h264_pause_started_ms = now_ms;
                         h264_paused = true;
                     }
-                    set_play_status("Paused from Jellyfin dashboard.");
+                    set_play_status("%s", tr(TR_H264_REMOTE_PAUSED));
                     report_playback_progress(position_ticks, true, false, g_cfg.volume_percent);
                     player_console(&player, g_play_status);
                 } else if (remote_cmd.type == REMOTE_CMD_UNPAUSE) {
@@ -599,7 +609,7 @@ static bool play_stream_url(const char *url)
                     }
                     h264_pause_started_ms = 0;
                     h264_paused = false;
-                    set_play_status("Playing. Press B to stop.");
+                    set_play_status("%s", tr(TR_H264_REMOTE_PLAYING));
                     report_playback_progress(position_ticks, false, false, g_cfg.volume_percent);
                     player_console(&player, g_play_status);
                 } else if (remote_cmd.type == REMOTE_CMD_TOGGLE_PAUSE) {
@@ -613,11 +623,11 @@ static bool play_stream_url(const char *url)
                         h264_pause_started_ms = now_ms;
                         h264_paused = true;
                     }
-                    set_play_status(h264_paused ? "Paused from Jellyfin dashboard." : "Playing. Press B to stop.");
+                    set_play_status("%s", h264_paused ? tr(TR_H264_REMOTE_PAUSED) : tr(TR_H264_REMOTE_PLAYING));
                     report_playback_progress(position_ticks, h264_paused, false, g_cfg.volume_percent);
                     player_console(&player, g_play_status);
                 } else if (remote_cmd.type == REMOTE_CMD_MESSAGE) {
-                    set_play_status("Jellyfin message: %.120s", remote_cmd.text);
+                    set_play_status(tr(TR_H264_REMOTE_MESSAGE_FMT), remote_cmd.text);
                     player_console(&player, g_play_status);
                 }
             }
@@ -636,7 +646,7 @@ static bool play_stream_url(const char *url)
             if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING || ret == (s32)HTTPC_RESULTCODE_TIMEDOUT) {
                 u64 now_ms = osGetTime();
                 if (now_ms - last_console_ms >= 1000) {
-                    player_console(&player, "Playing. Press B to stop.");
+                    player_console(&player, tr(TR_H264_PLAYING_STOP));
                     last_console_ms = now_ms;
                 }
                 continue;
@@ -644,15 +654,15 @@ static bool play_stream_url(const char *url)
             if (R_FAILED(ret)) {
                 if (g_current.runtime_ticks && position_ticks + 8ULL * TICKS_PER_SECOND >= g_current.runtime_ticks) {
                     g_playback_ended_naturally = true;
-                    set_play_status("Playback reached end of stream.");
+                    set_play_status("%s", tr(TR_H264_REACHED_END));
                     ok = true;
                     break;
                 }
-                set_play_status("Stream read failed: 0x%08lX.", (unsigned long)ret);
+                set_play_status(tr(TR_H264_READ_FAIL_FMT), (unsigned long)ret);
                 break;
             }
             g_playback_ended_naturally = true;
-            set_play_status("Playback reached end of stream.");
+            set_play_status("%s", tr(TR_H264_REACHED_END));
             ok = true;
             break;
         }
@@ -679,7 +689,7 @@ static bool play_stream_url(const char *url)
     }
 
     if (!ok && !g_play_status[0]) {
-        set_play_status("Playback failed.");
+        set_play_status("%s", tr(TR_H264_PLAYBACK_FAILED));
     }
     if (!app_system_closing()) {
         player_console(&player, g_play_status);

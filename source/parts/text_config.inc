@@ -699,6 +699,7 @@ static void ensure_defaults(void)
     if (g_cfg.volume_percent < VOLUME_MIN_PERCENT || g_cfg.volume_percent > VOLUME_MAX_PERCENT) {
         g_cfg.volume_percent = VOLUME_DEFAULT_PERCENT;
     }
+    g_cfg.language = language_normalized(g_cfg.language);
 }
 
 static void save_config(void)
@@ -720,6 +721,7 @@ static void save_config(void)
     fprintf(f, "stream_buffer_kb=%d\n", g_cfg.stream_buffer_kb);
     fprintf(f, "audio_sample_rate=%d\n", g_cfg.audio_sample_rate);
     fprintf(f, "volume_percent=%d\n", g_cfg.volume_percent);
+    fprintf(f, "language=%d\n", g_cfg.language);
     fclose(f);
 }
 
@@ -730,6 +732,7 @@ static void load_config(void)
     g_cfg.stream_buffer_kb = SETTINGS_BUFFER_KB_DEFAULT;
     g_cfg.audio_sample_rate = 0;
     g_cfg.volume_percent = -1;
+    g_cfg.language = LANG_EN;
     FILE *f = fopen(CONFIG_PATH, "r");
     if (!f) {
         ensure_defaults();
@@ -772,6 +775,8 @@ static void load_config(void)
             g_cfg.audio_sample_rate = atoi(eq);
         } else if (strcmp(line, "volume_percent") == 0) {
             g_cfg.volume_percent = atoi(eq);
+        } else if (strcmp(line, "language") == 0) {
+            g_cfg.language = atoi(eq);
         }
     }
     fclose(f);
@@ -793,7 +798,9 @@ static void load_config(void)
     }
     memset(decrypted, 0, sizeof(decrypted));
     if (decrypt_failed) {
-        set_status("Saved credentials could not be decrypted. Re-enter password.");
+        set_status("%s", tr(TR_STATUS_CREDENTIAL_DECRYPT_FAIL));
+    } else if (!g_cfg.token[0] || !g_cfg.user_id[0]) {
+        set_status("%s", tr(TR_STATUS_CONFIGURE_SERVER));
     }
 }
 
