@@ -1610,15 +1610,21 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
         return tr(TR_STATE_PAUSED);
     }
     if (line && (strstr(line, "failed") || strstr(line, "Failed") || strstr(line, "fallo") ||
-                 strstr(line, "Fallo") || strstr(line, "decode") || strstr(line, "decod"))) {
+                 strstr(line, "Fallo") || strstr(line, "decode") || strstr(line, "decod") ||
+                 strstr(line, "失敗") || strstr(line, "できません") || strstr(line, "不足") ||
+                 strstr(line, "超過"))) {
         return tr(TR_STATE_ERROR);
     }
     if (line && (strstr(line, "Opening") || strstr(line, "Requesting") || strstr(line, "Abriendo") ||
-                 strstr(line, "Solicitando") || strstr(line, "Cargando"))) {
+                 strstr(line, "Solicitando") || strstr(line, "Cargando") || strstr(line, "開いています") ||
+                 strstr(line, "要求中") || strstr(line, "読み込み中") || strstr(line, "バッファ中") ||
+                 strstr(line, "開始中") || strstr(line, "試しています") || strstr(line, "切り替え中"))) {
         return tr(TR_STATE_LOADING);
     }
     if (line && (strstr(line, "stopped") || strstr(line, "Stopped") || strstr(line, "end") ||
-                 strstr(line, "detenida") || strstr(line, "Detenido") || strstr(line, "final"))) {
+                 strstr(line, "detenida") || strstr(line, "Detenido") || strstr(line, "final") ||
+                 strstr(line, "停止") || strstr(line, "終端") || strstr(line, "終了") ||
+                 strstr(line, "キャンセル"))) {
         return tr(TR_STATE_STOPPED);
     }
     return tr(TR_STATE_PLAYING);

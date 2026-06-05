@@ -121,6 +121,7 @@ typedef enum {
 typedef enum {
     LANG_EN,
     LANG_ES,
+    LANG_JA,
     LANG_COUNT
 } AppLanguage;
 
@@ -216,6 +217,9 @@ static int g_settings_confirm_row = -1;
 static u64 g_settings_confirm_until_ms;
 static u64 g_settings_popup_until_ms;
 static char g_settings_popup[128];
+static bool g_language_select_open;
+static int g_language_select_row;
+static int g_language_select_scroll;
 static char g_screen_title[96] = "Libraries";
 static char g_current_parent_id[80];
 static char g_status[192] = "Press Y to configure a Jellyfin server.";

@@ -74,6 +74,26 @@ static void draw_text_centered(float center_x, float y, float scale, u32 color, 
     C2D_DrawText(&t, C2D_WithColor, center_x - width * 0.5f, y, 0.5f, scale, scale, color);
 }
 
+static void draw_text_plain_z(float x, float y, float z, float scale, u32 color, const char *text)
+{
+    C2D_Text t;
+    C2D_TextParse(&t, g_text, text ? text : "");
+    C2D_TextOptimize(&t);
+    C2D_DrawText(&t, C2D_WithColor, x, y, z, scale, scale, color);
+}
+
+static void draw_text_centered_plain_z(float center_x, float y, float z, float scale, u32 color, const char *text)
+{
+    C2D_Text t;
+    C2D_TextParse(&t, g_text, text ? text : "");
+    C2D_TextOptimize(&t);
+    float width = 0.0f;
+    float height = 0.0f;
+    C2D_TextGetDimensions(&t, scale, scale, &width, &height);
+    (void)height;
+    C2D_DrawText(&t, C2D_WithColor, center_x - width * 0.5f, y, z, scale, scale, color);
+}
+
 static void draw_header(const char *title)
 {
     C2D_DrawRectSolid(0, 0, 0, 400, 34, COL_PAPER);
@@ -99,6 +119,11 @@ static bool settings_popup_visible(void)
     return g_view == VIEW_SETTINGS && g_settings_popup[0] && osGetTime() < g_settings_popup_until_ms;
 }
 
+static bool language_select_visible(void)
+{
+    return g_view == VIEW_SETTINGS && g_language_select_open;
+}
+
 static void draw_settings_bottom_popup(void)
 {
     C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_PAPER);
@@ -110,29 +135,73 @@ static void draw_settings_bottom_popup(void)
     draw_text_wrap(36, 181, 0.35f, 248, COL_MUTED, "%s", tr(TR_POPUP_RESET_HELP));
 }
 
+static void draw_language_selector(void)
+{
+    if (!language_select_visible()) {
+        return;
+    }
+
+    if (g_language_select_row < 0) {
+        g_language_select_row = 0;
+    }
+    if (g_language_select_row >= LANG_COUNT) {
+        g_language_select_row = LANG_COUNT - 1;
+    }
+    if (g_language_select_row < g_language_select_scroll) {
+        g_language_select_scroll = g_language_select_row;
+    }
+    if (g_language_select_row >= g_language_select_scroll + 4) {
+        g_language_select_scroll = g_language_select_row - 3;
+    }
+
+    const float x = 82.0f;
+    const float y = 58.0f;
+    const float w = 236.0f;
+    const float h = 126.0f;
+    const float panel_z = 0.70f;
+    const float text_z = 0.86f;
+    C2D_DrawRectSolid(x, y, panel_z + 0.01f, w, h, COL_PAPER);
+    C2D_DrawRectSolid(x, y, panel_z + 0.02f, w, 4, COL_SECONDARY);
+    C2D_DrawRectSolid(x, y + h - 4, panel_z + 0.02f, w, 4, COL_PRIMARY);
+    draw_text_centered_plain_z(x + w * 0.5f, y + 14, text_z, 0.42f, COL_WHITE, tr(TR_LANGUAGE_SELECT_TITLE));
+
+    for (int row = 0; row < 4 && g_language_select_scroll + row < LANG_COUNT; row++) {
+        int idx = g_language_select_scroll + row;
+        bool selected = idx == g_language_select_row;
+        float row_y = y + 42.0f + row * 24.0f;
+        C2D_DrawRectSolid(x + 16, row_y - 3, panel_z + 0.03f, w - 32, 21, selected ? COL_PRIMARY_DARK : ((idx & 1) ? COL_CARD_2 : COL_CARD));
+        C2D_DrawRectSolid(x + 16, row_y + 17, panel_z + 0.04f, w - 32, 1, selected ? COL_SECONDARY : 0x55000000);
+        draw_text_plain_z(x + 28, row_y + 2, text_z, 0.40f, selected ? COL_WHITE : COL_MUTED, language_label(idx));
+        if (idx == language_normalized(g_cfg.language)) {
+            draw_text_plain_z(x + w - 58, row_y + 2, text_z, 0.34f, COL_SECONDARY, "*");
+        }
+    }
+}
+
 static const char *display_item_kind(const MediaItem *item)
 {
     const char *kind = item && item->collection_type[0] ? item->collection_type : (item ? item->type : "");
-    if (language_normalized(g_cfg.language) != LANG_ES) {
+    int language = language_normalized(g_cfg.language);
+    if (language != LANG_ES && language != LANG_JA) {
         return kind;
     }
     if (strcmp(kind, "movies") == 0 || strcmp(kind, "Movie") == 0) {
-        return "pel" "\xC3\xAD" "cula";
+        return language == LANG_JA ? "映画" : "pel" "\xC3\xAD" "cula";
     }
     if (strcmp(kind, "tvshows") == 0 || strcmp(kind, "Series") == 0) {
-        return "serie";
+        return language == LANG_JA ? "シリーズ" : "serie";
     }
     if (strcmp(kind, "Episode") == 0) {
-        return "episodio";
+        return language == LANG_JA ? "エピソード" : "episodio";
     }
     if (strcmp(kind, "Season") == 0) {
-        return "temporada";
+        return language == LANG_JA ? "シーズン" : "temporada";
     }
     if (strcmp(kind, "Folder") == 0) {
-        return "carpeta";
+        return language == LANG_JA ? "フォルダ" : "carpeta";
     }
     if (strcmp(kind, "Video") == 0) {
-        return "video";
+        return language == LANG_JA ? "動画" : "video";
     }
     return kind;
 }
@@ -346,6 +415,8 @@ static void draw_settings(void)
         draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
                        "%s", tr(TR_SETTINGS_HINT));
     }
+
+    draw_language_selector();
 }
 
 static void draw_detail(void)
@@ -420,6 +491,9 @@ static void render(void)
     C2D_SceneBegin(g_bottom);
     if (settings_popup_visible()) {
         draw_settings_bottom_popup();
+    } else if (language_select_visible()) {
+        draw_bottom_help(tr(TR_LANGUAGE_SELECT_HELP),
+                         "");
     } else if (g_view == VIEW_SETUP) {
         draw_bottom_help(tr(TR_SETUP_HELP_1),
                          tr(TR_SETUP_HELP_2));
@@ -522,6 +596,7 @@ static void settings_cancel_confirm(void)
     g_settings_confirm_until_ms = 0;
     g_settings_popup[0] = 0;
     g_settings_popup_until_ms = 0;
+    g_language_select_open = false;
 }
 
 static void open_settings(void)
@@ -603,14 +678,45 @@ static void change_audio_rate_setting(int dir)
     }
 }
 
-static void change_language_setting(int dir)
+static void set_language_setting(int language)
 {
-    int lang = language_normalized(g_cfg.language);
-    lang = (lang + (dir >= 0 ? 1 : -1) + LANG_COUNT) % LANG_COUNT;
-    g_cfg.language = lang;
+    g_cfg.language = language_normalized(language);
     save_config();
     settings_cancel_confirm();
     set_status(tr(TR_STATUS_LANGUAGE_FMT), language_label(g_cfg.language));
+}
+
+static void open_language_selector(void)
+{
+    int language = language_normalized(g_cfg.language);
+    settings_cancel_confirm();
+    g_language_select_row = language;
+    g_language_select_scroll = language > 3 ? language - 3 : 0;
+    g_language_select_open = true;
+    set_status("%s", tr(TR_LANGUAGE_SELECT_TITLE));
+}
+
+static bool handle_language_selector(u32 down)
+{
+    if (!g_language_select_open) {
+        return false;
+    }
+    if (down & KEY_DOWN) {
+        g_language_select_row = (g_language_select_row + 1) % LANG_COUNT;
+    }
+    if (down & KEY_UP) {
+        g_language_select_row = (g_language_select_row + LANG_COUNT - 1) % LANG_COUNT;
+    }
+    if (down & KEY_B) {
+        g_language_select_open = false;
+        set_status("%s", tr(TR_STATUS_PROMPT_CLOSED));
+        return true;
+    }
+    if (down & KEY_A) {
+        set_language_setting(g_language_select_row);
+        return true;
+    }
+    return true;
 }
 
 static void settings_clear_saved_login(void)
@@ -653,6 +759,10 @@ static void settings_reset_defaults(void)
 
 static void handle_settings(u32 down)
 {
+    if (handle_language_selector(down)) {
+        return;
+    }
+
     if (down & KEY_DOWN) {
         g_settings_row = (g_settings_row + 1) % SETTINGS_ROW_COUNT;
         settings_cancel_confirm();
@@ -689,7 +799,7 @@ static void handle_settings(u32 down)
         } else if (g_settings_row == SETTINGS_ROW_AUDIO) {
             change_audio_rate_setting(dir);
         } else if (g_settings_row == SETTINGS_ROW_LANGUAGE) {
-            change_language_setting(dir);
+            open_language_selector();
         }
     }
 
@@ -755,7 +865,7 @@ static void handle_settings(u32 down)
         }
         break;
     case SETTINGS_ROW_LANGUAGE:
-        change_language_setting(1);
+        open_language_selector();
         break;
     default:
         break;
