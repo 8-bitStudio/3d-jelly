@@ -35,6 +35,19 @@ static bool ui_codepoint_is_hangul(u32 cp)
            (cp >= 0x1100 && cp <= 0x11FF);
 }
 
+static bool ui_codepoint_is_cjk_ideograph(u32 cp)
+{
+    return (cp >= 0x3400 && cp <= 0x4DBF) ||
+           (cp >= 0x4E00 && cp <= 0x9FFF) ||
+           (cp >= 0xF900 && cp <= 0xFAFF);
+}
+
+static bool ui_codepoint_is_kana(u32 cp)
+{
+    return (cp >= 0x3040 && cp <= 0x30FF) ||
+           (cp >= 0x31F0 && cp <= 0x31FF);
+}
+
 static bool ui_text_has_hangul(const char *text)
 {
     const char *p = text ? text : "";
@@ -54,11 +67,55 @@ static bool ui_text_has_hangul(const char *text)
     return false;
 }
 
+static bool ui_text_has_cjk_ideograph(const char *text)
+{
+    const char *p = text ? text : "";
+    const char *end = p + strlen(p);
+    while (p < end) {
+        u32 cp = 0;
+        size_t len = read_utf8_codepoint(p, end, &cp);
+        if (len == 0) {
+            p++;
+            continue;
+        }
+        if (ui_codepoint_is_cjk_ideograph(cp)) {
+            return true;
+        }
+        p += len;
+    }
+    return false;
+}
+
+static bool ui_text_has_kana(const char *text)
+{
+    const char *p = text ? text : "";
+    const char *end = p + strlen(p);
+    while (p < end) {
+        u32 cp = 0;
+        size_t len = read_utf8_codepoint(p, end, &cp);
+        if (len == 0) {
+            p++;
+            continue;
+        }
+        if (ui_codepoint_is_kana(cp)) {
+            return true;
+        }
+        p += len;
+    }
+    return false;
+}
+
 static void ui_text_parse(C2D_Text *text, const char *src)
 {
     const char *safe = src ? src : "";
     if (g_font_kor && ui_text_has_hangul(safe)) {
         C2D_TextFontParse(text, g_font_kor, g_text, safe);
+    } else if (g_font_chn &&
+               (language_normalized(g_cfg.language) == LANG_ZH_HANS ||
+                strcmp(safe, language_label(LANG_ZH_HANS)) == 0) &&
+               strcmp(safe, language_label(LANG_JA)) != 0 &&
+               ui_text_has_cjk_ideograph(safe) && !ui_text_has_kana(safe)) {
+        C2D_TextFontParse(text, g_font_chn, g_text, safe);
     } else {
         C2D_TextParse(text, g_text, safe);
     }
@@ -279,7 +336,7 @@ static const char *display_item_kind(const MediaItem *item)
     int language = language_normalized(g_cfg.language);
     if (language != LANG_ES && language != LANG_JA && language != LANG_FR && language != LANG_DE &&
         language != LANG_IT && language != LANG_RU && language != LANG_NL && language != LANG_PT &&
-        language != LANG_KO) {
+        language != LANG_KO && language != LANG_ZH_HANS) {
         return kind;
     }
     if (strcmp(kind, "movies") == 0 || strcmp(kind, "Movie") == 0) {
@@ -288,6 +345,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "映画";
         case LANG_KO:
             return "영화";
+        case LANG_ZH_HANS:
+            return "电影";
         case LANG_FR:
             return "film";
         case LANG_DE:
@@ -310,6 +369,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "シリーズ";
         case LANG_KO:
             return "시리즈";
+        case LANG_ZH_HANS:
+            return "剧集";
         case LANG_FR:
             return "série";
         case LANG_DE:
@@ -332,6 +393,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "エピソード";
         case LANG_KO:
             return "에피소드";
+        case LANG_ZH_HANS:
+            return "集";
         case LANG_FR:
             return "épisode";
         case LANG_DE:
@@ -354,6 +417,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "シーズン";
         case LANG_KO:
             return "시즌";
+        case LANG_ZH_HANS:
+            return "季";
         case LANG_FR:
             return "saison";
         case LANG_DE:
@@ -376,6 +441,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "フォルダ";
         case LANG_KO:
             return "폴더";
+        case LANG_ZH_HANS:
+            return "文件夹";
         case LANG_FR:
             return "dossier";
         case LANG_DE:
@@ -398,6 +465,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "動画";
         case LANG_KO:
             return "동영상";
+        case LANG_ZH_HANS:
+            return "视频";
         case LANG_FR:
             return "vidéo";
         case LANG_DE:
@@ -742,6 +811,7 @@ static void ui_graphics_init(void)
     g_text = C2D_TextBufNew(8192);
     if (g_cfgu_ready) {
         g_font_kor = C2D_FontLoadSystem(CFG_REGION_KOR);
+        g_font_chn = C2D_FontLoadSystem(CFG_REGION_CHN);
     }
     g_ui_ready = true;
 }
@@ -759,6 +829,10 @@ static void ui_graphics_exit(void)
     if (g_font_kor) {
         C2D_FontFree(g_font_kor);
         g_font_kor = NULL;
+    }
+    if (g_font_chn) {
+        C2D_FontFree(g_font_chn);
+        g_font_chn = NULL;
     }
     C2D_Fini();
     C3D_Fini();
