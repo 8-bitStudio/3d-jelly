@@ -808,7 +808,30 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     swkbdSetHintText(&kb, hint);
     swkbdSetValidation(&kb, password ? SWKBD_ANYTHING : SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
     swkbdSetFeatures(&kb, SWKBD_DARKEN_TOP_SCREEN | SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET | SWKBD_ALLOW_POWER);
-    swkbdSetButton(&kb, SWKBD_BUTTON_LEFT, language_normalized(g_cfg.language) == LANG_ES ? "Cancelar" : "Cancel", false);
+    const char *cancel_label = "Cancel";
+    switch (language_normalized(g_cfg.language)) {
+    case LANG_ES:
+        cancel_label = "Cancelar";
+        break;
+    case LANG_JA:
+        cancel_label = "キャンセル";
+        break;
+    case LANG_FR:
+        cancel_label = "Annuler";
+        break;
+    case LANG_DE:
+        cancel_label = "Abbr.";
+        break;
+    case LANG_IT:
+        cancel_label = "Annulla";
+        break;
+    case LANG_RU:
+        cancel_label = "Отмена";
+        break;
+    default:
+        break;
+    }
+    swkbdSetButton(&kb, SWKBD_BUTTON_LEFT, cancel_label, false);
     swkbdSetButton(&kb, SWKBD_BUTTON_RIGHT, "OK", true);
     if (password) {
         swkbdSetPasswordMode(&kb, SWKBD_PASSWORD_HIDE_DELAY);

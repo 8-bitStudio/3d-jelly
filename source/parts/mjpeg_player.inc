@@ -279,12 +279,12 @@ static int audio_volume_for_report(const AudioPlayer *audio)
 static const char *audio_volume_range_label(const AudioPlayer *audio)
 {
     if (!audio || audio->muted || audio->volume_percent == 0) {
-        return language_normalized(g_cfg.language) == LANG_ES ? "silencio" : "muted";
+        return tr(TR_AUDIO_RANGE_MUTED);
     }
     if (audio->volume_percent > 100) {
-        return language_normalized(g_cfg.language) == LANG_ES ? "extra" : "boost";
+        return tr(TR_AUDIO_RANGE_BOOST);
     }
-    return "normal";
+    return tr(TR_AUDIO_RANGE_NORMAL);
 }
 
 static void audio_set_play_status(AudioPlayer *audio, const char *prefix)
@@ -295,7 +295,7 @@ static void audio_set_play_status(AudioPlayer *audio, const char *prefix)
     }
 
     set_play_status(tr(TR_AUDIO_STATUS_FMT),
-                    prefix ? prefix : "Audio",
+                    prefix ? prefix : tr(TR_AUDIO_LABEL),
                     audio->muted ? 0 : audio->volume_percent,
                     audio_volume_range_label(audio),
                     audio_y_action(audio));
@@ -1085,12 +1085,13 @@ static void draw_next_episode_osd(MjpegPlayer *player, u16 *fb)
     char action[24];
     snprintf(label, sizeof(label), tr(TR_NEXT_EPISODE_IN_FMT), seconds);
     snprintf(action, sizeof(action), "%s", tr(TR_NEXT_EPISODE_ACTIONS));
+    int action_w = bottom_text_width(action, 1);
     int text_w = bottom_text_width(label, 1);
-    int dock_w = text_w + 20;
+    int widest_w = action_w > text_w ? action_w : text_w;
+    int dock_w = widest_w + 20;
     int dock_h = 23;
     int dock_x = 400 - dock_w - 10;
     int dock_y = 188;
-    int action_w = bottom_text_width(action, 1);
 
     u16 shadow = rgb565_from_rgb(0, 0, 0);
     u16 dock = rgb565_from_rgb(18, 19, 23);
@@ -1612,19 +1613,40 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
     if (line && (strstr(line, "failed") || strstr(line, "Failed") || strstr(line, "fallo") ||
                  strstr(line, "Fallo") || strstr(line, "decode") || strstr(line, "decod") ||
                  strstr(line, "失敗") || strstr(line, "できません") || strstr(line, "不足") ||
-                 strstr(line, "超過"))) {
+                 strstr(line, "超過") || strstr(line, "échec") || strstr(line, "Échec") ||
+                 strstr(line, "erreur") || strstr(line, "Erreur") || strstr(line, "impossible") ||
+                 strstr(line, "fehl") || strstr(line, "Fehl") || strstr(line, "konnte") ||
+                 strstr(line, "nicht genug") || strstr(line, "überschritten") ||
+                 strstr(line, "fallita") || strstr(line, "Fallita") || strstr(line, "errore") ||
+                 strstr(line, "Errore") || strstr(line, "impossibile") ||
+                 strstr(line, "ошиб") || strstr(line, "Ошибка") || strstr(line, "не удалось") ||
+                 strstr(line, "недостаточно") || strstr(line, "переполн"))) {
         return tr(TR_STATE_ERROR);
     }
     if (line && (strstr(line, "Opening") || strstr(line, "Requesting") || strstr(line, "Abriendo") ||
                  strstr(line, "Solicitando") || strstr(line, "Cargando") || strstr(line, "開いています") ||
                  strstr(line, "要求中") || strstr(line, "読み込み中") || strstr(line, "バッファ中") ||
-                 strstr(line, "開始中") || strstr(line, "試しています") || strstr(line, "切り替え中"))) {
+                 strstr(line, "開始中") || strstr(line, "試しています") || strstr(line, "切り替え中") ||
+                 strstr(line, "Ouverture") || strstr(line, "Demande") || strstr(line, "Chargement") ||
+                 strstr(line, "Mise en mémoire") || strstr(line, "Démarrage") ||
+                 strstr(line, "Öffne") || strstr(line, "Fordere") || strstr(line, "Lade") ||
+                 strstr(line, "Puffere") || strstr(line, "Starte") || strstr(line, "Versuche") ||
+                 strstr(line, "Apertura") || strstr(line, "Richiesta") || strstr(line, "Caricamento") ||
+                 strstr(line, "Buffering") || strstr(line, "Avvio") || strstr(line, "Provo") ||
+                 strstr(line, "Открытие") || strstr(line, "Запрос") || strstr(line, "Загрузка") ||
+                 strstr(line, "Буферизация") || strstr(line, "Запуск") || strstr(line, "Пробую") ||
+                 strstr(line, "Переключение"))) {
         return tr(TR_STATE_LOADING);
     }
     if (line && (strstr(line, "stopped") || strstr(line, "Stopped") || strstr(line, "end") ||
                  strstr(line, "detenida") || strstr(line, "Detenido") || strstr(line, "final") ||
                  strstr(line, "停止") || strstr(line, "終端") || strstr(line, "終了") ||
-                 strstr(line, "キャンセル"))) {
+                 strstr(line, "キャンセル") || strstr(line, "arrêt") || strstr(line, "Arrêt") ||
+                 strstr(line, "termin") || strstr(line, "annul") || strstr(line, "fin du flux") ||
+                 strstr(line, "Ende") || strstr(line, "gestoppt") || strstr(line, "Gestoppt") ||
+                 strstr(line, "beendet") || strstr(line, "abgebrochen") || strstr(line, "fine") ||
+                 strstr(line, "terminata") || strstr(line, "fermato") || strstr(line, "annull") ||
+                 strstr(line, "конца") || strstr(line, "останов") || strstr(line, "отмен"))) {
         return tr(TR_STATE_STOPPED);
     }
     return tr(TR_STATE_PLAYING);

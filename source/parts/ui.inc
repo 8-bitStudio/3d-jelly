@@ -124,6 +124,8 @@ static bool language_select_visible(void)
     return g_view == VIEW_SETTINGS && g_language_select_open;
 }
 
+#define LANGUAGE_SELECTOR_VISIBLE_ROWS 3
+
 static void draw_settings_bottom_popup(void)
 {
     C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_PAPER);
@@ -150,14 +152,25 @@ static void draw_language_selector(void)
     if (g_language_select_row < g_language_select_scroll) {
         g_language_select_scroll = g_language_select_row;
     }
-    if (g_language_select_row >= g_language_select_scroll + 4) {
-        g_language_select_scroll = g_language_select_row - 3;
+    int visible_rows = LANG_COUNT < LANGUAGE_SELECTOR_VISIBLE_ROWS ? LANG_COUNT : LANGUAGE_SELECTOR_VISIBLE_ROWS;
+    if (visible_rows < 1) {
+        visible_rows = 1;
+    }
+    if (g_language_select_row >= g_language_select_scroll + visible_rows) {
+        g_language_select_scroll = g_language_select_row - visible_rows + 1;
+    }
+    int max_scroll = LANG_COUNT - visible_rows;
+    if (max_scroll < 0) {
+        max_scroll = 0;
+    }
+    if (g_language_select_scroll > max_scroll) {
+        g_language_select_scroll = max_scroll;
     }
 
     const float x = 82.0f;
-    const float y = 58.0f;
+    const float y = 62.0f;
     const float w = 236.0f;
-    const float h = 126.0f;
+    const float h = 116.0f;
     const float panel_z = 0.70f;
     const float text_z = 0.86f;
     C2D_DrawRectSolid(x, y, panel_z + 0.01f, w, h, COL_PAPER);
@@ -165,10 +178,10 @@ static void draw_language_selector(void)
     C2D_DrawRectSolid(x, y + h - 4, panel_z + 0.02f, w, 4, COL_PRIMARY);
     draw_text_centered_plain_z(x + w * 0.5f, y + 14, text_z, 0.42f, COL_WHITE, tr(TR_LANGUAGE_SELECT_TITLE));
 
-    for (int row = 0; row < 4 && g_language_select_scroll + row < LANG_COUNT; row++) {
+    for (int row = 0; row < visible_rows && g_language_select_scroll + row < LANG_COUNT; row++) {
         int idx = g_language_select_scroll + row;
         bool selected = idx == g_language_select_row;
-        float row_y = y + 42.0f + row * 24.0f;
+        float row_y = y + 43.0f + row * 25.0f;
         C2D_DrawRectSolid(x + 16, row_y - 3, panel_z + 0.03f, w - 32, 21, selected ? COL_PRIMARY_DARK : ((idx & 1) ? COL_CARD_2 : COL_CARD));
         C2D_DrawRectSolid(x + 16, row_y + 17, panel_z + 0.04f, w - 32, 1, selected ? COL_SECONDARY : 0x55000000);
         draw_text_plain_z(x + 28, row_y + 2, text_z, 0.40f, selected ? COL_WHITE : COL_MUTED, language_label(idx));
@@ -182,26 +195,105 @@ static const char *display_item_kind(const MediaItem *item)
 {
     const char *kind = item && item->collection_type[0] ? item->collection_type : (item ? item->type : "");
     int language = language_normalized(g_cfg.language);
-    if (language != LANG_ES && language != LANG_JA) {
+    if (language != LANG_ES && language != LANG_JA && language != LANG_FR && language != LANG_DE &&
+        language != LANG_IT && language != LANG_RU) {
         return kind;
     }
     if (strcmp(kind, "movies") == 0 || strcmp(kind, "Movie") == 0) {
-        return language == LANG_JA ? "映画" : "pel" "\xC3\xAD" "cula";
+        switch (language) {
+        case LANG_JA:
+            return "映画";
+        case LANG_FR:
+            return "film";
+        case LANG_DE:
+            return "Film";
+        case LANG_IT:
+            return "film";
+        case LANG_RU:
+            return "фильм";
+        default:
+            return "pel" "\xC3\xAD" "cula";
+        }
     }
     if (strcmp(kind, "tvshows") == 0 || strcmp(kind, "Series") == 0) {
-        return language == LANG_JA ? "シリーズ" : "serie";
+        switch (language) {
+        case LANG_JA:
+            return "シリーズ";
+        case LANG_FR:
+            return "série";
+        case LANG_DE:
+            return "Serie";
+        case LANG_IT:
+            return "serie";
+        case LANG_RU:
+            return "сериал";
+        default:
+            return "serie";
+        }
     }
     if (strcmp(kind, "Episode") == 0) {
-        return language == LANG_JA ? "エピソード" : "episodio";
+        switch (language) {
+        case LANG_JA:
+            return "エピソード";
+        case LANG_FR:
+            return "épisode";
+        case LANG_DE:
+            return "Episode";
+        case LANG_IT:
+            return "episodio";
+        case LANG_RU:
+            return "эпизод";
+        default:
+            return "episodio";
+        }
     }
     if (strcmp(kind, "Season") == 0) {
-        return language == LANG_JA ? "シーズン" : "temporada";
+        switch (language) {
+        case LANG_JA:
+            return "シーズン";
+        case LANG_FR:
+            return "saison";
+        case LANG_DE:
+            return "Staffel";
+        case LANG_IT:
+            return "stagione";
+        case LANG_RU:
+            return "сезон";
+        default:
+            return "temporada";
+        }
     }
     if (strcmp(kind, "Folder") == 0) {
-        return language == LANG_JA ? "フォルダ" : "carpeta";
+        switch (language) {
+        case LANG_JA:
+            return "フォルダ";
+        case LANG_FR:
+            return "dossier";
+        case LANG_DE:
+            return "Ordner";
+        case LANG_IT:
+            return "cartella";
+        case LANG_RU:
+            return "папка";
+        default:
+            return "carpeta";
+        }
     }
     if (strcmp(kind, "Video") == 0) {
-        return language == LANG_JA ? "動画" : "video";
+        switch (language) {
+        case LANG_JA:
+            return "動画";
+        case LANG_FR:
+            return "vidéo";
+        case LANG_DE:
+            return "Video";
+        case LANG_IT:
+            return "video";
+        case LANG_RU:
+            return "видео";
+        default:
+            return "video";
+        }
     }
     return kind;
 }
@@ -691,7 +783,7 @@ static void open_language_selector(void)
     int language = language_normalized(g_cfg.language);
     settings_cancel_confirm();
     g_language_select_row = language;
-    g_language_select_scroll = language > 3 ? language - 3 : 0;
+    g_language_select_scroll = language >= LANGUAGE_SELECTOR_VISIBLE_ROWS ? language - LANGUAGE_SELECTOR_VISIBLE_ROWS + 1 : 0;
     g_language_select_open = true;
     set_status("%s", tr(TR_LANGUAGE_SELECT_TITLE));
 }
