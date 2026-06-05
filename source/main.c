@@ -87,6 +87,8 @@
 #define SEEK_OSD_FADE_MS 650
 #define QUALITY_OSD_MS 1900
 #define QUALITY_OSD_FADE_MS 650
+#define NEXT_EPISODE_COUNTDOWN_SECONDS 5
+#define NEXT_EPISODE_FADE_IN_MS 1000
 #define PLAYBACK_REPORT_INTERVAL_MS 5000
 #define PLAYBACK_REPORT_QUEUE_COUNT 6
 #define PLAYBACK_REPORT_PATH_CAP 96
@@ -118,6 +120,7 @@ typedef enum {
 typedef enum {
     MJPEG_PLAY_FAILED,
     MJPEG_PLAY_OK,
+    MJPEG_PLAY_ENDED,
     MJPEG_PLAY_RESTART
 } MjpegPlayResult;
 
@@ -127,11 +130,15 @@ typedef struct {
     char type[40];
     char collection_type[40];
     char location_type[32];
+    char series_id[80];
+    char season_id[80];
     bool is_folder;
     bool is_missing;
     bool is_virtual_item;
     bool is_place_holder;
     int year;
+    int index_number;
+    int parent_index_number;
     int media_source_count;
     unsigned long long runtime_ticks;
 } MediaItem;
@@ -221,6 +228,11 @@ static bool g_seek_osd_pending;
 static u64 g_quality_osd_until_ms;
 static bool g_quality_osd_pending;
 static bool g_playback_restart_in_progress;
+static bool g_playback_ended_naturally;
+static bool g_autoplay_cancelled;
+static bool g_autoplay_next_ready;
+static bool g_autoplay_next_available;
+static MediaItem g_autoplay_next_item;
 static bool g_session_capabilities_reported;
 static bool g_playback_report_active;
 static u64 g_playback_last_report_ms;

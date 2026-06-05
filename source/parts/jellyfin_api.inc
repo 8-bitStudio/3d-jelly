@@ -40,6 +40,34 @@ static int parse_total_record_count(const char *json)
     return -1;
 }
 
+static void parse_media_item_object(const char *os, const char *oe, MediaItem *item)
+{
+    if (!item) {
+        return;
+    }
+
+    memset(item, 0, sizeof(*item));
+    item->media_source_count = -1;
+    item->index_number = -1;
+    item->parent_index_number = -1;
+    json_get_string_range(os, oe, "Id", item->id, sizeof(item->id));
+    json_get_string_range(os, oe, "Name", item->name, sizeof(item->name));
+    json_get_string_range(os, oe, "Type", item->type, sizeof(item->type));
+    json_get_string_range(os, oe, "CollectionType", item->collection_type, sizeof(item->collection_type));
+    json_get_string_range(os, oe, "LocationType", item->location_type, sizeof(item->location_type));
+    json_get_string_range(os, oe, "SeriesId", item->series_id, sizeof(item->series_id));
+    json_get_string_range(os, oe, "SeasonId", item->season_id, sizeof(item->season_id));
+    json_get_bool_range(os, oe, "IsFolder", &item->is_folder);
+    json_get_bool_range(os, oe, "IsMissing", &item->is_missing);
+    json_get_bool_range(os, oe, "IsVirtualItem", &item->is_virtual_item);
+    json_get_bool_range(os, oe, "IsPlaceHolder", &item->is_place_holder);
+    json_get_int_range(os, oe, "ProductionYear", &item->year);
+    json_get_int_range(os, oe, "IndexNumber", &item->index_number);
+    json_get_int_range(os, oe, "ParentIndexNumber", &item->parent_index_number);
+    json_get_int_range(os, oe, "MediaSourceCount", &item->media_source_count);
+    json_get_ull_range(os, oe, "RunTimeTicks", &item->runtime_ticks);
+}
+
 static bool parse_items(const char *json, MediaItem *items, int *count, int capacity, bool owned_only, int *raw_count)
 {
     const char *end = json + strlen(json);
@@ -76,20 +104,7 @@ static bool parse_items(const char *json, MediaItem *items, int *count, int capa
         raw++;
 
         MediaItem item;
-        memset(&item, 0, sizeof(item));
-        item.media_source_count = -1;
-        json_get_string_range(os, oe, "Id", item.id, sizeof(item.id));
-        json_get_string_range(os, oe, "Name", item.name, sizeof(item.name));
-        json_get_string_range(os, oe, "Type", item.type, sizeof(item.type));
-        json_get_string_range(os, oe, "CollectionType", item.collection_type, sizeof(item.collection_type));
-        json_get_string_range(os, oe, "LocationType", item.location_type, sizeof(item.location_type));
-        json_get_bool_range(os, oe, "IsFolder", &item.is_folder);
-        json_get_bool_range(os, oe, "IsMissing", &item.is_missing);
-        json_get_bool_range(os, oe, "IsVirtualItem", &item.is_virtual_item);
-        json_get_bool_range(os, oe, "IsPlaceHolder", &item.is_place_holder);
-        json_get_int_range(os, oe, "ProductionYear", &item.year);
-        json_get_int_range(os, oe, "MediaSourceCount", &item.media_source_count);
-        json_get_ull_range(os, oe, "RunTimeTicks", &item.runtime_ticks);
+        parse_media_item_object(os, oe, &item);
 
         if (n < capacity && item.id[0] && item.name[0] && (!owned_only || !media_item_is_unowned_placeholder(&item))) {
             items[n++] = item;
@@ -753,11 +768,11 @@ static void build_items_page_path(char *path, size_t pathsz, const char *enc_par
 {
     if (user_endpoint) {
         snprintf(path, pathsz,
-                 "/Users/%s/Items?ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources&IsMissing=false&IsUnaired=false",
+                 "/Users/%s/Items?ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_parent, start, limit);
     } else {
         snprintf(path, pathsz,
-                 "/Items?UserId=%s&ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources&IsMissing=false&IsUnaired=false",
+                 "/Items?UserId=%s&ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_parent, start, limit);
     }
 }
@@ -848,6 +863,138 @@ static bool is_playable(const MediaItem *item)
            strcmp(item->type, "Video") == 0 ||
            strcmp(item->type, "MusicVideo") == 0 ||
            (!item->is_folder && item->id[0]);
+}
+
+static bool media_item_is_episode(const MediaItem *item)
+{
+    return item && strcmp(item->type, "Episode") == 0 && is_playable(item);
+}
+
+static bool media_items_same_series(const MediaItem *a, const MediaItem *b)
+{
+    if (!a || !b || !a->series_id[0] || !b->series_id[0]) {
+        return false;
+    }
+    return strcmp(a->series_id, b->series_id) == 0;
+}
+
+static bool load_current_episode_details_if_needed(void)
+{
+    if (!media_item_is_episode(&g_current) || g_current.series_id[0]) {
+        return g_current.series_id[0] != 0;
+    }
+
+    char path[256];
+    char enc_id[128];
+    url_encode(g_current.id, enc_id, sizeof(enc_id));
+    snprintf(path, sizeof(path), "/Users/%s/Items/%s", g_cfg.user_id, enc_id);
+
+    HttpResponse res;
+    Result ret = api_get(path, &res);
+    if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
+        free_response(&res);
+        return false;
+    }
+
+    MediaItem detail;
+    parse_media_item_object(res.body, res.body + res.size, &detail);
+    free_response(&res);
+    if (!detail.id[0] || strcmp(detail.id, g_current.id) != 0 || !detail.series_id[0]) {
+        return false;
+    }
+
+    g_current = detail;
+    return true;
+}
+
+static bool find_next_episode_in_loaded_items(MediaItem *out)
+{
+    if (!out || !media_item_is_episode(&g_current)) {
+        return false;
+    }
+
+    int current_index = -1;
+    for (int i = 0; i < g_item_count; i++) {
+        if (g_items[i].id[0] && strcmp(g_items[i].id, g_current.id) == 0) {
+            current_index = i;
+            break;
+        }
+    }
+    if (current_index < 0) {
+        return false;
+    }
+
+    for (int i = current_index + 1; i < g_item_count; i++) {
+        if (!media_item_is_episode(&g_items[i])) {
+            continue;
+        }
+        if (g_current.series_id[0] && (!g_items[i].series_id[0] || !media_items_same_series(&g_current, &g_items[i]))) {
+            continue;
+        }
+        *out = g_items[i];
+        return true;
+    }
+    return false;
+}
+
+static bool query_next_episode_from_server(MediaItem *out)
+{
+    if (!out || !media_item_is_episode(&g_current) || !load_current_episode_details_if_needed()) {
+        return false;
+    }
+
+    char series[128];
+    char current[128];
+    char path[512];
+    url_encode(g_current.series_id, series, sizeof(series));
+    url_encode(g_current.id, current, sizeof(current));
+    snprintf(path, sizeof(path),
+             "/Shows/%s/Episodes?userId=%s&startItemId=%s&limit=4&fields=Path,MediaSources,ParentId&isMissing=false&enableImages=false&enableUserData=false",
+             series, g_cfg.user_id, current);
+
+    HttpResponse res;
+    Result ret = api_get(path, &res);
+    if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
+        free_response(&res);
+        return false;
+    }
+
+    MediaItem candidates[4];
+    int count = 0;
+    int raw = 0;
+    bool parsed = parse_items(res.body, candidates, &count, 4, true, &raw);
+    free_response(&res);
+    if (!parsed) {
+        return false;
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (!media_item_is_episode(&candidates[i]) || strcmp(candidates[i].id, g_current.id) == 0) {
+            continue;
+        }
+        if (candidates[i].series_id[0] && !media_items_same_series(&g_current, &candidates[i])) {
+            continue;
+        }
+        *out = candidates[i];
+        return true;
+    }
+    return false;
+}
+
+static void prepare_autoplay_next_episode(void)
+{
+    memset(&g_autoplay_next_item, 0, sizeof(g_autoplay_next_item));
+    g_autoplay_next_ready = true;
+    g_autoplay_next_available = false;
+    g_autoplay_cancelled = false;
+
+    if (!media_item_is_episode(&g_current)) {
+        return;
+    }
+    if (find_next_episode_in_loaded_items(&g_autoplay_next_item) ||
+        query_next_episode_from_server(&g_autoplay_next_item)) {
+        g_autoplay_next_available = true;
+    }
 }
 
 static void push_nav(const char *parent_id, const char *title)

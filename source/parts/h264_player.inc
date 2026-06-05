@@ -642,9 +642,16 @@ static bool play_stream_url(const char *url)
                 continue;
             }
             if (R_FAILED(ret)) {
+                if (g_current.runtime_ticks && position_ticks + 8ULL * TICKS_PER_SECOND >= g_current.runtime_ticks) {
+                    g_playback_ended_naturally = true;
+                    set_play_status("Playback reached end of stream.");
+                    ok = true;
+                    break;
+                }
                 set_play_status("Stream read failed: 0x%08lX.", (unsigned long)ret);
                 break;
             }
+            g_playback_ended_naturally = true;
             set_play_status("Playback reached end of stream.");
             ok = true;
             break;
@@ -677,7 +684,7 @@ static bool play_stream_url(const char *url)
     if (!app_system_closing()) {
         player_console(&player, g_play_status);
     }
-    if (!g_exit_requested) {
+    if (!g_exit_requested && !g_playback_ended_naturally) {
         app_wait_or_exit(900000000ULL);
     }
     if (!app_system_closing()) {

@@ -53,6 +53,7 @@ typedef struct {
     u64 position_clock_ns;
     u64 next_frame_time_ns;
     u64 frame_interval_ns;
+    u64 next_episode_countdown_ready_ms;
     int last_width;
     int last_height;
     int scale_src_w;
@@ -173,6 +174,12 @@ static u64 clamp_media_ticks(u64 ticks)
         return g_current.runtime_ticks;
     }
     return ticks;
+}
+
+static bool playback_position_near_end(u64 ticks)
+{
+    const u64 end_grace_ticks = 8ULL * TICKS_PER_SECOND;
+    return g_current.runtime_ticks && ticks + end_grace_ticks >= g_current.runtime_ticks;
 }
 
 static u64 mjpeg_current_ticks(MjpegPlayer *player)
@@ -571,6 +578,7 @@ static void flush_top_video_frame(u16 *fb)
 static void draw_quality_osd(const MjpegPlayer *player, u16 *fb);
 static void draw_seek_osd(u16 *fb);
 static void draw_remote_message_osd(u16 *fb);
+static void draw_next_episode_osd(MjpegPlayer *player, u16 *fb);
 
 static void draw_volume_osd(const MjpegPlayer *player, u16 *fb)
 {
@@ -687,6 +695,7 @@ static void draw_rgb565_frame(MjpegPlayer *player, const u16 *pixels, int img_w,
         draw_quality_osd(player, fb);
         draw_seek_osd(fb);
         draw_remote_message_osd(fb);
+        draw_next_episode_osd(player, fb);
         flush_top_video_frame(fb);
         return;
     }
@@ -710,6 +719,7 @@ static void draw_rgb565_frame(MjpegPlayer *player, const u16 *pixels, int img_w,
     draw_quality_osd(player, fb);
     draw_seek_osd(fb);
     draw_remote_message_osd(fb);
+    draw_next_episode_osd(player, fb);
     flush_top_video_frame(fb);
 }
 
@@ -934,6 +944,169 @@ static void fb_draw_text_centered(u16 *fb, int center_x, int y, const char *text
 {
     int width = bottom_text_width(text, scale);
     fb_draw_text(fb, center_x - width / 2, y, text, scale, color, alpha);
+}
+
+static void fb_draw_text_stroked(u16 *fb, int x, int y, const char *text, int scale, u16 color, int alpha)
+{
+    if (!fb || !text || scale <= 0 || alpha <= 0) {
+        return;
+    }
+
+    u16 stroke = rgb565_from_rgb(0, 0, 0);
+    int stroke_alpha = alpha > 210 ? 210 : alpha;
+    fb_draw_text(fb, x - 1, y, text, scale, stroke, stroke_alpha);
+    fb_draw_text(fb, x + 1, y, text, scale, stroke, stroke_alpha);
+    fb_draw_text(fb, x, y - 1, text, scale, stroke, stroke_alpha);
+    fb_draw_text(fb, x, y + 1, text, scale, stroke, stroke_alpha);
+    fb_draw_text(fb, x + 1, y + 1, text, scale, stroke, stroke_alpha / 2);
+    fb_draw_text(fb, x, y, text, scale, color, alpha);
+}
+
+static bool autoplay_next_episode_available(void)
+{
+    return g_autoplay_next_ready &&
+           g_autoplay_next_available &&
+           !g_autoplay_cancelled &&
+           media_item_is_episode(&g_current) &&
+           media_item_is_episode(&g_autoplay_next_item);
+}
+
+static int autoplay_countdown_seconds(MjpegPlayer *player, u64 *remaining_ticks_out)
+{
+    if (!player || !autoplay_next_episode_available() || !g_current.runtime_ticks) {
+        return -1;
+    }
+
+    u64 position = mjpeg_current_ticks(player);
+    if (position >= g_current.runtime_ticks) {
+        return -1;
+    }
+
+    u64 remaining_ticks = g_current.runtime_ticks - position;
+    u64 fade_ticks = ((u64)NEXT_EPISODE_FADE_IN_MS * TICKS_PER_SECOND) / 1000ULL;
+    u64 show_ticks = (u64)NEXT_EPISODE_COUNTDOWN_SECONDS * TICKS_PER_SECOND + fade_ticks;
+    if (remaining_ticks > show_ticks) {
+        return -1;
+    }
+    if (remaining_ticks_out) {
+        *remaining_ticks_out = remaining_ticks;
+    }
+
+    int seconds = (int)((remaining_ticks + TICKS_PER_SECOND - 1ULL) / TICKS_PER_SECOND);
+    if (seconds > NEXT_EPISODE_COUNTDOWN_SECONDS) {
+        seconds = NEXT_EPISODE_COUNTDOWN_SECONDS;
+    }
+    if (seconds < 1) {
+        seconds = 1;
+    }
+    return seconds;
+}
+
+static bool autoplay_countdown_visible(MjpegPlayer *player)
+{
+    int seconds = autoplay_countdown_seconds(player, NULL);
+    if (seconds < 0) {
+        if (player) {
+            player->next_episode_countdown_ready_ms = 0;
+        }
+        return false;
+    }
+
+    u64 now = osGetTime();
+    if (!player->next_episode_countdown_ready_ms) {
+        player->next_episode_countdown_ready_ms = now;
+    }
+
+    return true;
+}
+
+static int autoplay_countdown_alpha(MjpegPlayer *player, u64 remaining_ticks)
+{
+    if (!player || !player->next_episode_countdown_ready_ms) {
+        return 0;
+    }
+
+    u64 now = osGetTime();
+    u64 elapsed_ms = now >= player->next_episode_countdown_ready_ms ? now - player->next_episode_countdown_ready_ms : 0;
+    int alpha_by_time = elapsed_ms >= NEXT_EPISODE_FADE_IN_MS ? 255 :
+        (int)((elapsed_ms * 255ULL) / NEXT_EPISODE_FADE_IN_MS);
+
+    u64 fade_ticks = ((u64)NEXT_EPISODE_FADE_IN_MS * TICKS_PER_SECOND) / 1000ULL;
+    u64 countdown_ticks = (u64)NEXT_EPISODE_COUNTDOWN_SECONDS * TICKS_PER_SECOND;
+    int alpha_by_remaining = 255;
+    if (fade_ticks > 0 && remaining_ticks > countdown_ticks) {
+        u64 show_ticks = countdown_ticks + fade_ticks;
+        u64 fade_progress = show_ticks > remaining_ticks ? show_ticks - remaining_ticks : 0;
+        alpha_by_remaining = (int)((fade_progress * 255ULL) / fade_ticks);
+    }
+
+    int alpha = alpha_by_time < alpha_by_remaining ? alpha_by_time : alpha_by_remaining;
+    return clamp_int(alpha, 0, 255);
+}
+
+static void autoplay_start_next_now(MjpegPlayer *player, MjpegPlayResult *result)
+{
+    if (!player || !result) {
+        return;
+    }
+
+    g_mjpeg_resume_ticks = g_current.runtime_ticks ? g_current.runtime_ticks : mjpeg_current_ticks(player);
+    player->position_ticks = g_mjpeg_resume_ticks;
+    player->position_clock_ns = 0;
+    g_playback_ended_naturally = true;
+    set_play_status("Starting next episode.");
+    *result = MJPEG_PLAY_ENDED;
+}
+
+static void draw_next_episode_osd(MjpegPlayer *player, u16 *fb)
+{
+    if (!fb || !player) {
+        return;
+    }
+    if (seek_osd_visible() || quality_osd_visible() || audio_volume_osd_visible(player->audio)) {
+        player->next_episode_countdown_ready_ms = 0;
+        return;
+    }
+    if (!autoplay_countdown_visible(player)) {
+        return;
+    }
+
+    u64 remaining_ticks = 0;
+    int seconds = autoplay_countdown_seconds(player, &remaining_ticks);
+    if (seconds < 0) {
+        return;
+    }
+    int alpha = autoplay_countdown_alpha(player, remaining_ticks);
+    if (alpha <= 0) {
+        return;
+    }
+
+    char label[32];
+    char action[24];
+    snprintf(label, sizeof(label), "NEXT EPISODE IN %d", seconds);
+    snprintf(action, sizeof(action), "A NEXT  B CANCEL");
+    int text_w = bottom_text_width(label, 1);
+    int dock_w = text_w + 20;
+    int dock_h = 23;
+    int dock_x = 400 - dock_w - 10;
+    int dock_y = 188;
+    int action_w = bottom_text_width(action, 1);
+
+    u16 shadow = rgb565_from_rgb(0, 0, 0);
+    u16 dock = rgb565_from_rgb(18, 19, 23);
+    u16 edge = rgb565_from_rgb(55, 206, 224);
+    u16 text = rgb565_from_rgb(246, 250, 255);
+    u16 muted = rgb565_from_rgb(188, 196, 208);
+
+    fb_fill_rect_blend(fb, dock_x + 2, dock_y + 3, dock_w, dock_h, shadow, (120 * alpha) / 255);
+    fb_fill_rect_blend(fb, dock_x, dock_y, dock_w, dock_h, dock, (218 * alpha) / 255);
+    fb_fill_rect_blend(fb, dock_x, dock_y, dock_w, 2, edge, (230 * alpha) / 255);
+    fb_fill_rect_blend(fb, dock_x, dock_y, dock_w, 1, rgb565_from_rgb(87, 95, 110), (210 * alpha) / 255);
+    fb_fill_rect_blend(fb, dock_x, dock_y + dock_h - 1, dock_w, 1, rgb565_from_rgb(87, 95, 110), (210 * alpha) / 255);
+    fb_fill_rect_blend(fb, dock_x, dock_y, 1, dock_h, rgb565_from_rgb(87, 95, 110), (210 * alpha) / 255);
+    fb_fill_rect_blend(fb, dock_x + dock_w - 1, dock_y, 1, dock_h, rgb565_from_rgb(87, 95, 110), (210 * alpha) / 255);
+    fb_draw_text_stroked(fb, dock_x + 10, dock_y + 8, label, 1, text, (245 * alpha) / 255);
+    fb_draw_text_stroked(fb, dock_x + dock_w - action_w - 1, dock_y + dock_h + 5, action, 1, muted, (235 * alpha) / 255);
 }
 
 static void message_copy_line(const char *src, char *out, size_t outsz, size_t max_chars)
@@ -2734,6 +2907,7 @@ static void draw_mpeg1_frame_rgb565(MjpegPlayer *player, const plm_frame_t *fram
     draw_quality_osd(player, fb);
     draw_seek_osd(fb);
     draw_remote_message_osd(fb);
+    draw_next_episode_osd(player, fb);
     flush_top_video_frame(fb);
 }
 
@@ -2924,11 +3098,23 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
                 break;
             }
             if (down & KEY_B) {
+                if (autoplay_countdown_visible(&player)) {
+                    g_autoplay_cancelled = true;
+                    player.next_episode_countdown_ready_ms = 0;
+                    set_play_status("Next episode cancelled.");
+                    mjpeg_redraw_last_frame(&player);
+                    mjpeg_console(&player, g_play_status);
+                    continue;
+                }
                 set_play_status("Playback stopped.");
                 result = MJPEG_PLAY_OK;
                 break;
             }
             if (down & KEY_A) {
+                if (autoplay_countdown_visible(&player)) {
+                    autoplay_start_next_now(&player, &result);
+                    break;
+                }
                 mjpeg_set_paused(&player, !player.paused);
                 report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
                 if (!player.paused) {
@@ -3010,8 +3196,14 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
             }
             if (!mpeg_end_signaled && ret != (s32)HTTPC_RESULTCODE_DOWNLOADPENDING && ret != (s32)HTTPC_RESULTCODE_TIMEDOUT) {
                 if (R_FAILED(ret)) {
-                    if (player.frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES) {
-                        g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+                    u64 position_ticks = mjpeg_current_ticks(&player);
+                    if (playback_position_near_end(position_ticks)) {
+                        g_mjpeg_resume_ticks = g_current.runtime_ticks;
+                        g_playback_ended_naturally = true;
+                        set_play_status("MPEG-1 reached end of stream.");
+                        result = MJPEG_PLAY_ENDED;
+                    } else if (player.frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES) {
+                        g_mjpeg_resume_ticks = position_ticks;
                         g_stream_switch_serial++;
                         set_play_status("MPEG-1 stream interrupted; reconnecting.");
                         result = MJPEG_PLAY_RESTART;
@@ -3061,8 +3253,10 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
             }
 
             if (plm_has_ended(plm)) {
+                g_mjpeg_resume_ticks = g_current.runtime_ticks ? g_current.runtime_ticks : mjpeg_current_ticks(&player);
+                g_playback_ended_naturally = true;
                 set_play_status("MPEG-1 reached end of stream.");
-                result = MJPEG_PLAY_OK;
+                result = MJPEG_PLAY_ENDED;
                 break;
             }
 
@@ -3076,7 +3270,8 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
     }
 
     if (result != MJPEG_PLAY_RESTART) {
-        g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+        g_mjpeg_resume_ticks = result == MJPEG_PLAY_ENDED && g_current.runtime_ticks ?
+            g_current.runtime_ticks : mjpeg_current_ticks(&player);
         report_playback_stopped(g_mjpeg_resume_ticks);
     }
     if (!app_system_closing() && remote_started && result != MJPEG_PLAY_RESTART) {
@@ -3109,7 +3304,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
     if (!app_system_closing() && result != MJPEG_PLAY_RESTART) {
         mjpeg_console(&player, g_play_status);
     }
-    if (!g_exit_requested && result != MJPEG_PLAY_RESTART) {
+    if (!g_exit_requested && result != MJPEG_PLAY_RESTART && result != MJPEG_PLAY_ENDED) {
         app_wait_or_exit(700000000ULL);
     }
     g_playback_restart_in_progress = result == MJPEG_PLAY_RESTART;
@@ -3232,11 +3427,23 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 break;
             }
             if (down & KEY_B) {
+                if (autoplay_countdown_visible(&player)) {
+                    g_autoplay_cancelled = true;
+                    player.next_episode_countdown_ready_ms = 0;
+                    set_play_status("Next episode cancelled.");
+                    mjpeg_redraw_last_frame(&player);
+                    mjpeg_console(&player, g_play_status);
+                    continue;
+                }
                 set_play_status("Playback stopped.");
                 result = MJPEG_PLAY_OK;
                 break;
             }
             if (down & KEY_A) {
+                if (autoplay_countdown_visible(&player)) {
+                    autoplay_start_next_now(&player, &result);
+                    break;
+                }
                 mjpeg_set_paused(&player, !player.paused);
                 report_playback_progress(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
                 if (!player.paused) {
@@ -3391,8 +3598,14 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 continue;
             }
             if (R_FAILED(ret)) {
-                if (player.frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES) {
-                    g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+                u64 position_ticks = mjpeg_current_ticks(&player);
+                if (playback_position_near_end(position_ticks)) {
+                    g_mjpeg_resume_ticks = g_current.runtime_ticks;
+                    g_playback_ended_naturally = true;
+                    set_play_status("MJPEG reached end of stream.");
+                    result = MJPEG_PLAY_ENDED;
+                } else if (player.frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES) {
+                    g_mjpeg_resume_ticks = position_ticks;
                     g_stream_switch_serial++;
                     set_play_status("MJPEG stream interrupted; reconnecting.");
                     mjpeg_redraw_last_frame(&player);
@@ -3403,8 +3616,10 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 }
                 break;
             }
+            g_mjpeg_resume_ticks = g_current.runtime_ticks ? g_current.runtime_ticks : mjpeg_current_ticks(&player);
+            g_playback_ended_naturally = true;
             set_play_status("MJPEG reached end of stream.");
-            result = MJPEG_PLAY_OK;
+            result = MJPEG_PLAY_ENDED;
             break;
         }
         if (reader_active) {
@@ -3414,7 +3629,8 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     }
 
     if (result != MJPEG_PLAY_RESTART) {
-        g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+        g_mjpeg_resume_ticks = result == MJPEG_PLAY_ENDED && g_current.runtime_ticks ?
+            g_current.runtime_ticks : mjpeg_current_ticks(&player);
     }
 
     if (result != MJPEG_PLAY_RESTART) {
@@ -3443,7 +3659,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     if (!app_system_closing() && result != MJPEG_PLAY_RESTART) {
         mjpeg_console(&player, g_play_status);
     }
-    if (!g_exit_requested && result != MJPEG_PLAY_RESTART) {
+    if (!g_exit_requested && result != MJPEG_PLAY_RESTART && result != MJPEG_PLAY_ENDED) {
         app_wait_or_exit(700000000ULL);
     }
     if (!app_system_closing()) {
@@ -3506,7 +3722,7 @@ static bool play_current_item_video(void)
                 alias = -1;
                 continue;
             }
-            if (result == MJPEG_PLAY_OK) {
+            if (result == MJPEG_PLAY_OK || result == MJPEG_PLAY_ENDED) {
                 return true;
             }
             if (g_exit_requested) {
@@ -3531,7 +3747,7 @@ static bool play_current_item_video(void)
             }
             continue;
         }
-        if (result == MJPEG_PLAY_OK) {
+        if (result == MJPEG_PLAY_OK || result == MJPEG_PLAY_ENDED) {
             return true;
         }
         start_ticks = g_mjpeg_resume_ticks;
@@ -3556,8 +3772,34 @@ static bool play_current_item_video(void)
             }
             continue;
         }
-        return result == MJPEG_PLAY_OK;
+        return result == MJPEG_PLAY_OK || result == MJPEG_PLAY_ENDED;
     }
+}
+
+static bool select_autoplay_next_episode(void)
+{
+    if (!autoplay_next_episode_available()) {
+        return false;
+    }
+
+    MediaItem next = g_autoplay_next_item;
+    int found_index = -1;
+    for (int i = 0; i < g_item_count; i++) {
+        if (g_items[i].id[0] && strcmp(g_items[i].id, next.id) == 0) {
+            found_index = i;
+            break;
+        }
+    }
+    if (found_index >= 0) {
+        g_selected = found_index;
+        if (g_selected < g_scroll) {
+            g_scroll = g_selected;
+        } else if (g_selected >= g_scroll + 5) {
+            g_scroll = g_selected - 4;
+        }
+    }
+    g_current = next;
+    return true;
 }
 
 static bool probe_playback(void)
@@ -3566,21 +3808,38 @@ static bool probe_playback(void)
         return false;
     }
 
-    g_view = VIEW_PLAYBACK;
-    g_play_url[0] = 0;
-    g_play_method[0] = 0;
-    g_play_media_source_id[0] = 0;
-    g_play_status[0] = 0;
+    bool played_any = false;
+    for (;;) {
+        g_view = VIEW_PLAYBACK;
+        g_play_url[0] = 0;
+        g_play_method[0] = 0;
+        g_play_media_source_id[0] = 0;
+        g_play_status[0] = 0;
+        g_playback_ended_naturally = false;
+        prepare_autoplay_next_episode();
 
-    if (!request_playback_info(0)) {
-        if (!g_exit_requested) {
-            g_view = g_return_view;
+        if (!request_playback_info(0)) {
+            if (!g_exit_requested) {
+                g_view = g_return_view;
+            }
+            return played_any;
         }
-        return false;
+
+        bool played = play_current_item_video();
+        played_any = played_any || played;
+        if (g_exit_requested || !played || !g_playback_ended_naturally || g_autoplay_cancelled) {
+            break;
+        }
+
+        if (!select_autoplay_next_episode()) {
+            set_status("Finished %s. No next playable item.", g_current.name[0] ? g_current.name : "video");
+            break;
+        }
+        set_status("Playing next: %s", g_current.name[0] ? g_current.name : "video");
     }
-    play_current_item_video();
+
     if (!g_exit_requested) {
         g_view = g_return_view;
     }
-    return true;
+    return played_any;
 }
