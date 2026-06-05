@@ -342,7 +342,7 @@ static const char *display_item_kind(const MediaItem *item)
 {
     const char *kind = item && item->collection_type[0] ? item->collection_type : (item ? item->type : "");
     int language = language_normalized(g_cfg.language);
-    if (language != LANG_ES && language != LANG_JA && language != LANG_FR && language != LANG_DE &&
+    if (language != LANG_AF && language != LANG_ES && language != LANG_JA && language != LANG_FR && language != LANG_DE &&
         language != LANG_IT && language != LANG_RU && language != LANG_NL && language != LANG_PT &&
         language != LANG_KO && language != LANG_ZH_HANS && language != LANG_ZH_HANT) {
         return kind;
@@ -369,6 +369,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "film";
         case LANG_PT:
             return "filme";
+        case LANG_AF:
+            return "film";
         default:
             return "pel" "\xC3\xAD" "cula";
         }
@@ -395,6 +397,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "serie";
         case LANG_PT:
             return "série";
+        case LANG_AF:
+            return "reeks";
         default:
             return "serie";
         }
@@ -421,6 +425,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "aflevering";
         case LANG_PT:
             return "episódio";
+        case LANG_AF:
+            return "episode";
         default:
             return "episodio";
         }
@@ -447,6 +453,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "seizoen";
         case LANG_PT:
             return "temporada";
+        case LANG_AF:
+            return "seisoen";
         default:
             return "temporada";
         }
@@ -473,6 +481,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "map";
         case LANG_PT:
             return "pasta";
+        case LANG_AF:
+            return "vouer";
         default:
             return "carpeta";
         }
@@ -499,6 +509,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "video";
         case LANG_PT:
             return "vídeo";
+        case LANG_AF:
+            return "video";
         default:
             return "video";
         }

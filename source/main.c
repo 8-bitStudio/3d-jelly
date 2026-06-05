@@ -124,6 +124,7 @@ typedef enum {
 
 typedef enum {
     LANG_EN,
+    LANG_AF,
     LANG_ES,
     LANG_JA,
     LANG_FR,

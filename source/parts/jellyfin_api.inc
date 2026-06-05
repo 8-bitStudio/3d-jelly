@@ -810,6 +810,9 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     swkbdSetFeatures(&kb, SWKBD_DARKEN_TOP_SCREEN | SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET | SWKBD_ALLOW_POWER);
     const char *cancel_label = "Cancel";
     switch (language_normalized(g_cfg.language)) {
+    case LANG_AF:
+        cancel_label = "Kanselleer";
+        break;
     case LANG_ES:
         cancel_label = "Cancelar";
         break;

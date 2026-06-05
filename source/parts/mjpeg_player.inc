@@ -2309,6 +2309,9 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "erreur") || strstr(line, "Erreur") || strstr(line, "impossible") ||
                  strstr(line, "fehl") || strstr(line, "Fehl") || strstr(line, "konnte") ||
                  strstr(line, "nicht genug") || strstr(line, "überschritten") ||
+                 strstr(line, "misluk") || strstr(line, "Fout") || strstr(line, "kon nie") ||
+                 strstr(line, "nie genoeg") || strstr(line, "oorloop") || strstr(line, "te groot") ||
+                 strstr(line, "nie beskikbaar") ||
                  strstr(line, "fallita") || strstr(line, "Fallita") || strstr(line, "errore") ||
                  strstr(line, "Errore") || strstr(line, "impossibile") ||
                  strstr(line, "ошиб") || strstr(line, "Ошибка") || strstr(line, "не удалось") ||
@@ -2329,6 +2332,9 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "Mise en mémoire") || strstr(line, "Démarrage") ||
                  strstr(line, "Öffne") || strstr(line, "Fordere") || strstr(line, "Lade") ||
                  strstr(line, "Puffere") || strstr(line, "Starte") || strstr(line, "Versuche") ||
+                 strstr(line, "Maak") || strstr(line, "Versoek") || strstr(line, "Laai") ||
+                 strstr(line, "Buffer") || strstr(line, "Begin") || strstr(line, "Probeer") ||
+                 strstr(line, "Skakel oor") ||
                  strstr(line, "Apertura") || strstr(line, "Richiesta") || strstr(line, "Caricamento") ||
                  strstr(line, "Buffering") || strstr(line, "Avvio") || strstr(line, "Provo") ||
                  strstr(line, "Открытие") || strstr(line, "Запрос") || strstr(line, "Загрузка") ||
@@ -2349,6 +2355,8 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "termin") || strstr(line, "annul") || strstr(line, "fin du flux") ||
                  strstr(line, "Ende") || strstr(line, "gestoppt") || strstr(line, "Gestoppt") ||
                  strstr(line, "beendet") || strstr(line, "abgebrochen") || strstr(line, "fine") ||
+                 strstr(line, "gestop") || strstr(line, "einde") || strstr(line, "gekanselleer") ||
+                 strstr(line, "Klaar") ||
                  strstr(line, "terminata") || strstr(line, "fermato") || strstr(line, "annull") ||
                  strstr(line, "конца") || strstr(line, "останов") || strstr(line, "отмен") ||
                  strstr(line, "중지") || strstr(line, "끝") || strstr(line, "도달") ||
