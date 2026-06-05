@@ -22,7 +22,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define APP_VERSION "0.3.0"
+#define APP_VERSION "0.4.0"
 #define CONFIG_DIR "sdmc:/3dJelly"
 #define CONFIG_PATH "sdmc:/3dJelly/config.ini"
 
