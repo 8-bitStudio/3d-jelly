@@ -313,7 +313,7 @@ static const int AUDIO_RATE_LEVELS_NEW3DS[] = {22050, 32000, 44100};
 static const int AUDIO_RATE_LEVELS_OLD3DS[] = {22050, 32000, 40000};
 
 
-#include "parts/lang.inc"
+#include "generated/lang.inc"
 #include "parts/app_core.inc"
 #include "parts/text_config.inc"
 #include "parts/jellyfin_api.inc"

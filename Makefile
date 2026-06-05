@@ -41,6 +41,9 @@ ifneq ($(BUILD),$(notdir $(CURDIR)))
 export OUTPUT := $(CURDIR)/$(TARGET)
 export TOPDIR := $(CURDIR)
 
+TRANSLATION_JSON := $(wildcard translations/*.json)
+LANG_INC         := $(BUILD)/generated/lang.inc
+
 export VPATH := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
                 $(foreach dir,$(GRAPHICS),$(CURDIR)/$(dir)) \
                 $(foreach dir,$(DATA),$(CURDIR)/$(dir))
@@ -71,10 +74,15 @@ export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 export _3DSXDEPS := $(OUTPUT).smdh
 export _3DSXFLAGS += --smdh=$(CURDIR)/$(TARGET).smdh
 
-.PHONY: all clean cia dist icon
+.PHONY: all clean cia dist icon translations
 
-all: $(BUILD) $(GFXBUILD) $(DEPSDIR)
+all: $(BUILD) $(GFXBUILD) $(DEPSDIR) $(LANG_INC)
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+
+translations: $(LANG_INC)
+
+$(LANG_INC): tools/generate-translations.ps1 $(TRANSLATION_JSON) | $(BUILD)
+	@powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/generate-translations.ps1 -Output "$(LANG_INC)"
 
 icon: $(APP_ICON)
 
