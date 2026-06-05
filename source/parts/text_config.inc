@@ -610,6 +610,7 @@ static void ensure_defaults(void)
     if (g_cfg.volume_percent < VOLUME_MIN_PERCENT || g_cfg.volume_percent > VOLUME_MAX_PERCENT) {
         g_cfg.volume_percent = VOLUME_DEFAULT_PERCENT;
     }
+    g_cfg.bottom_dim_seconds = settings_bottom_dim_normalized_seconds(g_cfg.bottom_dim_seconds);
     g_cfg.language = language_normalized(g_cfg.language);
 }
 
@@ -632,6 +633,7 @@ static void save_config(void)
     fprintf(f, "stream_buffer_kb=%d\n", g_cfg.stream_buffer_kb);
     fprintf(f, "audio_sample_rate=%d\n", g_cfg.audio_sample_rate);
     fprintf(f, "volume_percent=%d\n", g_cfg.volume_percent);
+    fprintf(f, "bottom_dim_seconds=%d\n", g_cfg.bottom_dim_seconds);
     fprintf(f, "language=%d\n", g_cfg.language);
     fclose(f);
 }
@@ -643,6 +645,7 @@ static void load_config(void)
     g_cfg.stream_buffer_kb = SETTINGS_BUFFER_KB_DEFAULT;
     g_cfg.audio_sample_rate = 0;
     g_cfg.volume_percent = -1;
+    g_cfg.bottom_dim_seconds = BOTTOM_DIM_DEFAULT_SECONDS;
     g_cfg.language = LANG_EN;
     FILE *f = fopen(CONFIG_PATH, "r");
     if (!f) {
@@ -686,6 +689,8 @@ static void load_config(void)
             g_cfg.audio_sample_rate = atoi(eq);
         } else if (strcmp(line, "volume_percent") == 0) {
             g_cfg.volume_percent = atoi(eq);
+        } else if (strcmp(line, "bottom_dim_seconds") == 0) {
+            g_cfg.bottom_dim_seconds = atoi(eq);
         } else if (strcmp(line, "language") == 0) {
             g_cfg.language = atoi(eq);
         }

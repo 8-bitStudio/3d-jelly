@@ -109,6 +109,16 @@ static int audio_rate_index(int rate)
     return -1;
 }
 
+static int bottom_dim_index(int seconds)
+{
+    for (int i = 0; i < (int)(sizeof(BOTTOM_DIM_LEVELS) / sizeof(BOTTOM_DIM_LEVELS[0])); i++) {
+        if (BOTTOM_DIM_LEVELS[i] == seconds) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static bool is_supported_quality(int quality)
 {
     return quality_index(quality) >= 0;
@@ -122,6 +132,11 @@ static int default_audio_sample_rate(void)
 static int settings_audio_sample_rate_normalized(int rate)
 {
     return audio_rate_index(rate) >= 0 ? rate : default_audio_sample_rate();
+}
+
+static int settings_bottom_dim_normalized_seconds(int seconds)
+{
+    return bottom_dim_index(seconds) >= 0 ? seconds : BOTTOM_DIM_DEFAULT_SECONDS;
 }
 
 static void format_audio_rate_label(char *out, size_t outsz, int rate)
@@ -319,6 +334,11 @@ static void apply_hardware_defaults(void)
     int audio_rate = settings_audio_sample_rate_normalized(g_cfg.audio_sample_rate);
     if (g_cfg.audio_sample_rate != audio_rate) {
         g_cfg.audio_sample_rate = audio_rate;
+        changed = true;
+    }
+    int bottom_dim_seconds = settings_bottom_dim_normalized_seconds(g_cfg.bottom_dim_seconds);
+    if (g_cfg.bottom_dim_seconds != bottom_dim_seconds) {
+        g_cfg.bottom_dim_seconds = bottom_dim_seconds;
         changed = true;
     }
     if (changed) {

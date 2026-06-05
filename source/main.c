@@ -88,6 +88,10 @@
 #define SEEK_OSD_FADE_MS 650
 #define QUALITY_OSD_MS 1900
 #define QUALITY_OSD_FADE_MS 650
+#define BOTTOM_DIM_DEFAULT_SECONDS 60
+#define BOTTOM_DIM_TARGET_PERCENT 31
+#define BOTTOM_DIM_FADE_MS 900
+#define BOTTOM_DIM_FADE_REDRAW_MS 75
 #define NEXT_EPISODE_COUNTDOWN_SECONDS 5
 #define NEXT_EPISODE_FADE_IN_MS 1000
 #define PLAYBACK_REPORT_INTERVAL_MS 5000
@@ -130,6 +134,7 @@ typedef enum {
     LANG_PT,
     LANG_KO,
     LANG_ZH_HANS,
+    LANG_ZH_HANT,
     LANG_COUNT
 } AppLanguage;
 
@@ -178,6 +183,7 @@ typedef struct {
     int stream_buffer_kb;
     int audio_sample_rate;
     int volume_percent;
+    int bottom_dim_seconds;
     int language;
 } Config;
 
@@ -209,6 +215,7 @@ static C3D_RenderTarget *g_bottom;
 static C2D_TextBuf g_text;
 static C2D_Font g_font_kor;
 static C2D_Font g_font_chn;
+static C2D_Font g_font_twn;
 static bool g_ui_ready;
 static bool g_cfgu_ready;
 
@@ -250,6 +257,12 @@ static u64 g_seek_repeat_ready_ms;
 static bool g_seek_osd_pending;
 static u64 g_quality_osd_until_ms;
 static bool g_quality_osd_pending;
+static u64 g_bottom_dim_activity_ms;
+static u64 g_bottom_dim_fade_start_ms;
+static u64 g_bottom_dim_last_redraw_ms;
+static bool g_bottom_dim_active;
+static bool g_bottom_dim_fade_complete;
+static bool g_bottom_dim_redraw_pending;
 static bool g_playback_restart_in_progress;
 static bool g_playback_ended_naturally;
 static bool g_autoplay_cancelled;
@@ -322,6 +335,7 @@ static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 241, 360, 480};
 static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
 static const int AUDIO_RATE_LEVELS_NEW3DS[] = {22050, 32000, 44100};
 static const int AUDIO_RATE_LEVELS_OLD3DS[] = {22050, 32000, 40000};
+static const int BOTTOM_DIM_LEVELS[] = {15, 30, 60, 120, 300, 0};
 
 
 #include "generated/lang.inc"

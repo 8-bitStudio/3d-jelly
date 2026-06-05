@@ -840,6 +840,9 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     case LANG_ZH_HANS:
         cancel_label = "取消";
         break;
+    case LANG_ZH_HANT:
+        cancel_label = "取消";
+        break;
     default:
         break;
     }

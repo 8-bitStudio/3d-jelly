@@ -110,12 +110,20 @@ static void ui_text_parse(C2D_Text *text, const char *src)
     const char *safe = src ? src : "";
     if (g_font_kor && ui_text_has_hangul(safe)) {
         C2D_TextFontParse(text, g_font_kor, g_text, safe);
-    } else if (g_font_chn &&
+    } else if ((g_font_chn || g_font_twn) &&
                (language_normalized(g_cfg.language) == LANG_ZH_HANS ||
-                strcmp(safe, language_label(LANG_ZH_HANS)) == 0) &&
+                language_normalized(g_cfg.language) == LANG_ZH_HANT ||
+                strcmp(safe, language_label(LANG_ZH_HANS)) == 0 ||
+                strcmp(safe, language_label(LANG_ZH_HANT)) == 0) &&
                strcmp(safe, language_label(LANG_JA)) != 0 &&
                ui_text_has_cjk_ideograph(safe) && !ui_text_has_kana(safe)) {
-        C2D_TextFontParse(text, g_font_chn, g_text, safe);
+        bool hant_text = language_normalized(g_cfg.language) == LANG_ZH_HANT ||
+                         strcmp(safe, language_label(LANG_ZH_HANT)) == 0;
+        C2D_Font font = hant_text && g_font_twn ? g_font_twn : g_font_chn;
+        if (!font) {
+            font = g_font_twn;
+        }
+        C2D_TextFontParse(text, font, g_text, safe);
     } else {
         C2D_TextParse(text, g_text, safe);
     }
@@ -336,7 +344,7 @@ static const char *display_item_kind(const MediaItem *item)
     int language = language_normalized(g_cfg.language);
     if (language != LANG_ES && language != LANG_JA && language != LANG_FR && language != LANG_DE &&
         language != LANG_IT && language != LANG_RU && language != LANG_NL && language != LANG_PT &&
-        language != LANG_KO && language != LANG_ZH_HANS) {
+        language != LANG_KO && language != LANG_ZH_HANS && language != LANG_ZH_HANT) {
         return kind;
     }
     if (strcmp(kind, "movies") == 0 || strcmp(kind, "Movie") == 0) {
@@ -347,6 +355,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "영화";
         case LANG_ZH_HANS:
             return "电影";
+        case LANG_ZH_HANT:
+            return "電影";
         case LANG_FR:
             return "film";
         case LANG_DE:
@@ -371,6 +381,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "시리즈";
         case LANG_ZH_HANS:
             return "剧集";
+        case LANG_ZH_HANT:
+            return "劇集";
         case LANG_FR:
             return "série";
         case LANG_DE:
@@ -394,6 +406,8 @@ static const char *display_item_kind(const MediaItem *item)
         case LANG_KO:
             return "에피소드";
         case LANG_ZH_HANS:
+            return "集";
+        case LANG_ZH_HANT:
             return "集";
         case LANG_FR:
             return "épisode";
@@ -419,6 +433,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "시즌";
         case LANG_ZH_HANS:
             return "季";
+        case LANG_ZH_HANT:
+            return "季";
         case LANG_FR:
             return "saison";
         case LANG_DE:
@@ -443,6 +459,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "폴더";
         case LANG_ZH_HANS:
             return "文件夹";
+        case LANG_ZH_HANT:
+            return "資料夾";
         case LANG_FR:
             return "dossier";
         case LANG_DE:
@@ -467,6 +485,8 @@ static const char *display_item_kind(const MediaItem *item)
             return "동영상";
         case LANG_ZH_HANS:
             return "视频";
+        case LANG_ZH_HANT:
+            return "影片";
         case LANG_FR:
             return "vidéo";
         case LANG_DE:
@@ -562,6 +582,7 @@ enum {
     SETTINGS_ROW_PLAYBACK,
     SETTINGS_ROW_BUFFER,
     SETTINGS_ROW_AUDIO,
+    SETTINGS_ROW_BOTTOM_DIM,
     SETTINGS_ROW_SERVER,
     SETTINGS_ROW_USERNAME,
     SETTINGS_ROW_CLEAR_LOGIN,
@@ -570,6 +591,21 @@ enum {
     SETTINGS_ROW_LANGUAGE,
     SETTINGS_ROW_COUNT
 };
+
+static void format_bottom_dim_label(char *out, size_t outsz, int seconds)
+{
+    if (!out || outsz == 0) {
+        return;
+    }
+    seconds = settings_bottom_dim_normalized_seconds(seconds);
+    if (seconds == 0) {
+        snprintf(out, outsz, "%s", tr(TR_BOTTOM_DIM_NEVER));
+    } else if (seconds < 60) {
+        snprintf(out, outsz, tr(TR_TIME_SECONDS_FMT), seconds);
+    } else {
+        snprintf(out, outsz, tr(TR_TIME_MINUTES_FMT), seconds / 60);
+    }
+}
 
 static void settings_value(int row, char *out, size_t outsz)
 {
@@ -589,6 +625,9 @@ static void settings_value(int row, char *out, size_t outsz)
         break;
     case SETTINGS_ROW_AUDIO:
         format_audio_rate_label(out, outsz, g_cfg.audio_sample_rate);
+        break;
+    case SETTINGS_ROW_BOTTOM_DIM:
+        format_bottom_dim_label(out, outsz, g_cfg.bottom_dim_seconds);
         break;
     case SETTINGS_ROW_SERVER:
         clipped_name(g_cfg.server[0] ? g_cfg.server : tr(TR_NOT_SET), out, outsz, 25);
@@ -625,6 +664,8 @@ static const char *settings_label(int row)
         return tr(TR_STREAM_BUFFER);
     case SETTINGS_ROW_AUDIO:
         return tr(TR_AUDIO_RATE);
+    case SETTINGS_ROW_BOTTOM_DIM:
+        return tr(TR_BOTTOM_DIM);
     case SETTINGS_ROW_SERVER:
         return tr(TR_SERVER_URL);
     case SETTINGS_ROW_USERNAME:
@@ -685,6 +726,9 @@ static void draw_settings(void)
             draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
                            "%s", tr(TR_AUDIO_240_NOTE));
         }
+    } else if (g_settings_row == SETTINGS_ROW_BOTTOM_DIM) {
+        draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
+                       "%s", tr(TR_BOTTOM_DIM_NOTE));
     } else if (g_settings_row == SETTINGS_ROW_LANGUAGE) {
         draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
                        "%s", tr(TR_LANGUAGE_NOTE));
@@ -812,6 +856,7 @@ static void ui_graphics_init(void)
     if (g_cfgu_ready) {
         g_font_kor = C2D_FontLoadSystem(CFG_REGION_KOR);
         g_font_chn = C2D_FontLoadSystem(CFG_REGION_CHN);
+        g_font_twn = C2D_FontLoadSystem(CFG_REGION_TWN);
     }
     g_ui_ready = true;
 }
@@ -833,6 +878,10 @@ static void ui_graphics_exit(void)
     if (g_font_chn) {
         C2D_FontFree(g_font_chn);
         g_font_chn = NULL;
+    }
+    if (g_font_twn) {
+        C2D_FontFree(g_font_twn);
+        g_font_twn = NULL;
     }
     C2D_Fini();
     C3D_Fini();
@@ -975,6 +1024,30 @@ static void change_audio_rate_setting(int dir)
     }
 }
 
+static void change_bottom_dim_setting(int dir)
+{
+    int count = (int)(sizeof(BOTTOM_DIM_LEVELS) / sizeof(BOTTOM_DIM_LEVELS[0]));
+    int idx = bottom_dim_index(settings_bottom_dim_normalized_seconds(g_cfg.bottom_dim_seconds));
+    if (idx < 0) {
+        idx = bottom_dim_index(BOTTOM_DIM_DEFAULT_SECONDS);
+    }
+    if (idx < 0) {
+        idx = 0;
+    }
+    idx = (idx + (dir >= 0 ? 1 : -1) + count) % count;
+    g_cfg.bottom_dim_seconds = BOTTOM_DIM_LEVELS[idx];
+    save_config();
+    settings_cancel_confirm();
+
+    char label[24];
+    format_bottom_dim_label(label, sizeof(label), g_cfg.bottom_dim_seconds);
+    if (g_cfg.bottom_dim_seconds == 0) {
+        set_status("%s", tr(TR_STATUS_BOTTOM_DIM_NEVER));
+    } else {
+        set_status(tr(TR_STATUS_BOTTOM_DIM_FMT), label);
+    }
+}
+
 static void set_language_setting(int language)
 {
     g_cfg.language = language_normalized(language);
@@ -1048,6 +1121,7 @@ static void settings_reset_defaults(void)
     g_cfg.playback_mode = PLAYBACK_MODE_AUTO;
     g_cfg.stream_buffer_kb = SETTINGS_BUFFER_KB_DEFAULT;
     g_cfg.audio_sample_rate = default_audio_sample_rate();
+    g_cfg.bottom_dim_seconds = BOTTOM_DIM_DEFAULT_SECONDS;
     save_config();
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
@@ -1095,6 +1169,8 @@ static void handle_settings(u32 down)
             change_buffer_preference(dir);
         } else if (g_settings_row == SETTINGS_ROW_AUDIO) {
             change_audio_rate_setting(dir);
+        } else if (g_settings_row == SETTINGS_ROW_BOTTOM_DIM) {
+            change_bottom_dim_setting(dir);
         } else if (g_settings_row == SETTINGS_ROW_LANGUAGE) {
             open_language_selector();
         }
@@ -1116,6 +1192,9 @@ static void handle_settings(u32 down)
         break;
     case SETTINGS_ROW_AUDIO:
         change_audio_rate_setting(1);
+        break;
+    case SETTINGS_ROW_BOTTOM_DIM:
+        change_bottom_dim_setting(1);
         break;
     case SETTINGS_ROW_SERVER: {
         char old_server[sizeof(g_cfg.server)];

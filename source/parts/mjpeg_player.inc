@@ -767,6 +767,17 @@ static void bottom_stroke_rect(u8 *fb, int x, int y, int w, int h, u8 r, u8 g, u
     bottom_fill_rect(fb, x + w - 1, y, 1, h, r, g, b);
 }
 
+static void bottom_dim_framebuffer(u8 *fb, int percent)
+{
+    if (!fb) {
+        return;
+    }
+    percent = clamp_int(percent, BOTTOM_DIM_TARGET_PERCENT, 100);
+    for (int i = 0; i < 320 * 240 * 3; i++) {
+        fb[i] = (u8)(((int)fb[i] * percent) / 100);
+    }
+}
+
 #define HANGUL_CELL_SIZE 12
 #define HANGUL_ADVANCE 13
 #define CJK_CELL_SIZE 12
@@ -878,6 +889,31 @@ static const CjkGlyph CJK_GLYPHS[] = {
     {0x5897, {0x204, 0x2FE, 0x291, 0x2FF, 0x291, 0x2FE, 0x27E, 0x242, 0x47E, 0x042, 0x07E, 0x000}},
     {0x5E45, {0x000, 0x07E, 0x7BE, 0x482, 0x4BE, 0x480, 0x4FE, 0x4C8, 0x5FE, 0x048, 0x07E, 0x000}},
     {0x901A, {0x000, 0x0FE, 0x018, 0x09A, 0xEFE, 0x292, 0x2FE, 0x292, 0x292, 0x786, 0x8FF, 0x000}},
+    {0x5F71, {0x7E2, 0x42C, 0x7F8, 0x422, 0x7E6, 0x08C, 0x7F8, 0x422, 0x7E6, 0x2CC, 0x5B0, 0x000}},
+    {0x7247, {0x108, 0x108, 0x108, 0x1F8, 0x100, 0x100, 0x1FC, 0x304, 0x204, 0x204, 0x404, 0x000}},
+    {0x7E7C, {0x054, 0x27E, 0x2FE, 0x740, 0x37E, 0x340, 0x7C4, 0x07E, 0x7FE, 0x5C0, 0x57E, 0x000}},
+    {0x7E8C, {0x210, 0x2FE, 0x510, 0x77E, 0x26A, 0x4FE, 0x7C2, 0x07E, 0x642, 0x6FE, 0x466, 0x000}},
+    {0x66AB, {0x11E, 0x7F0, 0x11E, 0x7F4, 0x564, 0x7FC, 0x204, 0x3FC, 0x204, 0x3FC, 0x204, 0x000}},
+    {0x8F49, {0x108, 0x7FE, 0x12A, 0x7BE, 0x5AA, 0x7AA, 0x5FE, 0x784, 0x17E, 0x7A4, 0x10C, 0x000}},
+    {0x756B, {0x020, 0x3FC, 0x024, 0x7FE, 0x024, 0x7FE, 0x224, 0x3FC, 0x224, 0x224, 0x7FE, 0x000}},
+    {0x8A0A, {0x27C, 0x7A4, 0x024, 0x7A4, 0x024, 0x7FC, 0x024, 0x7A4, 0x4A5, 0x7A7, 0x4A2, 0x000}},
+    {0x975C, {0x10E, 0x7FC, 0x12A, 0x7AA, 0x13E, 0x7CA, 0x4FE, 0x78A, 0x4BE, 0x488, 0x5B8, 0x000}},
+    {0x932F, {0x124, 0x3FE, 0x4A4, 0x7FE, 0x100, 0x7BE, 0x122, 0x5BE, 0x722, 0x3BE, 0x622, 0x000}},
+    {0x8AA4, {0x21C, 0x7C0, 0x05C, 0x7C0, 0x07E, 0x792, 0x012, 0x7FE, 0x514, 0x732, 0x542, 0x000}},
+    {0x8F09, {0x08C, 0x7EA, 0x088, 0x7FE, 0x4A8, 0x7EA, 0x4AA, 0x7EC, 0x08E, 0x7EE, 0x096, 0x000}},
+    {0x5165, {0x060, 0x020, 0x020, 0x060, 0x060, 0x050, 0x090, 0x188, 0x10C, 0x606, 0x402, 0x000}},
+    {0x5F37, {0x720, 0x144, 0x1FE, 0x710, 0x47E, 0x452, 0x752, 0x17E, 0x110, 0x116, 0x7FE, 0x000}},
+    {0x4E0A, {0x040, 0x040, 0x040, 0x07F, 0x040, 0x040, 0x040, 0x040, 0x040, 0x040, 0xFFF, 0x000}},
+    {0x5341, {0x060, 0x060, 0x060, 0xFFF, 0x060, 0x060, 0x060, 0x060, 0x060, 0x060, 0x060, 0x000}},
+    {0x5728, {0x0C0, 0xFFF, 0x180, 0x310, 0x710, 0xEFE, 0xE10, 0x210, 0x210, 0x210, 0x3FF, 0x000}},
+    {0x5B57, {0xFFF, 0xC03, 0xC03, 0x3FC, 0x038, 0x060, 0xFFF, 0x060, 0x060, 0x060, 0x1C0, 0x000}},
+    {0x5C07, {0xD7F, 0xDF2, 0xD7E, 0xFDC, 0x138, 0x1E6, 0xFFF, 0xD06, 0xD66, 0xD36, 0x91E, 0x000}},
+    {0x5DF2, {0x002, 0x002, 0x602, 0x602, 0x7FE, 0x600, 0x600, 0x601, 0x601, 0x603, 0x7FF, 0x000}},
+    {0x5F8C, {0x666, 0xDFC, 0x33E, 0x6F7, 0xEFF, 0xE20, 0x6FE, 0x6E6, 0x7BC, 0x67E, 0x7C7, 0x000}},
+    {0x5FEB, {0x610, 0x6FE, 0xF12, 0xF32, 0xE32, 0x7FF, 0x630, 0x62C, 0x66E, 0x6C3, 0x781, 0x000}},
+    {0x79D2, {0xF08, 0x23E, 0x22B, 0xFEB, 0x369, 0x7C8, 0xF8B, 0xA02, 0x20E, 0x238, 0x260, 0x000}},
+    {0x9000, {0x0FF, 0xFC3, 0x2FF, 0x6C0, 0xCD3, 0xFDE, 0x2C6, 0x6F3, 0xFE1, 0xDFF, 0x000, 0x000}},
+    {0x9375, {0x77F, 0xDEF, 0xF5F, 0x6EF, 0xF3F, 0x6EC, 0xFFF, 0xF6C, 0xF7F, 0xFF0, 0xF9F, 0x000}},
 };
 
 static const CjkGlyph *cjk_glyph_for_codepoint(u32 cp)
@@ -2169,6 +2205,90 @@ static void bottom_draw_button(u8 *fb, int x, int y, int w, int h, const char *l
     bottom_draw_text_centered(fb, x + w / 2, y + (h - bottom_text_height(label, 1)) / 2, label, 1, 238, 241, 246);
 }
 
+static void playback_bottom_dim_begin(void)
+{
+    g_bottom_dim_activity_ms = osGetTime();
+    g_bottom_dim_fade_start_ms = 0;
+    g_bottom_dim_last_redraw_ms = 0;
+    g_bottom_dim_active = false;
+    g_bottom_dim_fade_complete = false;
+    g_bottom_dim_redraw_pending = false;
+}
+
+static void playback_bottom_dim_mark_activity(void)
+{
+    g_bottom_dim_activity_ms = osGetTime();
+    if (g_bottom_dim_active) {
+        g_bottom_dim_active = false;
+        g_bottom_dim_fade_start_ms = 0;
+        g_bottom_dim_last_redraw_ms = 0;
+        g_bottom_dim_fade_complete = false;
+        g_bottom_dim_redraw_pending = true;
+    }
+}
+
+static int playback_bottom_dim_percent(void)
+{
+    if (!g_bottom_dim_active) {
+        return 100;
+    }
+    if (g_bottom_dim_fade_start_ms == 0 || BOTTOM_DIM_FADE_MS <= 0) {
+        return BOTTOM_DIM_TARGET_PERCENT;
+    }
+
+    u64 now = osGetTime();
+    u64 elapsed = now >= g_bottom_dim_fade_start_ms ? now - g_bottom_dim_fade_start_ms : 0;
+    if (elapsed >= BOTTOM_DIM_FADE_MS) {
+        return BOTTOM_DIM_TARGET_PERCENT;
+    }
+
+    int range = 100 - BOTTOM_DIM_TARGET_PERCENT;
+    return 100 - (int)((range * elapsed) / BOTTOM_DIM_FADE_MS);
+}
+
+static bool playback_bottom_dim_should_be_active(const MjpegPlayer *player)
+{
+    if (!player || player->paused) {
+        return false;
+    }
+    int seconds = settings_bottom_dim_normalized_seconds(g_cfg.bottom_dim_seconds);
+    if (seconds <= 0) {
+        return false;
+    }
+    u64 now = osGetTime();
+    return g_bottom_dim_activity_ms > 0 && now >= g_bottom_dim_activity_ms &&
+           now - g_bottom_dim_activity_ms >= (u64)seconds * 1000ULL;
+}
+
+static bool playback_bottom_dim_poll(const MjpegPlayer *player)
+{
+    bool desired = playback_bottom_dim_should_be_active(player);
+    u64 now = osGetTime();
+    if (desired != g_bottom_dim_active) {
+        g_bottom_dim_active = desired;
+        g_bottom_dim_fade_start_ms = desired ? now : 0;
+        g_bottom_dim_last_redraw_ms = 0;
+        g_bottom_dim_fade_complete = false;
+        g_bottom_dim_redraw_pending = true;
+    }
+    if (g_bottom_dim_active && g_bottom_dim_fade_start_ms > 0) {
+        u64 elapsed = now >= g_bottom_dim_fade_start_ms ? now - g_bottom_dim_fade_start_ms : 0;
+        if (elapsed >= BOTTOM_DIM_FADE_MS && !g_bottom_dim_fade_complete) {
+            g_bottom_dim_fade_complete = true;
+            g_bottom_dim_redraw_pending = true;
+        } else if (elapsed < BOTTOM_DIM_FADE_MS &&
+                   (g_bottom_dim_last_redraw_ms == 0 || now - g_bottom_dim_last_redraw_ms >= BOTTOM_DIM_FADE_REDRAW_MS)) {
+            g_bottom_dim_last_redraw_ms = now;
+            g_bottom_dim_redraw_pending = true;
+        }
+    }
+    if (g_bottom_dim_redraw_pending) {
+        g_bottom_dim_redraw_pending = false;
+        return true;
+    }
+    return false;
+}
+
 static const char *playback_button_y(const AudioPlayer *audio)
 {
     if (!audio || !audio->ndsp_open || audio->failed) {
@@ -2197,7 +2317,8 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "넘쳤") || strstr(line, "너무 큽니다") || strstr(line, "사용할 수 없습니다") ||
                  strstr(line, "열기 실패") || strstr(line, "失败") || strstr(line, "无法") ||
                  strstr(line, "不足") || strstr(line, "溢出") || strstr(line, "过大") ||
-                 strstr(line, "不可用"))) {
+                 strstr(line, "不可用") || strstr(line, "錯誤") || strstr(line, "失敗") ||
+                 strstr(line, "無法") || strstr(line, "溢位") || strstr(line, "過大"))) {
         return tr(TR_STATE_ERROR);
     }
     if (line && (strstr(line, "Opening") || strstr(line, "Requesting") || strstr(line, "Abriendo") ||
@@ -2216,7 +2337,9 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "불러오는 중") || strstr(line, "버퍼링 중") || strstr(line, "시작 중") ||
                  strstr(line, "시도 중") || strstr(line, "전환 중") || strstr(line, "正在") ||
                  strstr(line, "加载") || strstr(line, "缓冲") || strstr(line, "请求") ||
-                 strstr(line, "打开") || strstr(line, "切换") || strstr(line, "尝试"))) {
+                 strstr(line, "打开") || strstr(line, "切换") || strstr(line, "尝试") ||
+                 strstr(line, "載入") || strstr(line, "緩衝") || strstr(line, "請求") ||
+                 strstr(line, "開啟") || strstr(line, "切換") || strstr(line, "嘗試"))) {
         return tr(TR_STATE_LOADING);
     }
     if (line && (strstr(line, "stopped") || strstr(line, "Stopped") || strstr(line, "end") ||
@@ -2230,7 +2353,8 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "конца") || strstr(line, "останов") || strstr(line, "отмен") ||
                  strstr(line, "중지") || strstr(line, "끝") || strstr(line, "도달") ||
                  strstr(line, "취소") || strstr(line, "완료") || strstr(line, "停止") ||
-                 strstr(line, "末尾") || strstr(line, "完毕") || strstr(line, "取消"))) {
+                 strstr(line, "末尾") || strstr(line, "完毕") || strstr(line, "取消") ||
+                 strstr(line, "結尾") || strstr(line, "完成"))) {
         return tr(TR_STATE_STOPPED);
     }
     return tr(TR_STATE_PLAYING);
@@ -2274,6 +2398,10 @@ static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
     bottom_draw_button(fb, 112, 180, 86, 24, tr(TR_BOTTOM_QUALITY), false);
     bottom_draw_button(fb, 208, 180, 92, 24, tr(TR_BOTTOM_VOLUME), false);
     bottom_draw_text_centered(fb, 155, 212, quality_label, 1, 178, 187, 201);
+
+    if (g_bottom_dim_active && !paused) {
+        bottom_dim_framebuffer(fb, playback_bottom_dim_percent());
+    }
 }
 
 static void mjpeg_console(const MjpegPlayer *player, const char *line)
@@ -2292,6 +2420,7 @@ static void mjpeg_set_paused(MjpegPlayer *player, bool paused)
         return;
     }
 
+    playback_bottom_dim_mark_activity();
     mjpeg_current_ticks(player);
     player->paused = paused;
     audio_set_paused(player->audio, paused);
@@ -3638,6 +3767,7 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
     player.frame_interval_ns = 1000000000ULL / (player.target_fps ? player.target_fps : 1);
     player.avi_mode = false;
 
+    playback_bottom_dim_begin();
     mjpeg_console(&player, tr(TR_OPENING_MPEG_STREAM));
 
     httpcContext context;
@@ -3707,6 +3837,9 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
         while (app_keep_running()) {
             hidScanInput();
             u32 down = hidKeysDown();
+            if (down) {
+                playback_bottom_dim_mark_activity();
+            }
             if (down & KEY_START) {
                 g_exit_requested = true;
                 set_play_status("%s", tr(TR_PLAYBACK_STOPPED));
@@ -3799,6 +3932,10 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
                 if (mjpeg_apply_remote_command(&player, &audio, &remote_cmd, &result)) {
                     break;
                 }
+            }
+
+            if (playback_bottom_dim_poll(&player)) {
+                mjpeg_console(&player, g_play_status);
             }
 
             report_playback_progress_periodic(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
@@ -3969,6 +4106,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
         return MJPEG_PLAY_FAILED;
     }
 
+    playback_bottom_dim_begin();
     mjpeg_console(&player, tr(TR_OPENING_MJPEG_STREAM));
 
     httpcContext context;
@@ -4036,6 +4174,9 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
             hidScanInput();
             u32 down = hidKeysDown();
             u32 held = hidKeysHeld();
+            if (down || (held & (KEY_L | KEY_R))) {
+                playback_bottom_dim_mark_activity();
+            }
             if (down & KEY_START) {
                 g_exit_requested = true;
                 set_play_status("%s", tr(TR_PLAYBACK_STOPPED));
@@ -4178,6 +4319,10 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 mjpeg_console(&player, g_play_status);
                 result = MJPEG_PLAY_RESTART;
                 break;
+            }
+
+            if (playback_bottom_dim_poll(&player)) {
+                mjpeg_console(&player, g_play_status);
             }
 
             report_playback_progress_periodic(mjpeg_current_ticks(&player), player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
