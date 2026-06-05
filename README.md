@@ -89,8 +89,9 @@ Makefile            devkitPro build file
 
 ## Known Issues
 
-- Korean/Hangul text is romanized because the default 3DS font does not render Hangul glyphs.
 - playback may hitch when audio is loud
+- some shows make you click B twice to get out of specials
+- some shows dont show season 2
 
 ### Roadmap
 
