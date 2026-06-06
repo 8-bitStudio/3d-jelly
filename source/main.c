@@ -112,6 +112,7 @@ typedef enum {
     VIEW_SETTINGS,
     VIEW_LIBRARIES,
     VIEW_ITEMS,
+    VIEW_SEARCH,
     VIEW_DETAIL,
     VIEW_PLAYBACK
 } View;
@@ -133,9 +134,11 @@ typedef enum {
     LANG_RU,
     LANG_NL,
     LANG_PT,
+    LANG_PL,
     LANG_KO,
     LANG_ZH_HANS,
     LANG_ZH_HANT,
+    LANG_ID,
     LANG_COUNT
 } AppLanguage;
 
@@ -154,6 +157,7 @@ typedef struct {
     char location_type[32];
     char series_id[80];
     char season_id[80];
+    char overview[256];
     bool is_folder;
     bool is_missing;
     bool is_virtual_item;
@@ -241,6 +245,12 @@ static int g_language_select_row;
 static int g_language_select_scroll;
 static char g_screen_title[96] = "Libraries";
 static char g_current_parent_id[80];
+static char g_search_query[96];
+static View g_search_return_view = VIEW_LIBRARIES;
+static char g_search_return_parent_id[80];
+static char g_search_return_title[96];
+static int g_search_return_selected;
+static int g_search_return_scroll;
 static char g_status[192] = "Press Y to configure a Jellyfin server.";
 static char g_play_url[STREAM_URL_CAP];
 static char g_play_method[64];
@@ -377,11 +387,12 @@ int main(void)
     while (app_keep_running()) {
         hidScanInput();
         u32 down = hidKeysDown();
+        u32 held = hidKeysHeld();
         if (g_exit_requested || (down & KEY_START)) {
             g_exit_requested = true;
             break;
         }
-        handle_input(down);
+        handle_input(down, held);
         if (g_exit_requested) {
             break;
         }

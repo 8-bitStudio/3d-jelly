@@ -57,6 +57,7 @@ static void parse_media_item_object(const char *os, const char *oe, MediaItem *i
     json_get_string_range(os, oe, "LocationType", item->location_type, sizeof(item->location_type));
     json_get_string_range(os, oe, "SeriesId", item->series_id, sizeof(item->series_id));
     json_get_string_range(os, oe, "SeasonId", item->season_id, sizeof(item->season_id));
+    json_get_string_range(os, oe, "Overview", item->overview, sizeof(item->overview));
     json_get_bool_range(os, oe, "IsFolder", &item->is_folder);
     json_get_bool_range(os, oe, "IsMissing", &item->is_missing);
     json_get_bool_range(os, oe, "IsVirtualItem", &item->is_virtual_item);
@@ -837,6 +838,12 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     case LANG_PT:
         cancel_label = "Cancelar";
         break;
+    case LANG_PL:
+        cancel_label = "Anuluj";
+        break;
+    case LANG_ID:
+        cancel_label = "Batal";
+        break;
     case LANG_KO:
         cancel_label = "취소";
         break;
@@ -917,7 +924,7 @@ static bool load_libraries(void)
     report_session_capabilities();
 
     char path[256];
-    snprintf(path, sizeof(path), "/Users/%s/Views?Fields=PrimaryImageAspectRatio", g_cfg.user_id);
+    snprintf(path, sizeof(path), "/Users/%s/Views?Fields=PrimaryImageAspectRatio,Overview", g_cfg.user_id);
 
     HttpResponse res;
     Result ret = api_get(path, &res);
@@ -945,11 +952,11 @@ static void build_items_page_path(char *path, size_t pathsz, const char *enc_par
 {
     if (user_endpoint) {
         snprintf(path, pathsz,
-                 "/Users/%s/Items?ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId&IsMissing=false&IsUnaired=false",
+                 "/Users/%s/Items?ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_parent, start, limit);
     } else {
         snprintf(path, pathsz,
-                 "/Items?UserId=%s&ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId&IsMissing=false&IsUnaired=false",
+                 "/Items?UserId=%s&ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_parent, start, limit);
     }
 }
@@ -1023,6 +1030,84 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
         set_status(tr(TR_STATUS_FIRST_ENTRIES_FMT), g_screen_title, g_item_count);
     } else {
         set_status(tr(TR_STATUS_ENTRIES_FMT), g_screen_title, g_item_count);
+    }
+    return true;
+}
+
+static bool load_search_results(const char *query)
+{
+    if (!g_cfg.token[0] || !g_cfg.user_id[0] || !query || !query[0]) {
+        return false;
+    }
+
+    char enc_query[192];
+    url_encode(query, enc_query, sizeof(enc_query));
+
+    int new_count = 0;
+    int start = 0;
+    int total = -1;
+    bool hit_cap = false;
+
+    for (;;) {
+        char path[768];
+        snprintf(path, sizeof(path),
+                 "/Users/%s/Items?SearchTerm=%s&Recursive=true&StartIndex=%d&Limit=%d&IncludeItemTypes=Movie,Series,Video,MusicVideo,BoxSet&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio&IsMissing=false&IsUnaired=false",
+                 g_cfg.user_id, enc_query, start, ITEM_PAGE_SIZE);
+
+        HttpResponse res;
+        set_status(tr(TR_STATUS_SEARCHING_FMT), query);
+        Result ret = api_get(path, &res);
+        if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
+            set_http_failure(tr(TR_PREFIX_SEARCH_FAILED), &res, ret);
+            free_response(&res);
+            return false;
+        }
+
+        int raw_count = 0;
+        if (!parse_items(res.body, g_items, &new_count, MAX_ITEMS, true, &raw_count)) {
+            set_status("%s", tr(TR_STATUS_PARSE_ITEMS_FAIL));
+            free_response(&res);
+            return false;
+        }
+        int page_total = parse_total_record_count(res.body);
+        if (page_total >= 0) {
+            total = page_total;
+        }
+        free_response(&res);
+
+        if (raw_count <= 0) {
+            break;
+        }
+
+        start += raw_count;
+        if (new_count >= MAX_ITEMS) {
+            hit_cap = total < 0 || start < total || raw_count >= ITEM_PAGE_SIZE;
+            break;
+        }
+        if (total >= 0) {
+            if (start >= total) {
+                break;
+            }
+        } else if (raw_count < ITEM_PAGE_SIZE) {
+            break;
+        }
+    }
+
+    copy_safe(g_search_query, sizeof(g_search_query), query);
+    snprintf(g_screen_title, sizeof(g_screen_title), tr(TR_SEARCH_RESULTS_FMT), g_search_query);
+    g_current_parent_id[0] = 0;
+    g_item_count = new_count;
+    g_selected = 0;
+    g_scroll = 0;
+    g_stack_depth = 0;
+    g_view = VIEW_SEARCH;
+
+    if (g_item_count <= 0) {
+        set_status(tr(TR_STATUS_SEARCH_EMPTY_FMT), g_search_query);
+    } else if (hit_cap) {
+        set_status(tr(TR_STATUS_FIRST_ENTRIES_FMT), g_screen_title, g_item_count);
+    } else {
+        set_status(tr(TR_STATUS_SEARCH_RESULTS_FMT), g_item_count, g_search_query);
     }
     return true;
 }
@@ -1174,6 +1259,8 @@ static void prepare_autoplay_next_episode(void)
     }
 }
 
+static const char *const SEARCH_NAV_PARENT_ID = "#SEARCH#";
+
 static void push_nav(const char *parent_id, const char *title)
 {
     if (g_stack_depth >= MAX_STACK) {
@@ -1194,7 +1281,9 @@ static void pop_nav(void)
     }
 
     NavFrame f = g_stack[--g_stack_depth];
-    if (f.parent_id[0]) {
+    if (strcmp(f.parent_id, SEARCH_NAV_PARENT_ID) == 0) {
+        load_search_results(g_search_query);
+    } else if (f.parent_id[0]) {
         load_items_for_parent(f.parent_id, f.title);
     } else {
         load_libraries();

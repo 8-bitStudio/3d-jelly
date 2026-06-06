@@ -157,6 +157,164 @@ static void draw_text_wrap(float x, float y, float scale, float wrap, u32 color,
     C2D_DrawText(&t, C2D_WithColor | C2D_WordWrap, x, y, 0.5f, scale, scale, color, wrap);
 }
 
+static float text_width_for_scale(const char *text, float scale)
+{
+    C2D_Text t;
+    ui_text_parse(&t, text ? text : "");
+    C2D_TextOptimize(&t);
+
+    float width = 0.0f;
+    float height = 0.0f;
+    C2D_TextGetDimensions(&t, scale, scale, &width, &height);
+    (void)height;
+    return width;
+}
+
+static int utf8_char_bytes(const char *s)
+{
+    unsigned char c = s && s[0] ? (unsigned char)s[0] : 0;
+    if (c < 0x80) {
+        return 1;
+    }
+    if ((c & 0xE0) == 0xC0) {
+        return 2;
+    }
+    if ((c & 0xF0) == 0xE0) {
+        return 3;
+    }
+    if ((c & 0xF8) == 0xF0) {
+        return 4;
+    }
+    return 1;
+}
+
+static void trim_text_to_width(char *text, size_t textsz, float scale, float wrap, bool ellipsis)
+{
+    if (!text || textsz == 0) {
+        return;
+    }
+
+    while (text[0] && text_width_for_scale(text, scale) > wrap) {
+        size_t len = strlen(text);
+        if (len == 0) {
+            break;
+        }
+        do {
+            text[--len] = 0;
+        } while (len > 0 && ((unsigned char)text[len] & 0xC0) == 0x80);
+    }
+
+    while (strlen(text) > 0 && text[strlen(text) - 1] == ' ') {
+        text[strlen(text) - 1] = 0;
+    }
+
+    if (ellipsis && text[0]) {
+        while (strlen(text) + 3 >= textsz) {
+            size_t len = strlen(text);
+            if (len == 0) {
+                break;
+            }
+            do {
+                text[--len] = 0;
+            } while (len > 0 && ((unsigned char)text[len] & 0xC0) == 0x80);
+        }
+        strncat(text, "...", textsz - strlen(text) - 1);
+        while (text_width_for_scale(text, scale) > wrap && strlen(text) > 3) {
+            size_t len = strlen(text) - 3;
+            text[len] = 0;
+            do {
+                text[--len] = 0;
+            } while (len > 0 && ((unsigned char)text[len] & 0xC0) == 0x80);
+            strncat(text, "...", textsz - strlen(text) - 1);
+        }
+    }
+}
+
+static void draw_text_lines(float x, float y, float scale, float wrap, u32 color,
+                            const char *text, int max_lines, float line_step)
+{
+    if (!text || !text[0] || max_lines <= 0) {
+        return;
+    }
+
+    const char *p = text;
+    for (int line = 0; line < max_lines; line++) {
+        while (*p == ' ' || *p == '\t' || *p == '\r') {
+            p++;
+        }
+        while (*p == '\n') {
+            p++;
+        }
+        if (!*p) {
+            break;
+        }
+
+        char out[192];
+        out[0] = 0;
+        const char *line_start = p;
+        bool forced_newline = false;
+
+        while (*p) {
+            while (*p == ' ' || *p == '\t' || *p == '\r') {
+                p++;
+            }
+            if (*p == '\n') {
+                p++;
+                forced_newline = true;
+                break;
+            }
+            if (!*p) {
+                break;
+            }
+
+            const char *word_start = p;
+            while (*p && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+                p += utf8_char_bytes(p);
+            }
+            size_t word_len = (size_t)(p - word_start);
+
+            char candidate[192];
+            if (out[0]) {
+                snprintf(candidate, sizeof(candidate), "%s %.*s", out, (int)word_len, word_start);
+            } else {
+                snprintf(candidate, sizeof(candidate), "%.*s", (int)word_len, word_start);
+            }
+
+            if (text_width_for_scale(candidate, scale) <= wrap || !out[0]) {
+                copy_safe(out, sizeof(out), candidate);
+                if (text_width_for_scale(out, scale) > wrap) {
+                    trim_text_to_width(out, sizeof(out), scale, wrap, line < max_lines - 1 || *p);
+                    break;
+                }
+            } else {
+                p = word_start;
+                break;
+            }
+        }
+
+        if (!out[0] && p > line_start) {
+            snprintf(out, sizeof(out), "%.*s", (int)(p - line_start), line_start);
+            trim_text_to_width(out, sizeof(out), scale, wrap, line < max_lines - 1 || *p);
+        }
+
+        if (line == max_lines - 1) {
+            const char *rest = p;
+            while (*rest == ' ' || *rest == '\t' || *rest == '\r' || *rest == '\n') {
+                rest++;
+            }
+            if (*rest) {
+                trim_text_to_width(out, sizeof(out), scale, wrap, true);
+            }
+        }
+
+        draw_text(x, y + (float)line * line_step, scale, color, "%s", out);
+
+        if (forced_newline) {
+            continue;
+        }
+    }
+}
+
 static void draw_text_centered(float center_x, float y, float scale, u32 color, const char *fmt, ...)
 {
     char buf[256];
@@ -342,9 +500,26 @@ static const char *display_item_kind(const MediaItem *item)
 {
     const char *kind = item && item->collection_type[0] ? item->collection_type : (item ? item->type : "");
     int language = language_normalized(g_cfg.language);
+    if (language == LANG_EN) {
+        if (strcmp(kind, "tvshows") == 0) {
+            return "TV Shows";
+        }
+        if (strcmp(kind, "movies") == 0) {
+            return "Movies";
+        }
+        if (strcmp(kind, "homevideos") == 0) {
+            return "Home Videos";
+        }
+        if (strcmp(kind, "music") == 0) {
+            return "Music";
+        }
+        if (strcmp(kind, "books") == 0) {
+            return "Books";
+        }
+    }
     if (language != LANG_AF && language != LANG_ES && language != LANG_JA && language != LANG_FR && language != LANG_DE &&
         language != LANG_IT && language != LANG_RU && language != LANG_NL && language != LANG_PT &&
-        language != LANG_KO && language != LANG_ZH_HANS && language != LANG_ZH_HANT) {
+        language != LANG_PL && language != LANG_ID && language != LANG_KO && language != LANG_ZH_HANS && language != LANG_ZH_HANT) {
         return kind;
     }
     if (strcmp(kind, "movies") == 0 || strcmp(kind, "Movie") == 0) {
@@ -369,6 +544,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "film";
         case LANG_PT:
             return "filme";
+        case LANG_PL:
+            return "film";
+        case LANG_ID:
+            return "film";
         case LANG_AF:
             return "film";
         default:
@@ -397,6 +576,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "serie";
         case LANG_PT:
             return "série";
+        case LANG_PL:
+            return "serial";
+        case LANG_ID:
+            return "serial";
         case LANG_AF:
             return "reeks";
         default:
@@ -425,6 +608,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "aflevering";
         case LANG_PT:
             return "episódio";
+        case LANG_PL:
+            return "odcinek";
+        case LANG_ID:
+            return "episode";
         case LANG_AF:
             return "episode";
         default:
@@ -453,6 +640,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "seizoen";
         case LANG_PT:
             return "temporada";
+        case LANG_PL:
+            return "sezon";
+        case LANG_ID:
+            return "musim";
         case LANG_AF:
             return "seisoen";
         default:
@@ -481,6 +672,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "map";
         case LANG_PT:
             return "pasta";
+        case LANG_PL:
+            return "folder";
+        case LANG_ID:
+            return "folder";
         case LANG_AF:
             return "vouer";
         default:
@@ -509,6 +704,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "video";
         case LANG_PT:
             return "vídeo";
+        case LANG_PL:
+            return "wideo";
+        case LANG_ID:
+            return "video";
         case LANG_AF:
             return "video";
         default:
@@ -518,7 +717,436 @@ static const char *display_item_kind(const MediaItem *item)
     return kind;
 }
 
-static void draw_list(MediaItem *items, int count, const char *title)
+enum {
+    BROWSE_VISIBLE_ROWS = 5,
+    BROWSE_LANDSCAPE_ART_W = 184,
+    BROWSE_LANDSCAPE_ART_H = 104,
+    BROWSE_POSTER_ART_W = 112,
+    BROWSE_POSTER_ART_H = 160,
+    BROWSE_ART_TEX_W = 256,
+    BROWSE_ART_TEX_H = 256
+};
+
+static C3D_Tex g_browse_art_tex;
+static Tex3DS_SubTexture g_browse_art_subtex;
+static bool g_browse_art_tex_ready;
+static bool g_browse_art_loaded;
+static bool g_browse_art_failed;
+static int g_browse_art_w;
+static int g_browse_art_h;
+static char g_browse_art_id[80];
+
+static const u8 BROWSE_TILE_REMAP[64] = {
+    0x00, 0x01, 0x08, 0x09, 0x02, 0x03, 0x0A, 0x0B,
+    0x10, 0x11, 0x18, 0x19, 0x12, 0x13, 0x1A, 0x1B,
+    0x04, 0x05, 0x0C, 0x0D, 0x06, 0x07, 0x0E, 0x0F,
+    0x14, 0x15, 0x1C, 0x1D, 0x16, 0x17, 0x1E, 0x1F,
+    0x20, 0x21, 0x28, 0x29, 0x22, 0x23, 0x2A, 0x2B,
+    0x30, 0x31, 0x38, 0x39, 0x32, 0x33, 0x3A, 0x3B,
+    0x24, 0x25, 0x2C, 0x2D, 0x26, 0x27, 0x2E, 0x2F,
+    0x34, 0x35, 0x3C, 0x3D, 0x36, 0x37, 0x3E, 0x3F
+};
+
+static u16 browse_texture_pixel(u16 rgb565)
+{
+    return rgb565;
+}
+
+static void browse_swizzle_rgb565(const u16 *linear, u16 *tiled, int width, int height)
+{
+    if (!linear || !tiled || width <= 0 || height <= 0) {
+        return;
+    }
+
+    int write = 0;
+    for (int ty = 0; ty < height; ty += 8) {
+        for (int tx = 0; tx < width; tx += 8) {
+            for (int i = 0; i < 64; i++) {
+                int idx = BROWSE_TILE_REMAP[i];
+                int sx = idx & 7;
+                int sy = idx >> 3;
+                tiled[write++] = browse_texture_pixel(linear[(ty + sy) * width + tx + sx]);
+            }
+        }
+    }
+}
+
+static void clamp_browse_selection(int count, int visible_rows)
+{
+    if (count <= 0) {
+        g_selected = 0;
+        g_scroll = 0;
+        return;
+    }
+    if (visible_rows < 1) {
+        visible_rows = 1;
+    }
+    if (g_selected < 0) {
+        g_selected = 0;
+    }
+    if (g_selected >= count) {
+        g_selected = count - 1;
+    }
+    if (g_selected < g_scroll) {
+        g_scroll = g_selected;
+    }
+    if (g_selected >= g_scroll + visible_rows) {
+        g_scroll = g_selected - visible_rows + 1;
+    }
+
+    int max_scroll = count - visible_rows;
+    if (max_scroll < 0) {
+        max_scroll = 0;
+    }
+    if (g_scroll > max_scroll) {
+        g_scroll = max_scroll;
+    }
+    if (g_scroll < 0) {
+        g_scroll = 0;
+    }
+}
+
+static bool browse_item_prefers_poster_art(const MediaItem *item)
+{
+    if (!item) {
+        return false;
+    }
+    return strcmp(item->type, "Movie") == 0 ||
+           strcmp(item->type, "Series") == 0 ||
+           strcmp(item->type, "Season") == 0 ||
+           strcmp(item->type, "BoxSet") == 0;
+}
+
+static void browse_art_target_size(const MediaItem *item, int *out_w, int *out_h)
+{
+    if (browse_item_prefers_poster_art(item)) {
+        *out_w = BROWSE_POSTER_ART_W;
+        *out_h = BROWSE_POSTER_ART_H;
+    } else {
+        *out_w = BROWSE_LANDSCAPE_ART_W;
+        *out_h = BROWSE_LANDSCAPE_ART_H;
+    }
+}
+
+static void browse_set_art_size(int w, int h)
+{
+    if (w < 1) {
+        w = 1;
+    }
+    if (h < 1) {
+        h = 1;
+    }
+    if (w > BROWSE_ART_TEX_W) {
+        w = BROWSE_ART_TEX_W;
+    }
+    if (h > BROWSE_ART_TEX_H) {
+        h = BROWSE_ART_TEX_H;
+    }
+
+    g_browse_art_w = w;
+    g_browse_art_h = h;
+    g_browse_art_subtex.width = (u16)w;
+    g_browse_art_subtex.height = (u16)h;
+    g_browse_art_subtex.left = 0.0f;
+    g_browse_art_subtex.right = (float)w / (float)BROWSE_ART_TEX_W;
+    g_browse_art_subtex.top = 1.0f;
+    g_browse_art_subtex.bottom = 1.0f - ((float)h / (float)BROWSE_ART_TEX_H);
+}
+
+static bool browse_art_texture_init(void)
+{
+    if (g_browse_art_tex_ready) {
+        return true;
+    }
+
+    memset(&g_browse_art_tex, 0, sizeof(g_browse_art_tex));
+    if (!C3D_TexInit(&g_browse_art_tex, BROWSE_ART_TEX_W, BROWSE_ART_TEX_H, GPU_RGB565)) {
+        return false;
+    }
+    C3D_TexSetFilter(&g_browse_art_tex, GPU_LINEAR, GPU_LINEAR);
+    C3D_TexSetWrap(&g_browse_art_tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+
+    browse_set_art_size(BROWSE_LANDSCAPE_ART_W, BROWSE_LANDSCAPE_ART_H);
+
+    g_browse_art_tex_ready = true;
+    return true;
+}
+
+static void browse_art_texture_free(void)
+{
+    if (g_browse_art_tex_ready) {
+        C3D_TexDelete(&g_browse_art_tex);
+        memset(&g_browse_art_tex, 0, sizeof(g_browse_art_tex));
+        g_browse_art_tex_ready = false;
+    }
+    g_browse_art_loaded = false;
+    g_browse_art_failed = false;
+    g_browse_art_w = 0;
+    g_browse_art_h = 0;
+    g_browse_art_id[0] = 0;
+}
+
+static void browse_fill_fallback_art(u16 *pixels, int view_w, int view_h)
+{
+    if (!pixels) {
+        return;
+    }
+    u16 bg = rgb565_from_rgb(15, 20, 27);
+    u16 line = rgb565_from_rgb(0, 164, 220);
+    u16 line2 = rgb565_from_rgb(170, 92, 195);
+    u16 pad = rgb565_from_rgb(10, 13, 18);
+    for (int y = 0; y < BROWSE_ART_TEX_H; y++) {
+        for (int x = 0; x < BROWSE_ART_TEX_W; x++) {
+            u16 color = pad;
+            if (x < view_w && y < view_h) {
+                color = bg;
+            }
+            if (y < 4 && x < view_w) {
+                color = line;
+            } else if (y >= view_h - 4 && y < view_h && x < view_w) {
+                color = line2;
+            } else if (x < view_w && y < view_h && ((x + y) & 31) < 2) {
+                color = rgb565_from_rgb(28, 39, 50);
+            }
+            pixels[y * BROWSE_ART_TEX_W + x] = color;
+        }
+    }
+}
+
+static bool browse_scale_into_art_texture(u16 *tex_pixels, const u16 *src, int src_w, int src_h,
+                                          int max_w, int max_h, bool fill_frame)
+{
+    if (!tex_pixels || !src || src_w <= 0 || src_h <= 0) {
+        return false;
+    }
+
+    u16 bg = rgb565_from_rgb(10, 13, 18);
+    for (int i = 0; i < BROWSE_ART_TEX_W * BROWSE_ART_TEX_H; i++) {
+        tex_pixels[i] = bg;
+    }
+
+    int dst_w = max_w;
+    int dst_h = max_h;
+    int dst_x0 = 0;
+    int dst_y0 = 0;
+    int crop_x0 = 0;
+    int crop_y0 = 0;
+    int crop_w = src_w;
+    int crop_h = src_h;
+
+    if (fill_frame) {
+        if ((long long)src_w * max_h > (long long)src_h * max_w) {
+            crop_w = (src_h * max_w) / max_h;
+            if (crop_w < 1) {
+                crop_w = 1;
+            }
+            crop_x0 = (src_w - crop_w) / 2;
+        } else if ((long long)src_h * max_w > (long long)src_w * max_h) {
+            crop_h = (src_w * max_h) / max_w;
+            if (crop_h < 1) {
+                crop_h = 1;
+            }
+            crop_y0 = (src_h - crop_h) / 2;
+        }
+    } else {
+        dst_h = (src_h * dst_w) / src_w;
+        if (dst_h > max_h) {
+            dst_h = max_h;
+            dst_w = (src_w * dst_h) / src_h;
+        }
+        dst_x0 = (max_w - dst_w) / 2;
+        dst_y0 = (max_h - dst_h) / 2;
+    }
+
+    if (dst_w < 1) {
+        dst_w = 1;
+    }
+    if (dst_h < 1) {
+        dst_h = 1;
+    }
+
+    for (int y = 0; y < dst_h; y++) {
+        int sy = crop_y0 + (y * crop_h) / dst_h;
+        if (sy >= src_h) {
+            sy = src_h - 1;
+        }
+        for (int x = 0; x < dst_w; x++) {
+            int sx = crop_x0 + (x * crop_w) / dst_w;
+            if (sx >= src_w) {
+                sx = src_w - 1;
+            }
+            tex_pixels[(dst_y0 + y) * BROWSE_ART_TEX_W + dst_x0 + x] = src[sy * src_w + sx];
+        }
+    }
+    return true;
+}
+
+static void browse_extrude_art_edges(u16 *tex_pixels, int view_w, int view_h)
+{
+    if (!tex_pixels || view_w <= 0 || view_h <= 0 ||
+        view_w > BROWSE_ART_TEX_W || view_h > BROWSE_ART_TEX_H) {
+        return;
+    }
+
+    if (view_w < BROWSE_ART_TEX_W) {
+        for (int y = 0; y < view_h; y++) {
+            u16 edge = tex_pixels[y * BROWSE_ART_TEX_W + view_w - 1];
+            tex_pixels[y * BROWSE_ART_TEX_W + view_w] = edge;
+        }
+    }
+    if (view_h < BROWSE_ART_TEX_H) {
+        u16 *last = tex_pixels + (view_h - 1) * BROWSE_ART_TEX_W;
+        u16 *next = tex_pixels + view_h * BROWSE_ART_TEX_W;
+        for (int x = 0; x < view_w; x++) {
+            next[x] = last[x];
+        }
+        if (view_w < BROWSE_ART_TEX_W) {
+            next[view_w] = last[view_w - 1];
+        }
+    }
+}
+
+static bool browse_fetch_primary_art(const MediaItem *item)
+{
+    if (!item || !item->id[0] || !g_cfg.server[0] || !g_cfg.token[0]) {
+        return false;
+    }
+    if (!browse_art_texture_init()) {
+        return false;
+    }
+
+    u16 *decoded = (u16 *)malloc(JPEG_PIXELS_CAP * sizeof(u16));
+    u16 *tex_pixels = (u16 *)malloc(BROWSE_ART_TEX_W * BROWSE_ART_TEX_H * sizeof(u16));
+    u16 *tiled_pixels = (u16 *)malloc(BROWSE_ART_TEX_W * BROWSE_ART_TEX_H * sizeof(u16));
+    if (!decoded || !tex_pixels || !tiled_pixels) {
+        free(decoded);
+        free(tex_pixels);
+        free(tiled_pixels);
+        return false;
+    }
+
+    char enc_id[160];
+    char path[320];
+    int max_w = 0;
+    int max_h = 0;
+    browse_art_target_size(item, &max_w, &max_h);
+    browse_set_art_size(max_w, max_h);
+    url_encode(item->id, enc_id, sizeof(enc_id));
+    snprintf(path, sizeof(path),
+             "/Items/%s/Images/Primary?fillWidth=%d&fillHeight=%d&quality=90&format=jpg",
+             enc_id, max_w, max_h);
+
+    bool ok = false;
+    HttpResponse res;
+    Result ret = api_get(path, &res);
+    if (R_SUCCEEDED(ret) && res.status >= 200 && res.status < 300 && res.body && res.size > 0) {
+        int img_w = 0;
+        int img_h = 0;
+        unsigned jpg_status = 0;
+        if (decode_jpeg_rgb565((const u8 *)res.body, res.size, decoded, &img_w, &img_h, &jpg_status)) {
+            if (browse_scale_into_art_texture(tex_pixels, decoded, img_w, img_h,
+                                              max_w, max_h, true)) {
+                browse_extrude_art_edges(tex_pixels, max_w, max_h);
+                browse_set_art_size(max_w, max_h);
+                browse_swizzle_rgb565(tex_pixels, tiled_pixels, BROWSE_ART_TEX_W, BROWSE_ART_TEX_H);
+                C3D_TexUpload(&g_browse_art_tex, tiled_pixels);
+                C3D_TexFlush(&g_browse_art_tex);
+                ok = true;
+            }
+        }
+    }
+    free_response(&res);
+
+    free(decoded);
+    free(tex_pixels);
+    free(tiled_pixels);
+    return ok;
+}
+
+static void browse_ensure_art_for_item(const MediaItem *item)
+{
+    const char *id = item ? item->id : "";
+    if (strcmp(g_browse_art_id, id) == 0) {
+        return;
+    }
+
+    copy_safe(g_browse_art_id, sizeof(g_browse_art_id), id);
+    g_browse_art_loaded = false;
+    g_browse_art_failed = false;
+
+    if (browse_fetch_primary_art(item)) {
+        g_browse_art_loaded = true;
+    } else {
+        u16 *tex_pixels = (u16 *)malloc(BROWSE_ART_TEX_W * BROWSE_ART_TEX_H * sizeof(u16));
+        u16 *tiled_pixels = (u16 *)malloc(BROWSE_ART_TEX_W * BROWSE_ART_TEX_H * sizeof(u16));
+        int max_w = 0;
+        int max_h = 0;
+        browse_art_target_size(item, &max_w, &max_h);
+        browse_set_art_size(max_w, max_h);
+        if (tex_pixels && tiled_pixels && browse_art_texture_init()) {
+            browse_fill_fallback_art(tex_pixels, max_w, max_h);
+            browse_swizzle_rgb565(tex_pixels, tiled_pixels, BROWSE_ART_TEX_W, BROWSE_ART_TEX_H);
+            C3D_TexUpload(&g_browse_art_tex, tiled_pixels);
+            C3D_TexFlush(&g_browse_art_tex);
+        }
+        free(tex_pixels);
+        free(tiled_pixels);
+        g_browse_art_failed = true;
+    }
+}
+
+static void browse_format_meta(const MediaItem *item, char *out, size_t outsz)
+{
+    if (!out || outsz == 0) {
+        return;
+    }
+    out[0] = 0;
+    if (!item) {
+        return;
+    }
+
+    if (strcmp(item->type, "Episode") == 0 && item->parent_index_number >= 0 && item->index_number >= 0) {
+        snprintf(out, outsz, "S%d:E%d", item->parent_index_number, item->index_number);
+    } else if (strcmp(item->type, "Season") == 0 && item->index_number >= 0) {
+        snprintf(out, outsz, "%s %d", display_item_kind(item), item->index_number);
+    } else if (item->year > 0) {
+        snprintf(out, outsz, "%d", item->year);
+    }
+
+    if (item->runtime_ticks) {
+        unsigned long long minutes = item->runtime_ticks / 600000000ULL;
+        char runtime[32];
+        snprintf(runtime, sizeof(runtime), "%llu min", minutes);
+        if (out[0]) {
+            strncat(out, "  /  ", outsz - strlen(out) - 1);
+        }
+        strncat(out, runtime, outsz - strlen(out) - 1);
+    }
+
+    if (!out[0]) {
+        snprintf(out, outsz, "%s", display_item_kind(item));
+    }
+}
+
+static void draw_browse_art(float x, float y)
+{
+    int art_w = g_browse_art_w > 0 ? g_browse_art_w : BROWSE_LANDSCAPE_ART_W;
+    int art_h = g_browse_art_h > 0 ? g_browse_art_h : BROWSE_LANDSCAPE_ART_H;
+    C2D_DrawRectSolid(x - 2, y - 2, 0, art_w + 4, art_h + 4, 0xFF07090C);
+    C2D_DrawRectSolid(x - 1, y - 1, 0, art_w + 2, art_h + 2, 0xFF2A323B);
+    if (g_browse_art_tex_ready) {
+        C2D_Image img = {&g_browse_art_tex, &g_browse_art_subtex};
+        C2D_DrawImageAt(img, x, y, 0.1f, NULL, 1.0f, 1.0f);
+    } else {
+        C2D_DrawRectSolid(x, y, 0, art_w, art_h, 0xFF121820);
+    }
+    if (g_browse_art_failed) {
+        C2D_DrawRectSolid(x, y + art_h - 16, 0, art_w, 16, 0xCC101820);
+        draw_text_centered(x + art_w * 0.5f, y + art_h - 13.0f, 0.25f, COL_MUTED, "%s", "No image");
+    }
+}
+
+static void draw_browse_preview(MediaItem *items, int count, const char *title)
 {
     draw_header(title);
 
@@ -529,36 +1157,150 @@ static void draw_list(MediaItem *items, int count, const char *title)
         return;
     }
 
-    if (g_selected < 0) {
-        g_selected = 0;
+    clamp_browse_selection(count, BROWSE_VISIBLE_ROWS);
+
+    MediaItem *item = &items[g_selected];
+
+    char name[128];
+    char meta[96];
+    char kind[48];
+    clipped_name(item->name, name, sizeof(name), 58);
+    browse_format_meta(item, meta, sizeof(meta));
+    clipped_name(display_item_kind(item), kind, sizeof(kind), 24);
+
+    bool poster_art = browse_item_prefers_poster_art(item);
+    float art_x = poster_art ? 18.0f : 14.0f;
+    float art_y = poster_art ? 47.0f : 52.0f;
+    float reserved_art_w = poster_art ? (float)BROWSE_POSTER_ART_W : (float)BROWSE_LANDSCAPE_ART_W;
+    float text_x = art_x + reserved_art_w + 22.0f;
+    float text_w = 388.0f - text_x;
+    if (text_w < 120.0f) {
+        text_w = 120.0f;
     }
-    if (g_selected >= count) {
-        g_selected = count - 1;
+    float meta_y = poster_art ? 106.0f : 112.0f;
+    float badge_y = poster_art ? 128.0f : 133.0f;
+    float overview_x = poster_art ? text_x : 24.0f;
+    float overview_y = poster_art ? 163.0f : 164.0f;
+    float overview_w = poster_art ? text_w : 352.0f;
+
+    C2D_DrawRectSolid(0, 35, 0, 400, 205, 0xFF0D1014);
+    C2D_DrawRectSolid(0, 35, 0, 400, 181, 0xFF171C22);
+    if (!poster_art) {
+        C2D_DrawRectSolid(0, 157, 0, 400, 59, 0xFF11161A);
     }
-    if (g_selected < g_scroll) {
-        g_scroll = g_selected;
-    }
-    if (g_selected >= g_scroll + 5) {
-        g_scroll = g_selected - 4;
+    C2D_DrawRectSolid(0, 216, 0, 400, 1, 0xFF303842);
+
+    draw_browse_art(art_x, art_y);
+
+    draw_text_lines(text_x, 54, poster_art ? 0.51f : 0.57f, text_w, COL_WHITE,
+                    name, 2, poster_art ? 18.0f : 20.0f);
+    draw_text(text_x, meta_y, 0.39f, COL_MUTED, "%s", meta);
+
+    C2D_DrawRectSolid(text_x, badge_y, 0, 102, 21, COL_PRIMARY_DARK);
+    C2D_DrawRectSolid(text_x, badge_y + 20, 0, 102, 1, COL_SECONDARY);
+    draw_text(text_x + 8, badge_y + 4, 0.33f, COL_WHITE, "%s", kind);
+
+    if (item->media_source_count > 1) {
+        draw_text(text_x + 112, badge_y + 5, 0.29f, COL_MUTED, "%d src", item->media_source_count);
+    } else if (item->is_missing || item->is_virtual_item || item->is_place_holder) {
+        draw_text(text_x + 112, badge_y + 5, 0.29f, COL_SECONDARY, "%s", "virtual");
     }
 
-    for (int row = 0; row < 5 && g_scroll + row < count; row++) {
+    char position[24];
+    snprintf(position, sizeof(position), "%d/%d", g_selected + 1, count);
+    C2D_DrawRectSolid(330, badge_y, 0, 50, 21, 0xFF242A32);
+    draw_text_centered(355.0f, badge_y + 5, 0.29f, COL_MUTED, "%s", position);
+
+    if (item->overview[0]) {
+        draw_text_lines(overview_x, overview_y, 0.35f, overview_w, COL_MUTED,
+                        item->overview, 3, 14.5f);
+    }
+}
+
+static void browse_preload_selected_art(void)
+{
+    MediaItem *items = NULL;
+    int count = 0;
+
+    if (g_view == VIEW_LIBRARIES) {
+        items = g_libraries;
+        count = g_library_count;
+    } else if (g_view == VIEW_ITEMS || g_view == VIEW_SEARCH) {
+        items = g_items;
+        count = g_item_count;
+    } else {
+        return;
+    }
+
+    if (count <= 0) {
+        return;
+    }
+
+    clamp_browse_selection(count, BROWSE_VISIBLE_ROWS);
+    browse_ensure_art_for_item(&items[g_selected]);
+}
+
+static void draw_browse_bottom_list(MediaItem *items, int count, const char *title, const char *help)
+{
+    C2D_DrawRectSolid(0, 0, 0, 320, 240, 0xFF12161B);
+    C2D_DrawRectSolid(0, 0, 0, 320, 28, 0xFF1E232A);
+    C2D_DrawRectSolid(0, 28, 0, 320, 2, COL_SECONDARY);
+
+    char short_title[48];
+    clipped_name(title ? title : "", short_title, sizeof(short_title), 22);
+    draw_text(12, 7, 0.35f, COL_WHITE, "%s", short_title);
+
+    if (count <= 0) {
+        draw_text_wrap(18, 52, 0.43f, 284, COL_WHITE, "%s", tr(TR_NO_ITEMS_FOUND));
+        draw_text_wrap(18, 84, 0.34f, 284, COL_MUTED, "%s", tr(TR_REFRESH_X_BACK_B));
+        return;
+    }
+
+    clamp_browse_selection(count, BROWSE_VISIBLE_ROWS);
+
+    char counter[24];
+    snprintf(counter, sizeof(counter), "%d/%d", g_selected + 1, count);
+    draw_text(270, 8, 0.32f, COL_MUTED, "%s", counter);
+
+    for (int row = 0; row < BROWSE_VISIBLE_ROWS && g_scroll + row < count; row++) {
         int idx = g_scroll + row;
-        float y = 44.0f + row * 36.0f;
+        float y = 38.0f + row * 32.0f;
         bool sel = idx == g_selected;
-        u32 card = sel ? COL_PRIMARY_DARK : ((idx & 1) ? COL_CARD_2 : COL_CARD);
-        C2D_DrawRectSolid(16, y, 0, 368, 30, card);
-        C2D_DrawRectSolid(16, y + 29, 0, 368, 1, sel ? COL_SECONDARY : 0x55000000);
+        u32 fill = sel ? 0xFF0B6386 : ((idx & 1) ? 0xFF1B2730 : 0xFF172129);
+        C2D_DrawRectSolid(10, y, 0, 300, 27, fill);
+        C2D_DrawRectSolid(10, y, 0, 4, 27, sel ? COL_SECONDARY : 0xFF39414B);
+        C2D_DrawRectSolid(10, y + 26, 0, 300, 1, sel ? COL_SECONDARY : 0x55000000);
 
-        char name[72];
-        clipped_name(items[idx].name, name, sizeof(name), 42);
-        draw_text(25, y + 6, 0.43f, COL_WHITE, "%s", name);
-
-        const char *kind = display_item_kind(&items[idx]);
-        draw_text(290, y + 8, 0.35f, COL_MUTED, "%s", kind);
+        char row_name[72];
+        char row_kind[36];
+        clipped_name(items[idx].name, row_name, sizeof(row_name), 28);
+        clipped_name(display_item_kind(&items[idx]), row_kind, sizeof(row_kind), 12);
+        draw_text(21, y + 6, 0.36f, sel ? COL_WHITE : COL_MUTED, "%s", row_name);
+        draw_text(240, y + 8, 0.29f, sel ? COL_WHITE : COL_MUTED, "%s", row_kind);
     }
 
-    draw_text(18, 224, 0.36f, COL_MUTED, "%d/%d", g_selected + 1, count);
+    if (count > BROWSE_VISIBLE_ROWS) {
+        float rail_y = 38.0f;
+        float rail_h = 155.0f;
+        int max_scroll = count - BROWSE_VISIBLE_ROWS;
+        float thumb_h = ((float)BROWSE_VISIBLE_ROWS / (float)count) * rail_h;
+        if (thumb_h < 18.0f) {
+            thumb_h = 18.0f;
+        }
+        float thumb_y = rail_y + (max_scroll > 0 ? ((float)g_scroll / (float)max_scroll) * (rail_h - thumb_h) : 0.0f);
+        C2D_DrawRectSolid(314, rail_y, 0, 3, rail_h, 0xFF303844);
+        C2D_DrawRectSolid(314, thumb_y, 0, 3, thumb_h, COL_PRIMARY);
+    }
+
+    C2D_DrawRectSolid(0, 204, 0, 320, 36, 0xFF1B2027);
+    C2D_DrawRectSolid(0, 204, 0, 320, 1, COL_PRIMARY);
+    char help_buf[192];
+    if (g_view == VIEW_LIBRARIES || g_view == VIEW_ITEMS) {
+        snprintf(help_buf, sizeof(help_buf), "%s  SELECT %s", help ? help : "", tr(TR_SEARCH));
+    } else {
+        snprintf(help_buf, sizeof(help_buf), "%s", help ? help : "");
+    }
+    draw_text_wrap(12, 212, 0.29f, 296, COL_MUTED, "%s", help_buf);
 }
 
 static void draw_setup(void)
@@ -797,6 +1539,8 @@ static void draw_playback(void)
 
 static void render(void)
 {
+    browse_preload_selected_art();
+
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
     C2D_TextBufClear(g_text);
 
@@ -810,10 +1554,13 @@ static void render(void)
         draw_settings();
         break;
     case VIEW_LIBRARIES:
-        draw_list(g_libraries, g_library_count, tr(TR_LIBRARIES));
+        draw_browse_preview(g_libraries, g_library_count, tr(TR_LIBRARIES));
         break;
     case VIEW_ITEMS:
-        draw_list(g_items, g_item_count, g_screen_title);
+        draw_browse_preview(g_items, g_item_count, g_screen_title);
+        break;
+    case VIEW_SEARCH:
+        draw_browse_preview(g_items, g_item_count, g_screen_title);
         break;
     case VIEW_DETAIL:
         draw_detail();
@@ -840,11 +1587,14 @@ static void render(void)
         draw_bottom_help(tr(TR_PLAYBACK_HELP_1),
                          tr(TR_PLAYBACK_HELP_2));
     } else if (g_view == VIEW_LIBRARIES) {
-        draw_bottom_help(tr(TR_LIBRARIES_HELP_1),
-                         "");
+        draw_browse_bottom_list(g_libraries, g_library_count, tr(TR_LIBRARIES),
+                                tr(TR_LIBRARIES_HELP_1));
+    } else if (g_view == VIEW_SEARCH) {
+        draw_browse_bottom_list(g_items, g_item_count, g_screen_title,
+                                tr(TR_SEARCH_HELP_1));
     } else {
-        draw_bottom_help(tr(TR_ITEMS_HELP_1),
-                         "");
+        draw_browse_bottom_list(g_items, g_item_count, g_screen_title,
+                                tr(TR_ITEMS_HELP_1));
     }
 
     C3D_FrameEnd(0);
@@ -895,6 +1645,7 @@ static void ui_graphics_exit(void)
         C2D_FontFree(g_font_twn);
         g_font_twn = NULL;
     }
+    browse_art_texture_free();
     C2D_Fini();
     C3D_Fini();
     if (g_cfgu_ready) {
@@ -920,6 +1671,56 @@ static void move_selection(int delta, int count)
     if (g_selected >= count) {
         g_selected = 0;
     }
+}
+
+enum {
+    NAV_REPEAT_START_MS = 320,
+    NAV_REPEAT_INTERVAL_MS = 72
+};
+
+static int g_nav_repeat_dir;
+static View g_nav_repeat_view;
+static u64 g_nav_repeat_next_ms;
+
+static int nav_dir_from_keys(u32 keys)
+{
+    bool down = (keys & KEY_DOWN) != 0;
+    bool up = (keys & KEY_UP) != 0;
+    if (down == up) {
+        return 0;
+    }
+    return down ? 1 : -1;
+}
+
+static void reset_nav_repeat(void)
+{
+    g_nav_repeat_dir = 0;
+    g_nav_repeat_next_ms = 0;
+}
+
+static int repeated_nav_delta(u32 down, u32 held)
+{
+    int pressed_dir = nav_dir_from_keys(down);
+    u64 now = osGetTime();
+    if (pressed_dir != 0) {
+        g_nav_repeat_dir = pressed_dir;
+        g_nav_repeat_view = g_view;
+        g_nav_repeat_next_ms = now + NAV_REPEAT_START_MS;
+        return pressed_dir;
+    }
+
+    int held_dir = nav_dir_from_keys(held);
+    if (held_dir == 0 || held_dir != g_nav_repeat_dir || g_nav_repeat_view != g_view) {
+        reset_nav_repeat();
+        return 0;
+    }
+
+    if (now < g_nav_repeat_next_ms) {
+        return 0;
+    }
+
+    g_nav_repeat_next_ms = now + NAV_REPEAT_INTERVAL_MS;
+    return held_dir;
 }
 
 static void change_quality(int dir)
@@ -1298,13 +2099,65 @@ static void handle_common(u32 down)
     (void)down;
 }
 
-static void handle_input(u32 down)
+static void capture_search_return(void)
+{
+    if (g_view == VIEW_SEARCH) {
+        return;
+    }
+
+    g_search_return_view = g_view;
+    copy_safe(g_search_return_parent_id, sizeof(g_search_return_parent_id), g_current_parent_id);
+    copy_safe(g_search_return_title, sizeof(g_search_return_title), g_screen_title);
+    g_search_return_selected = g_selected;
+    g_search_return_scroll = g_scroll;
+}
+
+static void return_from_search(void)
+{
+    reset_nav_repeat();
+    if (g_search_return_view == VIEW_ITEMS) {
+        load_items_for_parent(g_search_return_parent_id, g_search_return_title);
+        g_selected = g_search_return_selected;
+        g_scroll = g_search_return_scroll;
+        clamp_browse_selection(g_item_count, BROWSE_VISIBLE_ROWS);
+    } else {
+        load_libraries();
+        g_selected = g_search_return_selected;
+        g_scroll = g_search_return_scroll;
+        clamp_browse_selection(g_library_count, BROWSE_VISIBLE_ROWS);
+    }
+}
+
+static void open_search_keyboard(bool capture_return)
+{
+    if (capture_return) {
+        capture_search_return();
+    }
+
+    char query[sizeof(g_search_query)];
+    copy_safe(query, sizeof(query), g_search_query);
+    if (!edit_text(tr(TR_SEARCH_PROMPT), query, sizeof(query), false)) {
+        set_status("%s", tr(TR_STATUS_SEARCH_CANCELLED));
+        return;
+    }
+
+    if (!query[0]) {
+        set_status("%s", tr(TR_STATUS_SEARCH_CANCELLED));
+        return;
+    }
+
+    load_search_results(query);
+}
+
+static void handle_input(u32 down, u32 held)
 {
     if (g_view == VIEW_SETUP) {
+        reset_nav_repeat();
         handle_setup(down);
         return;
     }
     if (g_view == VIEW_SETTINGS) {
+        reset_nav_repeat();
         handle_settings(down);
         return;
     }
@@ -1312,17 +2165,19 @@ static void handle_input(u32 down)
     handle_common(down);
 
     if (g_view == VIEW_LIBRARIES) {
-        if (down & KEY_DOWN) {
-            move_selection(1, g_library_count);
-        }
-        if (down & KEY_UP) {
-            move_selection(-1, g_library_count);
+        int nav_delta = repeated_nav_delta(down, held);
+        if (nav_delta != 0) {
+            move_selection(nav_delta, g_library_count);
         }
         if (down & KEY_X) {
             load_libraries();
         }
         if (down & KEY_Y) {
             open_settings();
+        }
+        if (down & KEY_SELECT) {
+            open_search_keyboard(true);
+            return;
         }
         if (down & KEY_B) {
             g_view = VIEW_SETUP;
@@ -1333,11 +2188,9 @@ static void handle_input(u32 down)
             load_items_for_parent(g_libraries[g_selected].id, g_libraries[g_selected].name);
         }
     } else if (g_view == VIEW_ITEMS) {
-        if (down & KEY_DOWN) {
-            move_selection(1, g_item_count);
-        }
-        if (down & KEY_UP) {
-            move_selection(-1, g_item_count);
+        int nav_delta = repeated_nav_delta(down, held);
+        if (nav_delta != 0) {
+            move_selection(nav_delta, g_item_count);
         }
         if (down & KEY_X) {
             if (g_current_parent_id[0]) {
@@ -1350,6 +2203,10 @@ static void handle_input(u32 down)
         if (down & KEY_Y) {
             open_settings();
         }
+        if (down & KEY_SELECT) {
+            open_search_keyboard(true);
+            return;
+        }
         if ((down & KEY_A) && g_item_count > 0) {
             MediaItem *item = &g_items[g_selected];
             if (is_playable(item)) {
@@ -1358,6 +2215,38 @@ static void handle_input(u32 down)
                 probe_playback();
             } else {
                 push_nav(g_current_parent_id, g_screen_title);
+                load_items_for_parent(item->id, item->name);
+            }
+        }
+    } else if (g_view == VIEW_SEARCH) {
+        int nav_delta = repeated_nav_delta(down, held);
+        if (nav_delta != 0) {
+            move_selection(nav_delta, g_item_count);
+        }
+        if (down & KEY_X) {
+            open_search_keyboard(false);
+            return;
+        }
+        if (down & KEY_SELECT) {
+            open_search_keyboard(false);
+            return;
+        }
+        if (down & KEY_B) {
+            return_from_search();
+            return;
+        }
+        if (down & KEY_Y) {
+            open_settings();
+            return;
+        }
+        if ((down & KEY_A) && g_item_count > 0) {
+            MediaItem *item = &g_items[g_selected];
+            if (is_playable(item)) {
+                g_current = *item;
+                g_return_view = VIEW_SEARCH;
+                probe_playback();
+            } else {
+                push_nav(SEARCH_NAV_PARENT_ID, g_screen_title);
                 load_items_for_parent(item->id, item->name);
             }
         }
@@ -1373,6 +2262,7 @@ static void handle_input(u32 down)
             probe_playback();
         }
     } else if (g_view == VIEW_PLAYBACK) {
+        reset_nav_repeat();
         if (down & KEY_B) {
             g_view = g_return_view;
         }

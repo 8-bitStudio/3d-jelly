@@ -931,6 +931,115 @@ static bool codepoint_is_cjk_supported(u32 cp)
     return cjk_glyph_for_codepoint(cp) != NULL;
 }
 
+static char latin_fallback_char_for_codepoint(u32 cp)
+{
+    switch (cp) {
+    case 0x00C0: case 0x00C1: case 0x00C2: case 0x00C3: case 0x00C4: case 0x00C5:
+    case 0x0100: case 0x0102: case 0x0104:
+        return 'A';
+    case 0x00E0: case 0x00E1: case 0x00E2: case 0x00E3: case 0x00E4: case 0x00E5:
+    case 0x0101: case 0x0103: case 0x0105:
+        return 'a';
+    case 0x00C6:
+        return 'A';
+    case 0x00E6:
+        return 'a';
+    case 0x00C7: case 0x0106: case 0x0108: case 0x010A: case 0x010C:
+        return 'C';
+    case 0x00E7: case 0x0107: case 0x0109: case 0x010B: case 0x010D:
+        return 'c';
+    case 0x010E: case 0x0110:
+        return 'D';
+    case 0x010F: case 0x0111:
+        return 'd';
+    case 0x00C8: case 0x00C9: case 0x00CA: case 0x00CB:
+    case 0x0112: case 0x0114: case 0x0116: case 0x0118: case 0x011A:
+        return 'E';
+    case 0x00E8: case 0x00E9: case 0x00EA: case 0x00EB:
+    case 0x0113: case 0x0115: case 0x0117: case 0x0119: case 0x011B:
+        return 'e';
+    case 0x011C: case 0x011E: case 0x0120: case 0x0122:
+        return 'G';
+    case 0x011D: case 0x011F: case 0x0121: case 0x0123:
+        return 'g';
+    case 0x0124: case 0x0126:
+        return 'H';
+    case 0x0125: case 0x0127:
+        return 'h';
+    case 0x00CC: case 0x00CD: case 0x00CE: case 0x00CF:
+    case 0x0128: case 0x012A: case 0x012C: case 0x012E:
+        return 'I';
+    case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF:
+    case 0x0129: case 0x012B: case 0x012D: case 0x012F:
+        return 'i';
+    case 0x0134:
+        return 'J';
+    case 0x0135:
+        return 'j';
+    case 0x0136:
+        return 'K';
+    case 0x0137:
+        return 'k';
+    case 0x0139: case 0x013B: case 0x013D: case 0x013F: case 0x0141:
+        return 'L';
+    case 0x013A: case 0x013C: case 0x013E: case 0x0140: case 0x0142:
+        return 'l';
+    case 0x00D1: case 0x0143: case 0x0145: case 0x0147:
+        return 'N';
+    case 0x00F1: case 0x0144: case 0x0146: case 0x0148:
+        return 'n';
+    case 0x00D2: case 0x00D3: case 0x00D4: case 0x00D5: case 0x00D6: case 0x00D8:
+    case 0x014C: case 0x014E: case 0x0150:
+        return 'O';
+    case 0x00F2: case 0x00F3: case 0x00F4: case 0x00F5: case 0x00F6: case 0x00F8:
+    case 0x014D: case 0x014F: case 0x0151:
+        return 'o';
+    case 0x0154: case 0x0156: case 0x0158:
+        return 'R';
+    case 0x0155: case 0x0157: case 0x0159:
+        return 'r';
+    case 0x015A: case 0x015C: case 0x015E: case 0x0160:
+        return 'S';
+    case 0x015B: case 0x015D: case 0x015F: case 0x0161:
+        return 's';
+    case 0x00DF:
+        return 'S';
+    case 0x0162: case 0x0164: case 0x0166:
+        return 'T';
+    case 0x0163: case 0x0165: case 0x0167:
+        return 't';
+    case 0x00D9: case 0x00DA: case 0x00DB: case 0x00DC:
+    case 0x0168: case 0x016A: case 0x016C: case 0x016E: case 0x0170: case 0x0172:
+        return 'U';
+    case 0x00F9: case 0x00FA: case 0x00FB: case 0x00FC:
+    case 0x0169: case 0x016B: case 0x016D: case 0x016F: case 0x0171: case 0x0173:
+        return 'u';
+    case 0x0174:
+        return 'W';
+    case 0x0175:
+        return 'w';
+    case 0x00DD: case 0x0176: case 0x0178:
+        return 'Y';
+    case 0x00FD: case 0x00FF: case 0x0177:
+        return 'y';
+    case 0x0179: case 0x017B: case 0x017D:
+        return 'Z';
+    case 0x017A: case 0x017C: case 0x017E:
+        return 'z';
+    default:
+        return 0;
+    }
+}
+
+static char framebuffer_char_for_codepoint(u32 cp)
+{
+    if (cp < 0x80) {
+        return (char)cp;
+    }
+    char fallback = latin_fallback_char_for_codepoint(cp);
+    return fallback ? fallback : '?';
+}
+
 static int glyph_advance_for_codepoint(u32 cp, int scale)
 {
     return (codepoint_is_hangul_syllable(cp) || codepoint_is_cjk_supported(cp) ? CJK_ADVANCE : 6) * scale;
@@ -1523,7 +1632,7 @@ static void fb_draw_text(u16 *fb, int x, int y, const char *text, int scale, u16
         } else if (codepoint_is_cjk_supported(cp)) {
             cjk_draw_glyph(fb, glyph_fill_rect_top, cx, y, scale, color, alpha, cp);
         } else {
-            char c = cp < 0x80 ? (char)cp : '?';
+            char c = framebuffer_char_for_codepoint(cp);
             const u8 *glyph = bottom_glyph(c);
             for (int row = 0; row < 7; row++) {
                 for (int col = 0; col < 5; col++) {
@@ -2069,7 +2178,7 @@ static void bottom_draw_text(u8 *fb, int x, int y, const char *text, int scale, 
         } else if (codepoint_is_cjk_supported(cp)) {
             cjk_draw_glyph(fb, glyph_fill_rect_bottom, cx, y, scale, color, 255, cp);
         } else {
-            char c = cp < 0x80 ? (char)cp : '?';
+            char c = framebuffer_char_for_codepoint(cp);
             const u8 *glyph = bottom_glyph(c);
             for (int row = 0; row < 7; row++) {
                 for (int col = 0; col < 5; col++) {
@@ -2100,14 +2209,17 @@ static size_t bottom_prepare_title(const char *src, char *out, size_t outsz)
     }
 
     size_t w = 0;
-    for (size_t i = 0; src[i] && w + 1 < outsz; i++) {
-        unsigned char c = (unsigned char)src[i];
-        if (c >= 0x80) {
-            c = '?';
-        } else if (c >= 'a' && c <= 'z') {
-            c = (unsigned char)(c - 32);
+    const char *p = src;
+    while (*p && w + 1 < outsz) {
+        u32 cp = 0;
+        if (!text_next_codepoint(&p, &cp)) {
+            break;
         }
-        out[w++] = (char)c;
+        char c = framebuffer_char_for_codepoint(cp);
+        if (c >= 'a' && c <= 'z') {
+            c = (char)(c - 32);
+        }
+        out[w++] = c;
     }
     out[w] = 0;
     return w;
@@ -2313,7 +2425,13 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "nie genoeg") || strstr(line, "oorloop") || strstr(line, "te groot") ||
                  strstr(line, "nie beskikbaar") ||
                  strstr(line, "fallita") || strstr(line, "Fallita") || strstr(line, "errore") ||
-                 strstr(line, "Errore") || strstr(line, "impossibile") ||
+                  strstr(line, "Errore") || strstr(line, "impossibile") ||
+                  strstr(line, "nieudane") || strstr(line, "Nie udało") || strstr(line, "nie udało") ||
+                  strstr(line, "Za mało") || strstr(line, "za mało") || strstr(line, "przepełn") ||
+                  strstr(line, "za duży") || strstr(line, "niedostęp") ||
+                  strstr(line, "gagal") || strstr(line, "Gagal") || strstr(line, "tidak cukup") ||
+                  strstr(line, "Tidak cukup") || strstr(line, "tidak dapat") || strstr(line, "Tidak dapat") ||
+                  strstr(line, "meluap") || strstr(line, "terlalu besar") || strstr(line, "tidak tersedia") ||
                  strstr(line, "ошиб") || strstr(line, "Ошибка") || strstr(line, "не удалось") ||
                  strstr(line, "недостаточно") || strstr(line, "переполн") ||
                  strstr(line, "실패") || strstr(line, "부족") || strstr(line, "할당할 수 없습니다") ||
@@ -2336,7 +2454,13 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "Buffer") || strstr(line, "Begin") || strstr(line, "Probeer") ||
                  strstr(line, "Skakel oor") ||
                  strstr(line, "Apertura") || strstr(line, "Richiesta") || strstr(line, "Caricamento") ||
-                 strstr(line, "Buffering") || strstr(line, "Avvio") || strstr(line, "Provo") ||
+                  strstr(line, "Buffering") || strstr(line, "Avvio") || strstr(line, "Provo") ||
+                  strstr(line, "Otwieranie") || strstr(line, "Żądanie") || strstr(line, "Ładowanie") ||
+                  strstr(line, "Buforowanie") || strstr(line, "Uruchamianie") || strstr(line, "Próba") ||
+                  strstr(line, "Przełączanie") ||
+                  strstr(line, "Membuka") || strstr(line, "Meminta") || strstr(line, "Memuat") ||
+                  strstr(line, "Menyangga") || strstr(line, "Memulai") || strstr(line, "Mencoba") ||
+                  strstr(line, "Beralih") ||
                  strstr(line, "Открытие") || strstr(line, "Запрос") || strstr(line, "Загрузка") ||
                  strstr(line, "Буферизация") || strstr(line, "Запуск") || strstr(line, "Пробую") ||
                  strstr(line, "Переключение") || strstr(line, "여는 중") || strstr(line, "요청 중") ||
@@ -2357,7 +2481,13 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                  strstr(line, "beendet") || strstr(line, "abgebrochen") || strstr(line, "fine") ||
                  strstr(line, "gestop") || strstr(line, "einde") || strstr(line, "gekanselleer") ||
                  strstr(line, "Klaar") ||
-                 strstr(line, "terminata") || strstr(line, "fermato") || strstr(line, "annull") ||
+                  strstr(line, "terminata") || strstr(line, "fermato") || strstr(line, "annull") ||
+                  strstr(line, "zatrzym") || strstr(line, "Zatrzym") || strstr(line, "koniec") ||
+                  strstr(line, "Koniec") || strstr(line, "Anulowano") || strstr(line, "anulowano") ||
+                  strstr(line, "Ukończono") || strstr(line, "ukończono") ||
+                  strstr(line, "dihentikan") || strstr(line, "Dihentikan") || strstr(line, "berhenti") ||
+                  strstr(line, "Berhenti") || strstr(line, "akhir") || strstr(line, "Akhir") ||
+                  strstr(line, "dibatalkan") || strstr(line, "Dibatalkan") || strstr(line, "Selesai") ||
                  strstr(line, "конца") || strstr(line, "останов") || strstr(line, "отмен") ||
                  strstr(line, "중지") || strstr(line, "끝") || strstr(line, "도달") ||
                  strstr(line, "취소") || strstr(line, "완료") || strstr(line, "停止") ||
