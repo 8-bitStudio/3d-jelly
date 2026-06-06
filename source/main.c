@@ -139,6 +139,8 @@ typedef enum {
     LANG_ZH_HANS,
     LANG_ZH_HANT,
     LANG_ID,
+    LANG_TR,
+    LANG_SV,
     LANG_COUNT
 } AppLanguage;
 

@@ -519,7 +519,7 @@ static const char *display_item_kind(const MediaItem *item)
     }
     if (language != LANG_AF && language != LANG_ES && language != LANG_JA && language != LANG_FR && language != LANG_DE &&
         language != LANG_IT && language != LANG_RU && language != LANG_NL && language != LANG_PT &&
-        language != LANG_PL && language != LANG_ID && language != LANG_KO && language != LANG_ZH_HANS && language != LANG_ZH_HANT) {
+        language != LANG_PL && language != LANG_ID && language != LANG_TR && language != LANG_SV && language != LANG_KO && language != LANG_ZH_HANS && language != LANG_ZH_HANT) {
         return kind;
     }
     if (strcmp(kind, "movies") == 0 || strcmp(kind, "Movie") == 0) {
@@ -547,6 +547,10 @@ static const char *display_item_kind(const MediaItem *item)
         case LANG_PL:
             return "film";
         case LANG_ID:
+            return "film";
+        case LANG_TR:
+            return "film";
+        case LANG_SV:
             return "film";
         case LANG_AF:
             return "film";
@@ -580,6 +584,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "serial";
         case LANG_ID:
             return "serial";
+        case LANG_TR:
+            return "dizi";
+        case LANG_SV:
+            return "serie";
         case LANG_AF:
             return "reeks";
         default:
@@ -612,6 +620,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "odcinek";
         case LANG_ID:
             return "episode";
+        case LANG_TR:
+            return "bölüm";
+        case LANG_SV:
+            return "avsnitt";
         case LANG_AF:
             return "episode";
         default:
@@ -644,6 +656,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "sezon";
         case LANG_ID:
             return "musim";
+        case LANG_TR:
+            return "sezon";
+        case LANG_SV:
+            return "säsong";
         case LANG_AF:
             return "seisoen";
         default:
@@ -676,6 +692,10 @@ static const char *display_item_kind(const MediaItem *item)
             return "folder";
         case LANG_ID:
             return "folder";
+        case LANG_TR:
+            return "klasör";
+        case LANG_SV:
+            return "mapp";
         case LANG_AF:
             return "vouer";
         default:
@@ -707,6 +727,10 @@ static const char *display_item_kind(const MediaItem *item)
         case LANG_PL:
             return "wideo";
         case LANG_ID:
+            return "video";
+        case LANG_TR:
+            return "video";
+        case LANG_SV:
             return "video";
         case LANG_AF:
             return "video";

@@ -967,10 +967,10 @@ static char latin_fallback_char_for_codepoint(u32 cp)
     case 0x0125: case 0x0127:
         return 'h';
     case 0x00CC: case 0x00CD: case 0x00CE: case 0x00CF:
-    case 0x0128: case 0x012A: case 0x012C: case 0x012E:
+    case 0x0128: case 0x012A: case 0x012C: case 0x012E: case 0x0130:
         return 'I';
     case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF:
-    case 0x0129: case 0x012B: case 0x012D: case 0x012F:
+    case 0x0129: case 0x012B: case 0x012D: case 0x012F: case 0x0131:
         return 'i';
     case 0x0134:
         return 'J';
@@ -2432,6 +2432,14 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                   strstr(line, "gagal") || strstr(line, "Gagal") || strstr(line, "tidak cukup") ||
                   strstr(line, "Tidak cukup") || strstr(line, "tidak dapat") || strstr(line, "Tidak dapat") ||
                   strstr(line, "meluap") || strstr(line, "terlalu besar") || strstr(line, "tidak tersedia") ||
+                  strstr(line, "başarısız") || strstr(line, "Başarısız") || strstr(line, "hata") ||
+                  strstr(line, "Hata") || strstr(line, "yeterli bellek yok") || strstr(line, "taştı") ||
+                  strstr(line, "çok büyük") || strstr(line, "kullanılamıyor") || strstr(line, "ayrılamadı") ||
+                  strstr(line, "başlatılamadı") || strstr(line, "açılamadı") ||
+                  strstr(line, "misslyck") || strstr(line, "Misslyck") || strstr(line, "fel") ||
+                  strstr(line, "Fel") || strstr(line, "kunde inte") || strstr(line, "Kunde inte") ||
+                  strstr(line, "inte tillräckligt") || strstr(line, "överfull") || strstr(line, "för stor") ||
+                  strstr(line, "för stort") || strstr(line, "inte tillgäng") ||
                  strstr(line, "ошиб") || strstr(line, "Ошибка") || strstr(line, "не удалось") ||
                  strstr(line, "недостаточно") || strstr(line, "переполн") ||
                  strstr(line, "실패") || strstr(line, "부족") || strstr(line, "할당할 수 없습니다") ||
@@ -2461,6 +2469,16 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                   strstr(line, "Membuka") || strstr(line, "Meminta") || strstr(line, "Memuat") ||
                   strstr(line, "Menyangga") || strstr(line, "Memulai") || strstr(line, "Mencoba") ||
                   strstr(line, "Beralih") ||
+                  strstr(line, "açılıyor") || strstr(line, "Açılıyor") || strstr(line, "isteniyor") ||
+                  strstr(line, "İsteniyor") || strstr(line, "yükleniyor") || strstr(line, "Yükleniyor") ||
+                  strstr(line, "arabelleğe alınıyor") || strstr(line, "başlatılıyor") ||
+                  strstr(line, "Başlatılıyor") || strstr(line, "deneniyor") || strstr(line, "Deneniyor") ||
+                  strstr(line, "geçiliyor") ||
+                  strstr(line, "Öppnar") || strstr(line, "öppnar") || strstr(line, "Begär") ||
+                  strstr(line, "begär") || strstr(line, "Laddar") || strstr(line, "laddar") ||
+                  strstr(line, "Buffrar") || strstr(line, "buffrar") || strstr(line, "Startar") ||
+                  strstr(line, "startar") || strstr(line, "Provar") || strstr(line, "provar") ||
+                  strstr(line, "Byter") || strstr(line, "byter") ||
                  strstr(line, "Открытие") || strstr(line, "Запрос") || strstr(line, "Загрузка") ||
                  strstr(line, "Буферизация") || strstr(line, "Запуск") || strstr(line, "Пробую") ||
                  strstr(line, "Переключение") || strstr(line, "여는 중") || strstr(line, "요청 중") ||
@@ -2488,6 +2506,13 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
                   strstr(line, "dihentikan") || strstr(line, "Dihentikan") || strstr(line, "berhenti") ||
                   strstr(line, "Berhenti") || strstr(line, "akhir") || strstr(line, "Akhir") ||
                   strstr(line, "dibatalkan") || strstr(line, "Dibatalkan") || strstr(line, "Selesai") ||
+                  strstr(line, "durduruldu") || strstr(line, "Durduruldu") || strstr(line, "sonuna") ||
+                  strstr(line, "bitti") || strstr(line, "Bitti") || strstr(line, "iptal") ||
+                  strstr(line, "İptal") || strstr(line, "ulaştı") ||
+                  strstr(line, "stoppad") || strstr(line, "Stoppad") || strstr(line, "stoppades") ||
+                  strstr(line, "avbröt") || strstr(line, "Avbröt") || strstr(line, "avbröts") ||
+                  strstr(line, "Avbröts") || strstr(line, "slutet") || strstr(line, "Slutförde") ||
+                  strstr(line, "slutförde") ||
                  strstr(line, "конца") || strstr(line, "останов") || strstr(line, "отмен") ||
                  strstr(line, "중지") || strstr(line, "끝") || strstr(line, "도달") ||
                  strstr(line, "취소") || strstr(line, "완료") || strstr(line, "停止") ||

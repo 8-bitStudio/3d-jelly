@@ -844,6 +844,12 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     case LANG_ID:
         cancel_label = "Batal";
         break;
+    case LANG_TR:
+        cancel_label = "İptal";
+        break;
+    case LANG_SV:
+        cancel_label = "Avbryt";
+        break;
     case LANG_KO:
         cancel_label = "취소";
         break;
