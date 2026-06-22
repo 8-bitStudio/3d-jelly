@@ -227,7 +227,70 @@ static void strip_trailing_slash(char *s)
     }
 }
 
+static bool starts_with_ascii_nocase(const char *s, const char *prefix)
+{
+    if (!s || !prefix) {
+        return false;
+    }
+    while (*prefix) {
+        if (!*s || tolower((unsigned char)*s) != tolower((unsigned char)*prefix)) {
+            return false;
+        }
+        s++;
+        prefix++;
+    }
+    return true;
+}
+
 static bool starts_with_http(const char *s);
+
+static bool starts_with_https(const char *s)
+{
+    return starts_with_ascii_nocase(s, "https://");
+}
+
+static bool has_url_scheme(const char *s)
+{
+    const char *p = s;
+    if (!p || !isalpha((unsigned char)*p)) {
+        return false;
+    }
+    p++;
+    while (*p && (isalnum((unsigned char)*p) || *p == '+' || *p == '-' || *p == '.')) {
+        p++;
+    }
+    return p[0] == ':' && p[1] == '/' && p[2] == '/';
+}
+
+static void canonicalize_http_scheme(char *s)
+{
+    if (!s) {
+        return;
+    }
+    if (starts_with_ascii_nocase(s, "https://")) {
+        memcpy(s, "https://", 8);
+    } else if (starts_with_ascii_nocase(s, "http://")) {
+        memcpy(s, "http://", 7);
+    }
+}
+
+static void repair_duplicate_http_scheme(char *s)
+{
+    if (!s) {
+        return;
+    }
+
+    char tmp[256];
+    if (starts_with_ascii_nocase(s, "http://https://") ||
+        starts_with_ascii_nocase(s, "http://http://")) {
+        copy_safe(tmp, sizeof(tmp), s + 7);
+        copy_safe(s, 256, tmp);
+    } else if (starts_with_ascii_nocase(s, "https://https://")) {
+        copy_safe(tmp, sizeof(tmp), s + 8);
+        copy_safe(s, 256, tmp);
+    }
+    canonicalize_http_scheme(s);
+}
 
 static void normalize_server_url(char *s)
 {
@@ -236,8 +299,10 @@ static void normalize_server_url(char *s)
     }
 
     trim_edges(s);
+    repair_duplicate_http_scheme(s);
+    canonicalize_http_scheme(s);
 
-    if (!starts_with_http(s)) {
+    if (!starts_with_http(s) && !has_url_scheme(s)) {
         char tmp[320];
         snprintf(tmp, sizeof(tmp), "http://%s", s);
         copy_safe(s, 256, tmp);
@@ -272,7 +337,7 @@ static void normalize_server_url(char *s)
 
 static bool starts_with_http(const char *s)
 {
-    return strncmp(s, "http://", 7) == 0 || strncmp(s, "https://", 8) == 0;
+    return starts_with_ascii_nocase(s, "http://") || starts_with_ascii_nocase(s, "https://");
 }
 
 static bool hex_write_bytes(const unsigned char *bytes, size_t len, char *out, size_t outsz, size_t *w)

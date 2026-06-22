@@ -20,6 +20,9 @@ static bool media_item_is_unowned_placeholder(const MediaItem *item)
     if (!item->is_folder && strcmp(item->location_type, "Virtual") == 0) {
         return true;
     }
+    if (item->is_folder && item->child_count == 0 && item->recursive_item_count == 0) {
+        return true;
+    }
     if (!item->is_folder && media_item_is_leaf_media_type(item) && item->media_source_count == 0) {
         return true;
     }
@@ -48,6 +51,8 @@ static void parse_media_item_object(const char *os, const char *oe, MediaItem *i
 
     memset(item, 0, sizeof(*item));
     item->media_source_count = -1;
+    item->child_count = -1;
+    item->recursive_item_count = -1;
     item->index_number = -1;
     item->parent_index_number = -1;
     json_get_string_range(os, oe, "Id", item->id, sizeof(item->id));
@@ -66,6 +71,8 @@ static void parse_media_item_object(const char *os, const char *oe, MediaItem *i
     json_get_int_range(os, oe, "IndexNumber", &item->index_number);
     json_get_int_range(os, oe, "ParentIndexNumber", &item->parent_index_number);
     json_get_int_range(os, oe, "MediaSourceCount", &item->media_source_count);
+    json_get_int_range(os, oe, "ChildCount", &item->child_count);
+    json_get_int_range(os, oe, "RecursiveItemCount", &item->recursive_item_count);
     json_get_ull_range(os, oe, "RunTimeTicks", &item->runtime_ticks);
 }
 
@@ -169,6 +176,80 @@ static Result http_redirect_location(httpcContext *context, char *out, size_t ou
     return last_ret;
 }
 
+static bool extract_absolute_url(const char *text, size_t text_size, char *out, size_t outsz)
+{
+    if (!text || !out || outsz == 0) {
+        return false;
+    }
+    out[0] = 0;
+
+    for (size_t i = 0; i < text_size; i++) {
+        const char *start = NULL;
+        if (i + 7 <= text_size && memcmp(text + i, "http://", 7) == 0) {
+            start = text + i;
+        } else if (i + 8 <= text_size && memcmp(text + i, "https://", 8) == 0) {
+            start = text + i;
+        }
+        if (!start) {
+            continue;
+        }
+
+        size_t len = 0;
+        while ((size_t)(start + len - text) < text_size && start[len] &&
+               start[len] > ' ' && start[len] != '"' && start[len] != '\'' &&
+               start[len] != '<' && start[len] != '>' && start[len] != ')' &&
+               start[len] != ']') {
+            len++;
+        }
+        while (len > 0 && (start[len - 1] == '.' || start[len - 1] == ',' || start[len - 1] == ';')) {
+            len--;
+        }
+        if (len == 0) {
+            continue;
+        }
+        if (len >= outsz) {
+            len = outsz - 1;
+        }
+        memcpy(out, start, len);
+        out[len] = 0;
+        return true;
+    }
+    return false;
+}
+
+static bool http_redirect_location_from_body(httpcContext *context, char *out, size_t outsz)
+{
+    if (!context || !out || outsz == 0) {
+        return false;
+    }
+    out[0] = 0;
+
+    char *buf = (char *)malloc(4096 + 1);
+    if (!buf) {
+        return false;
+    }
+
+    size_t size = 0;
+    Result ret = 0;
+    do {
+        if (size >= 4096) {
+            break;
+        }
+        u32 readsize = 0;
+        ret = httpcDownloadData(context, (u8 *)buf + size, 4096 - size, &readsize);
+        size += readsize;
+    } while (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING);
+
+    bool ok = false;
+    if (size > 0) {
+        buf[size] = 0;
+        ok = extract_absolute_url(buf, size, out, outsz);
+    }
+
+    free(buf);
+    return ok;
+}
+
 static bool url_origin_from(const char *url, char *out, size_t outsz)
 {
     const char *scheme_end = url ? strstr(url, "://") : NULL;
@@ -266,8 +347,260 @@ static void resolve_redirect_url(char *out, size_t outsz, const char *base_url, 
     build_url(out, outsz, location);
 }
 
+static bool synthesize_https_redirect_url(char *out, size_t outsz, const char *base_url)
+{
+    if (!out || outsz == 0 || !base_url || !starts_with_ascii_nocase(base_url, "http://")) {
+        return false;
+    }
+
+    snprintf(out, outsz, "https://%s", base_url + 7);
+    return out[0] != 0;
+}
+
+typedef struct {
+    char *data;
+    size_t size;
+    size_t cap;
+} CurlResponseBuffer;
+
+static bool curl_http_runtime_init(void)
+{
+    if (g_curl_soc_ready && g_curl_global_ready) {
+        return true;
+    }
+
+    if (!g_curl_soc_ready) {
+        g_curl_soc_buffer = (u32 *)memalign(0x1000, CURL_SOC_BUFFER_SIZE);
+        if (!g_curl_soc_buffer) {
+            g_curl_init_result = -1;
+            return false;
+        }
+        g_curl_init_result = socInit(g_curl_soc_buffer, CURL_SOC_BUFFER_SIZE);
+        if (R_FAILED(g_curl_init_result)) {
+            free(g_curl_soc_buffer);
+            g_curl_soc_buffer = NULL;
+            return false;
+        }
+        g_curl_soc_ready = true;
+    }
+
+    if (!g_curl_global_ready) {
+        CURLcode global = curl_global_init(CURL_GLOBAL_DEFAULT);
+        if (global != CURLE_OK) {
+            g_curl_init_result = (Result)(0xD8800000u | ((u32)global & 0xFFFFu));
+            if (g_curl_soc_ready) {
+                socExit();
+                g_curl_soc_ready = false;
+            }
+            free(g_curl_soc_buffer);
+            g_curl_soc_buffer = NULL;
+            return false;
+        }
+        g_curl_global_ready = true;
+    }
+
+    g_curl_init_result = 0;
+    return true;
+}
+
+static void curl_http_shutdown(void)
+{
+    if (g_curl_global_ready) {
+        curl_global_cleanup();
+        g_curl_global_ready = false;
+    }
+    if (g_curl_soc_ready) {
+        socExit();
+        g_curl_soc_ready = false;
+    }
+    if (g_curl_soc_buffer) {
+        free(g_curl_soc_buffer);
+        g_curl_soc_buffer = NULL;
+    }
+}
+
+static Result curl_result_code(CURLcode code)
+{
+    return (Result)(0xD8800000u | ((u32)code & 0xFFFFu));
+}
+
+static size_t curl_write_response(void *ptr, size_t size, size_t nmemb, void *userdata)
+{
+    CurlResponseBuffer *buf = (CurlResponseBuffer *)userdata;
+    size_t total = size * nmemb;
+    if (!buf || !ptr || total == 0) {
+        return total;
+    }
+    if (buf->size + total + 1 > HTTP_CAP) {
+        return 0;
+    }
+    if (buf->size + total + 1 > buf->cap) {
+        size_t next_cap = buf->cap ? buf->cap : 4096;
+        while (next_cap < buf->size + total + 1) {
+            next_cap *= 2;
+            if (next_cap > HTTP_CAP + 1) {
+                next_cap = HTTP_CAP + 1;
+                break;
+            }
+        }
+        char *next = (char *)realloc(buf->data, next_cap);
+        if (!next) {
+            return 0;
+        }
+        buf->data = next;
+        buf->cap = next_cap;
+    }
+    memcpy(buf->data + buf->size, ptr, total);
+    buf->size += total;
+    buf->data[buf->size] = 0;
+    return total;
+}
+
+static void maybe_update_server_after_redirect(const char *original_url, const char *effective_url)
+{
+    if (!original_url || !effective_url || !starts_with_ascii_nocase(g_cfg.server, "http://") ||
+        !starts_with_https(effective_url)) {
+        return;
+    }
+
+    size_t server_len = strlen(g_cfg.server);
+    if (strncmp(original_url, g_cfg.server, server_len) != 0) {
+        return;
+    }
+
+    const char *suffix = original_url + server_len;
+    if (suffix[0] && suffix[0] != '/') {
+        return;
+    }
+
+    size_t suffix_len = strlen(suffix);
+    size_t effective_len = strlen(effective_url);
+    if (effective_len < suffix_len ||
+        strcmp(effective_url + effective_len - suffix_len, suffix) != 0) {
+        return;
+    }
+
+    size_t new_len = effective_len - suffix_len;
+    if (new_len == 0 || new_len >= sizeof(g_cfg.server)) {
+        return;
+    }
+
+    char next_server[sizeof(g_cfg.server)];
+    memcpy(next_server, effective_url, new_len);
+    next_server[new_len] = 0;
+    strip_trailing_slash(next_server);
+    if (starts_with_https(next_server) && strcmp(next_server, g_cfg.server) != 0) {
+        copy_safe(g_cfg.server, sizeof(g_cfg.server), next_server);
+    }
+}
+
+static Result curl_request_full(HTTPC_RequestMethod method, const char *url, const char *body, bool include_token, HttpResponse *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->status = HTTP_STATUS_NONE;
+    out->result = 0;
+    copy_safe(out->url, sizeof(out->url), url);
+
+    if (!curl_http_runtime_init()) {
+        out->result = g_curl_init_result ? g_curl_init_result : -1;
+        return out->result;
+    }
+
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        out->result = -1;
+        return out->result;
+    }
+
+    CurlResponseBuffer response;
+    memset(&response, 0, sizeof(response));
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Accept: application/json, */*");
+    headers = curl_slist_append(headers, "Connection: close");
+    headers = curl_slist_append(headers, "Accept-Encoding: identity");
+    if (body) {
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+    }
+
+    char auth[384];
+    char auth_header_line[448];
+    char emby_auth_header_line[456];
+    auth_header(auth, sizeof(auth), include_token);
+    snprintf(auth_header_line, sizeof(auth_header_line), "Authorization: %s", auth);
+    snprintf(emby_auth_header_line, sizeof(emby_auth_header_line), "X-Emby-Authorization: %s", auth);
+    headers = curl_slist_append(headers, auth_header_line);
+    headers = curl_slist_append(headers, emby_auth_header_line);
+    if (include_token && g_cfg.token[0]) {
+        char token_header[240];
+        snprintf(token_header, sizeof(token_header), "X-Emby-Token: %s", g_cfg.token);
+        headers = curl_slist_append(headers, token_header);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "3dJelly/" APP_VERSION " Nintendo 3DS");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)HTTP_REDIRECT_LIMIT);
+    curl_easy_setopt(curl, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 12L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_response);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+    if (method == HTTPC_METHOD_POST) {
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body ? body : "");
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, body ? (long)strlen(body) : 0L);
+    } else if (method == HTTPC_METHOD_DELETE) {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+    } else if (method == HTTPC_METHOD_HEAD) {
+        curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+    }
+
+    CURLcode code = curl_easy_perform(curl);
+
+    long response_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code > 0) {
+        out->status = (u32)response_code;
+    }
+
+    char *effective_url = NULL;
+    if (curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effective_url) == CURLE_OK && effective_url) {
+        maybe_update_server_after_redirect(url, effective_url);
+        copy_safe(out->url, sizeof(out->url), effective_url);
+    }
+
+    if (code == CURLE_OK) {
+        if (response.data) {
+            out->body = response.data;
+            out->size = response.size;
+            response.data = NULL;
+            response.size = 0;
+            response.cap = 0;
+        }
+        out->result = 0;
+    } else {
+        out->result = curl_result_code(code);
+    }
+
+    free(response.data);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    return out->result;
+}
+
 static Result http_request_full(HTTPC_RequestMethod method, const char *url, const char *body, bool include_token, HttpResponse *out)
 {
+    if (starts_with_https(url)) {
+        return curl_request_full(method, url, body, include_token, out);
+    }
+
     memset(out, 0, sizeof(*out));
     out->status = 0;
     out->result = 0;
@@ -291,6 +624,7 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
     bool context_open = false;
 
     for (int redirects = 0; redirects < HTTP_REDIRECT_LIMIT; redirects++) {
+        status = HTTP_STATUS_NONE;
         copy_safe(out->url, sizeof(out->url), active_url);
         ret = httpcOpenContext(&context, method, active_url, method == HTTPC_METHOD_POST ? 0 : 1);
         if (R_FAILED(ret)) {
@@ -298,7 +632,13 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
         }
         context_open = true;
 
-        httpcSetSSLOpt(&context, SSLCOPT_DisableVerify);
+        ret = httpcSetSSLOpt(&context, SSLCOPT_DisableVerify);
+        if (R_FAILED(ret) && starts_with_https(active_url)) {
+            httpcCancelConnection(&context);
+            httpcCloseContext(&context);
+            context_open = false;
+            break;
+        }
         httpcSetKeepAlive(&context, HTTPC_KEEPALIVE_DISABLED);
         httpcAddRequestHeaderField(&context, "User-Agent", "3dJelly/" APP_VERSION " Nintendo 3DS");
         httpcAddRequestHeaderField(&context, "Accept", "application/json, */*");
@@ -332,11 +672,15 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
         }
 
         ret = httpcGetResponseStatusCodeTimeout(&context, &status, HTTP_STATUS_TIMEOUT_NS);
-        if (R_FAILED(ret)) {
+        if (R_FAILED(ret) && !http_status_is_redirect(status) &&
+            !(ret == HTTP_TLS_VERIFY_FAILED_RESULT && status >= 200 && status < 300)) {
             httpcCancelConnection(&context);
             httpcCloseContext(&context);
             context_open = false;
             break;
+        }
+        if (ret == HTTP_TLS_VERIFY_FAILED_RESULT && status >= 200 && status < 300) {
+            ret = 0;
         }
         if (status == HTTP_STATUS_NONE) {
             ret = (Result)0xD9000001;
@@ -366,6 +710,14 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
             }
             memset(redirect_url, 0, 1024);
             ret = http_redirect_location(&context, redirect_url, 1024);
+            if ((R_FAILED(ret) || !redirect_url[0]) &&
+                http_redirect_location_from_body(&context, redirect_url, 1024)) {
+                ret = 0;
+            }
+            if ((R_FAILED(ret) || !redirect_url[0]) &&
+                synthesize_https_redirect_url(redirect_url, 1024, active_url)) {
+                ret = 0;
+            }
             httpcCancelConnection(&context);
             httpcCloseContext(&context);
             context_open = false;
@@ -378,6 +730,11 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
                 ret = -1;
                 break;
             }
+            if (starts_with_https(full)) {
+                free(active_url);
+                free(redirect_url);
+                return curl_request_full(method, full, body, include_token, out);
+            }
             free(active_url);
             active_url = strdup(full);
             if (!active_url) {
@@ -388,8 +745,6 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
         }
         break;
     }
-
-    out->status = status;
 
     if (R_SUCCEEDED(ret) && method != HTTPC_METHOD_HEAD && status != HTTP_STATUS_NONE) {
         char *buf = (char *)malloc(4096 + 1);
@@ -415,6 +770,13 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
                 }
             } while (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING);
 
+            if (R_FAILED(ret) && ret == HTTP_TLS_VERIFY_FAILED_RESULT &&
+                starts_with_https(out->url) && status >= 200 && status < 300 && size > 0) {
+                // The 3DS HTTP service can report TLS verification failure after
+                // delivering the payload. Keep the body if Jellyfin sent one.
+                ret = 0;
+            }
+
             if (R_SUCCEEDED(ret)) {
                 buf[size] = 0;
                 out->body = buf;
@@ -424,6 +786,11 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
             }
         }
     }
+
+    if (R_FAILED(ret) && method != HTTPC_METHOD_HEAD && status >= 200 && status < 300 && !out->body) {
+        status = HTTP_STATUS_NONE;
+    }
+    out->status = status;
 
     if (context_open) {
         if (R_FAILED(ret)) {
@@ -948,6 +1315,8 @@ static bool load_libraries(void)
     g_scroll = 0;
     g_stack_depth = 0;
     g_current_parent_id[0] = 0;
+    g_current_parent_type[0] = 0;
+    g_current_parent_series_id[0] = 0;
     copy_safe(g_screen_title, sizeof(g_screen_title), tr(TR_LIBRARIES));
     g_view = VIEW_LIBRARIES;
     set_status(tr(TR_STATUS_LOADED_LIBRARIES_FMT), g_library_count);
@@ -958,33 +1327,57 @@ static void build_items_page_path(char *path, size_t pathsz, const char *enc_par
 {
     if (user_endpoint) {
         snprintf(path, pathsz,
-                 "/Users/%s/Items?ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio&IsMissing=false&IsUnaired=false",
+                 "/Users/%s/Items?ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_parent, start, limit);
     } else {
         snprintf(path, pathsz,
-                 "/Items?UserId=%s&ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio&IsMissing=false&IsUnaired=false",
+                 "/Items?UserId=%s&ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_parent, start, limit);
     }
 }
 
-static bool load_items_for_parent(const char *parent_id, const char *title)
+static void build_series_seasons_page_path(char *path, size_t pathsz, const char *enc_series, int start, int limit)
+{
+    snprintf(path, pathsz,
+             "/Shows/%s/Seasons?userId=%s&StartIndex=%d&Limit=%d&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
+             enc_series, g_cfg.user_id, start, limit);
+}
+
+static void build_season_episodes_page_path(char *path, size_t pathsz, const char *enc_series, const char *enc_season, int start, int limit)
+{
+    snprintf(path, pathsz,
+             "/Shows/%s/Episodes?userId=%s&seasonId=%s&StartIndex=%d&Limit=%d&fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&isMissing=false&enableImages=true&imageTypeLimit=1&enableUserData=false",
+             enc_series, g_cfg.user_id, enc_season, start, limit);
+}
+
+static bool load_items_for_parent_ex(const char *parent_id, const char *title, const char *parent_type, const char *series_id)
 {
     char path[768];
     char enc_parent[160];
+    char enc_series[160];
     url_encode(parent_id, enc_parent, sizeof(enc_parent));
+    url_encode(series_id ? series_id : "", enc_series, sizeof(enc_series));
 
     g_item_count = 0;
     int start = 0;
     int total = -1;
     bool user_endpoint = false;
     bool hit_cap = false;
+    bool show_seasons = parent_type && strcmp(parent_type, "Series") == 0;
+    bool show_episodes = parent_type && strcmp(parent_type, "Season") == 0 && series_id && series_id[0];
 
     for (;;) {
         HttpResponse res;
         set_status(tr(TR_STATUS_LOADING_ITEMS_FMT), title && title[0] ? title : tr(TR_ITEMS_GENERIC), g_item_count);
-        build_items_page_path(path, sizeof(path), enc_parent, start, ITEM_PAGE_SIZE, user_endpoint);
+        if (show_seasons) {
+            build_series_seasons_page_path(path, sizeof(path), enc_parent, start, ITEM_PAGE_SIZE);
+        } else if (show_episodes) {
+            build_season_episodes_page_path(path, sizeof(path), enc_series, enc_parent, start, ITEM_PAGE_SIZE);
+        } else {
+            build_items_page_path(path, sizeof(path), enc_parent, start, ITEM_PAGE_SIZE, user_endpoint);
+        }
         Result ret = api_get(path, &res);
-        if (!user_endpoint && start == 0 && parent_id[0] &&
+        if (!show_seasons && !show_episodes && !user_endpoint && start == 0 && parent_id[0] &&
             (R_FAILED(ret) || res.status == HTTP_STATUS_NONE || res.status >= 400)) {
             free_response(&res);
             user_endpoint = true;
@@ -1030,6 +1423,8 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
     g_selected = 0;
     g_scroll = 0;
     copy_safe(g_current_parent_id, sizeof(g_current_parent_id), parent_id);
+    copy_safe(g_current_parent_type, sizeof(g_current_parent_type), parent_type ? parent_type : "");
+    copy_safe(g_current_parent_series_id, sizeof(g_current_parent_series_id), series_id ? series_id : "");
     copy_safe(g_screen_title, sizeof(g_screen_title), title && title[0] ? title : tr(TR_ITEMS_GENERIC));
     g_view = VIEW_ITEMS;
     if (hit_cap) {
@@ -1038,6 +1433,20 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
         set_status(tr(TR_STATUS_ENTRIES_FMT), g_screen_title, g_item_count);
     }
     return true;
+}
+
+static bool load_items_for_parent(const char *parent_id, const char *title)
+{
+    return load_items_for_parent_ex(parent_id, title, "", "");
+}
+
+static bool load_items_for_media_item(const MediaItem *item)
+{
+    if (!item) {
+        return false;
+    }
+    const char *series_id = item->series_id[0] ? item->series_id : "";
+    return load_items_for_parent_ex(item->id, item->name, item->type, series_id);
 }
 
 static bool load_search_results(const char *query)
@@ -1057,7 +1466,7 @@ static bool load_search_results(const char *query)
     for (;;) {
         char path[768];
         snprintf(path, sizeof(path),
-                 "/Users/%s/Items?SearchTerm=%s&Recursive=true&StartIndex=%d&Limit=%d&IncludeItemTypes=Movie,Series,Video,MusicVideo,BoxSet&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio&IsMissing=false&IsUnaired=false",
+                 "/Users/%s/Items?SearchTerm=%s&Recursive=true&StartIndex=%d&Limit=%d&IncludeItemTypes=Movie,Series,Video,MusicVideo,BoxSet&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_query, start, ITEM_PAGE_SIZE);
 
         HttpResponse res;
@@ -1102,6 +1511,8 @@ static bool load_search_results(const char *query)
     copy_safe(g_search_query, sizeof(g_search_query), query);
     snprintf(g_screen_title, sizeof(g_screen_title), tr(TR_SEARCH_RESULTS_FMT), g_search_query);
     g_current_parent_id[0] = 0;
+    g_current_parent_type[0] = 0;
+    g_current_parent_series_id[0] = 0;
     g_item_count = new_count;
     g_selected = 0;
     g_scroll = 0;
@@ -1274,6 +1685,8 @@ static void push_nav(const char *parent_id, const char *title)
     }
     copy_safe(g_stack[g_stack_depth].parent_id, sizeof(g_stack[g_stack_depth].parent_id), parent_id);
     copy_safe(g_stack[g_stack_depth].title, sizeof(g_stack[g_stack_depth].title), title);
+    copy_safe(g_stack[g_stack_depth].parent_type, sizeof(g_stack[g_stack_depth].parent_type), g_current_parent_type);
+    copy_safe(g_stack[g_stack_depth].series_id, sizeof(g_stack[g_stack_depth].series_id), g_current_parent_series_id);
     g_stack[g_stack_depth].selected = g_selected;
     g_stack[g_stack_depth].scroll = g_scroll;
     g_stack_depth++;
@@ -1290,7 +1703,7 @@ static void pop_nav(void)
     if (strcmp(f.parent_id, SEARCH_NAV_PARENT_ID) == 0) {
         load_search_results(g_search_query);
     } else if (f.parent_id[0]) {
-        load_items_for_parent(f.parent_id, f.title);
+        load_items_for_parent_ex(f.parent_id, f.title, f.parent_type, f.series_id);
     } else {
         load_libraries();
     }

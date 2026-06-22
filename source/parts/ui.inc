@@ -2132,6 +2132,8 @@ static void capture_search_return(void)
     g_search_return_view = g_view;
     copy_safe(g_search_return_parent_id, sizeof(g_search_return_parent_id), g_current_parent_id);
     copy_safe(g_search_return_title, sizeof(g_search_return_title), g_screen_title);
+    copy_safe(g_search_return_parent_type, sizeof(g_search_return_parent_type), g_current_parent_type);
+    copy_safe(g_search_return_series_id, sizeof(g_search_return_series_id), g_current_parent_series_id);
     g_search_return_selected = g_selected;
     g_search_return_scroll = g_scroll;
 }
@@ -2140,7 +2142,8 @@ static void return_from_search(void)
 {
     reset_nav_repeat();
     if (g_search_return_view == VIEW_ITEMS) {
-        load_items_for_parent(g_search_return_parent_id, g_search_return_title);
+        load_items_for_parent_ex(g_search_return_parent_id, g_search_return_title,
+                                 g_search_return_parent_type, g_search_return_series_id);
         g_selected = g_search_return_selected;
         g_scroll = g_search_return_scroll;
         clamp_browse_selection(g_item_count, BROWSE_VISIBLE_ROWS);
@@ -2218,7 +2221,8 @@ static void handle_input(u32 down, u32 held)
         }
         if (down & KEY_X) {
             if (g_current_parent_id[0]) {
-                load_items_for_parent(g_current_parent_id, g_screen_title);
+                load_items_for_parent_ex(g_current_parent_id, g_screen_title,
+                                         g_current_parent_type, g_current_parent_series_id);
             }
         }
         if (down & KEY_B) {
@@ -2239,7 +2243,7 @@ static void handle_input(u32 down, u32 held)
                 probe_playback();
             } else {
                 push_nav(g_current_parent_id, g_screen_title);
-                load_items_for_parent(item->id, item->name);
+                load_items_for_media_item(item);
             }
         }
     } else if (g_view == VIEW_SEARCH) {
@@ -2271,7 +2275,7 @@ static void handle_input(u32 down, u32 held)
                 probe_playback();
             } else {
                 push_nav(SEARCH_NAV_PARENT_ID, g_screen_title);
-                load_items_for_parent(item->id, item->name);
+                load_items_for_media_item(item);
             }
         }
     } else if (g_view == VIEW_DETAIL) {

@@ -70,6 +70,7 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
     Result ret = 0;
     for (int redirects = 0; redirects < HTTP_REDIRECT_LIMIT; redirects++) {
         memset(context, 0, sizeof(*context));
+        *status_out = HTTP_STATUS_NONE;
         ret = httpcOpenContext(context, HTTPC_METHOD_GET, active_url, 1);
         if (R_FAILED(ret)) {
             break;
@@ -85,10 +86,14 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
             break;
         }
         ret = httpcGetResponseStatusCodeTimeout(context, status_out, HTTP_STATUS_TIMEOUT_NS);
-        if (R_FAILED(ret)) {
+        if (R_FAILED(ret) && !http_status_is_redirect(*status_out) &&
+            !(ret == HTTP_TLS_VERIFY_FAILED_RESULT && *status_out >= 200 && *status_out < 300)) {
             httpcCancelConnection(context);
             httpcCloseContext(context);
             break;
+        }
+        if (ret == HTTP_TLS_VERIFY_FAILED_RESULT && *status_out >= 200 && *status_out < 300) {
+            ret = 0;
         }
 
         if (http_status_is_redirect(*status_out)) {
@@ -110,6 +115,14 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
 
             memset(redirect_url, 0, 1024);
             ret = http_redirect_location(context, redirect_url, 1024);
+            if ((R_FAILED(ret) || !redirect_url[0]) &&
+                http_redirect_location_from_body(context, redirect_url, 1024)) {
+                ret = 0;
+            }
+            if ((R_FAILED(ret) || !redirect_url[0]) &&
+                synthesize_https_redirect_url(redirect_url, 1024, active_url)) {
+                ret = 0;
+            }
             httpcCancelConnection(context);
             httpcCloseContext(context);
             if (R_FAILED(ret) || !redirect_url[0]) {

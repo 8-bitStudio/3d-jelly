@@ -27,13 +27,13 @@ ARCH    := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
 CFLAGS  := -g -Wall -Wextra -O2 -fomit-frame-pointer -mword-relocations \
            -ffunction-sections -fdata-sections $(ARCH)
-CFLAGS  += $(INCLUDE) -D__3DS__
+CFLAGS  += $(INCLUDE) -D__3DS__ -DCURL_STATICLIB
 
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 ASFLAGS  := -g $(ARCH)
 LDFLAGS  := -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map),--gc-sections
 
-LIBS    := -lcitro2d -lcitro3d -lmbedcrypto -lctru -lm
+LIBS    := -lcitro2d -lcitro3d -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lctru -lm
 LIBDIRS := $(CTRULIB) $(PORTLIBS)
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))

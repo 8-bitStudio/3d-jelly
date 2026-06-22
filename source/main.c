@@ -1,5 +1,6 @@
 #include <3ds.h>
 #include <citro2d.h>
+#include <curl/curl.h>
 #include "picojpeg.h"
 #include "pl_mpeg.h"
 
@@ -34,6 +35,7 @@
 #define HTTP_STATUS_NONE 0xFFFFFFFFu
 #define HTTP_STATUS_TIMEOUT_NS 15000000000ULL
 #define HTTP_REDIRECT_LIMIT 6
+#define HTTP_TLS_VERIFY_FAILED_RESULT ((Result)0xD8A0A03C)
 #define STREAM_READ_TIMEOUT_NS 100000000ULL
 #define STREAM_READER_EMPTY_SLEEP_NS 2500000ULL
 #define EXIT_POLL_SLEEP_NS 50000000ULL
@@ -103,6 +105,7 @@
 #define REMOTE_MESSAGE_OSD_MS 5000
 #define REMOTE_MESSAGE_OSD_FADE_MS 650
 #define WEBSOCKET_SOC_BUFFER_SIZE (1024 * 1024)
+#define CURL_SOC_BUFFER_SIZE (1024 * 1024)
 #define WEBSOCKET_RECV_CAP 4096
 #define WEBSOCKET_MESSAGE_CAP 2048
 #define TICKS_PER_SECOND 10000000ULL
@@ -168,12 +171,16 @@ typedef struct {
     int index_number;
     int parent_index_number;
     int media_source_count;
+    int child_count;
+    int recursive_item_count;
     unsigned long long runtime_ticks;
 } MediaItem;
 
 typedef struct {
     char parent_id[80];
     char title[96];
+    char parent_type[40];
+    char series_id[80];
     int selected;
     int scroll;
 } NavFrame;
@@ -247,10 +254,14 @@ static int g_language_select_row;
 static int g_language_select_scroll;
 static char g_screen_title[96] = "Libraries";
 static char g_current_parent_id[80];
+static char g_current_parent_type[40];
+static char g_current_parent_series_id[80];
 static char g_search_query[96];
 static View g_search_return_view = VIEW_LIBRARIES;
 static char g_search_return_parent_id[80];
 static char g_search_return_title[96];
+static char g_search_return_parent_type[40];
+static char g_search_return_series_id[80];
 static int g_search_return_selected;
 static int g_search_return_scroll;
 static char g_status[192] = "Press Y to configure a Jellyfin server.";
@@ -307,6 +318,10 @@ static volatile bool g_exit_requested;
 static volatile bool g_system_close_requested;
 static bool g_is_new_3ds;
 static bool g_http_ready;
+static bool g_curl_soc_ready;
+static bool g_curl_global_ready;
+static u32 *g_curl_soc_buffer;
+static Result g_curl_init_result;
 static bool g_performance_mode_checked;
 static bool g_core1_reader_available;
 static Result g_performance_mode_result;
@@ -408,6 +423,9 @@ int main(void)
     }
     if (!system_closing) {
         remote_control_stop();
+    }
+    if (!system_closing) {
+        curl_http_shutdown();
     }
     if (g_http_ready && !system_closing) {
         httpcExit();
