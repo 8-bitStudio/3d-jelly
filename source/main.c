@@ -24,7 +24,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define APP_VERSION "0.4.2"
+#define APP_VERSION "0.5.3"
 #define CONFIG_DIR "sdmc:/3dJelly"
 #define CONFIG_PATH "sdmc:/3dJelly/config.ini"
 
@@ -101,8 +101,7 @@
 #define PLAYBACK_REPORT_QUEUE_COUNT 6
 #define PLAYBACK_REPORT_PATH_CAP 96
 #define PLAYBACK_REPORT_BODY_CAP 1024
-#define PLAYBACK_REPORT_STACK_SIZE (12 * 1024)
-#define PLAYBACK_REPORT_TIMEOUT_MS 280
+#define PLAYBACK_REPORT_STACK_SIZE (32 * 1024)
 #define REMOTE_MESSAGE_OSD_MS 5000
 #define REMOTE_MESSAGE_OSD_FADE_MS 650
 #define WEBSOCKET_SOC_BUFFER_SIZE (1024 * 1024)
@@ -163,12 +162,16 @@ typedef struct {
     char collection_type[40];
     char location_type[32];
     char series_id[80];
+    char series_name[128];
     char season_id[80];
     char overview[256];
     bool is_folder;
     bool is_missing;
     bool is_virtual_item;
     bool is_place_holder;
+    bool is_favorite;
+    bool played;
+    bool series_thumb;
     int year;
     int index_number;
     int parent_index_number;
@@ -176,7 +179,18 @@ typedef struct {
     int child_count;
     int recursive_item_count;
     unsigned long long runtime_ticks;
+    unsigned long long position_ticks;
 } MediaItem;
+
+#define HOME_ROW_ITEMS 24
+typedef struct {
+    MediaItem items[HOME_ROW_ITEMS];
+    int count;
+    int selected;
+    int first;
+    bool loaded;
+    bool failed;
+} HomeRow;
 
 typedef struct {
     char parent_id[80];
@@ -229,6 +243,7 @@ static View g_view = VIEW_SETUP;
 static C3D_RenderTarget *g_top;
 static C3D_RenderTarget *g_bottom;
 static C2D_TextBuf g_text;
+static C2D_TextBuf g_measure_text;
 static C2D_Font g_font_kor;
 static C2D_Font g_font_chn;
 static C2D_Font g_font_twn;
@@ -244,6 +259,17 @@ static NavFrame g_stack[MAX_STACK];
 static int g_stack_depth;
 static int g_selected;
 static int g_scroll;
+static HomeRow g_home_rows[MAX_LIBRARIES + 2];
+static int g_home_row;
+static int g_home_scroll;
+static int g_library_selected;
+static int g_library_first;
+static int g_nav_tab;
+static int g_active_tab;
+static int g_tab_first;
+static bool g_tab_focus;
+static bool g_home_dirty;
+static u64 g_play_start_ticks;
 static int g_setup_row;
 static int g_settings_row;
 static int g_settings_scroll;
@@ -338,9 +364,9 @@ static const u32 COL_BG = 0xFF101010;
 static const u32 COL_PAPER = 0xFF202020;
 static const u32 COL_CARD = 0xFF00455C;
 static const u32 COL_CARD_2 = 0xFF1C4C5C;
-static const u32 COL_PRIMARY = 0xFF00A4DC;
-static const u32 COL_PRIMARY_DARK = 0xFF00729A;
-static const u32 COL_SECONDARY = 0xFFAA5CC3;
+static const u32 COL_PRIMARY = 0xFFDCA400;
+static const u32 COL_PRIMARY_DARK = 0xFF9A7200;
+static const u32 COL_SECONDARY = 0xFFC35CAA;
 static const u32 COL_WHITE = 0xFFFFFFFF;
 static const u32 COL_MUTED = 0xFFB5B5B5;
 
@@ -360,6 +386,9 @@ static bool play_current_item_video(void);
 static u64 monotonic_ns(void);
 static u64 clamp_media_ticks(u64 ticks);
 static bool remote_http_post_json_quick(const char *path, const char *body, int timeout_ms);
+static void browse_cancel_request(void);
+static void browse_home_reset(void);
+static void browse_shutdown(void);
 
 static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 241, 360, 480};
 static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
@@ -425,6 +454,7 @@ int main(void)
         setup_stop_scan();
         quick_connect_cancel();
         setup_cancel_http();
+        browse_cancel_request();
         curl_http_shutdown();
     }
     if (g_http_ready && !system_closing) {

@@ -61,6 +61,9 @@ static void parse_media_item_object(const char *os, const char *oe, MediaItem *i
     json_get_string_range(os, oe, "CollectionType", item->collection_type, sizeof(item->collection_type));
     json_get_string_range(os, oe, "LocationType", item->location_type, sizeof(item->location_type));
     json_get_string_range(os, oe, "SeriesId", item->series_id, sizeof(item->series_id));
+    json_get_string_range(os, oe, "SeriesName", item->series_name, sizeof(item->series_name));
+    char image_tag[80];
+    item->series_thumb = json_get_string_range(os, oe, "SeriesThumbImageTag", image_tag, sizeof(image_tag)) && image_tag[0];
     json_get_string_range(os, oe, "SeasonId", item->season_id, sizeof(item->season_id));
     json_get_string_range(os, oe, "Overview", item->overview, sizeof(item->overview));
     json_get_bool_range(os, oe, "IsFolder", &item->is_folder);
@@ -74,12 +77,20 @@ static void parse_media_item_object(const char *os, const char *oe, MediaItem *i
     json_get_int_range(os, oe, "ChildCount", &item->child_count);
     json_get_int_range(os, oe, "RecursiveItemCount", &item->recursive_item_count);
     json_get_ull_range(os, oe, "RunTimeTicks", &item->runtime_ticks);
+    const char *us, *ue;
+    if (json_get_object_range(os, oe, "UserData", &us, &ue)) {
+        json_get_bool_range(us, ue, "IsFavorite", &item->is_favorite);
+        json_get_bool_range(us, ue, "Played", &item->played);
+        json_get_ull_range(us, ue, "PlaybackPositionTicks", &item->position_ticks);
+    }
 }
 
 static bool parse_items(const char *json, MediaItem *items, int *count, int capacity, bool owned_only, int *raw_count)
 {
+    if (!json || !items || !count) return false;
     const char *end = json + strlen(json);
-    const char *p = find_key_range(json, end, "Items");
+    const char *p = skip_ws(json, end);
+    if (p == end || *p != '[') p = find_key_range(json, end, "Items");
     if (raw_count) {
         *raw_count = 0;
     }
@@ -100,14 +111,13 @@ static bool parse_items(const char *json, MediaItem *items, int *count, int capa
             break;
         }
         if (*p != '{') {
-            p++;
-            continue;
+            return false;
         }
 
         const char *os = NULL;
         const char *oe = NULL;
         if (!json_object_range_after(p, end, &os, &oe)) {
-            break;
+            return false;
         }
         raw++;
 
@@ -117,8 +127,16 @@ static bool parse_items(const char *json, MediaItem *items, int *count, int capa
         if (n < capacity && item.id[0] && item.name[0] && (!owned_only || !media_item_is_unowned_placeholder(&item))) {
             items[n++] = item;
         }
-        p = oe;
+        p = skip_ws(oe, end);
+        if (p < end && *p == ',') {
+            p = skip_ws(p + 1, end);
+            if (p >= end || *p != '{') return false;
+        } else if (p >= end || *p != ']') {
+            return false;
+        }
     }
+
+    if (p >= end || *p != ']') return false;
 
     *count = n;
     if (raw_count) {
@@ -887,6 +905,43 @@ static int playback_report_thread_priority(void)
     return prio;
 }
 
+static size_t playback_discard_response(void *ptr, size_t size, size_t count, void *userdata)
+{
+    (void)ptr;
+    (void)userdata;
+    return size * count;
+}
+
+/* Each worker owns its curl handle. Wait for an HTTP acknowledgement, including
+ * on HTTPS servers, before treating watch progress as saved. */
+static bool send_playback_report(const char *path, const char *body)
+{
+    CURL *curl = curl_easy_init();
+    if (!curl) return false;
+    char url[768], auth[384], header[448];
+    build_url(url, sizeof(url), path);
+    auth_header(auth, sizeof(auth), true);
+    snprintf(header, sizeof(header), "Authorization: %s", auth);
+    struct curl_slist *headers = curl_slist_append(NULL, header);
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, playback_discard_response);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1500L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    CURLcode result = curl_easy_perform(curl);
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return result == CURLE_OK && status >= 200 && status < 300;
+}
+
 static void playback_report_worker_main(void *arg)
 {
     (void)arg;
@@ -910,7 +965,8 @@ static void playback_report_worker_main(void *arg)
         LightLock_Unlock(&g_playback_report_lock);
 
         if (msg.path[0] && msg.body[0]) {
-            remote_http_post_json_quick(msg.path, msg.body, PLAYBACK_REPORT_TIMEOUT_MS);
+            if (!send_playback_report(msg.path, msg.body) && strstr(msg.path, "/Stopped"))
+                send_playback_report(msg.path, msg.body);
         }
     }
 
@@ -919,6 +975,7 @@ static void playback_report_worker_main(void *arg)
 
 static bool playback_report_worker_start(void)
 {
+    if (!curl_http_runtime_init()) return false;
     if (!g_playback_report_sync_ready) {
         LightLock_Init(&g_playback_report_lock);
         CondVar_Init(&g_playback_report_cv);
@@ -1105,6 +1162,15 @@ static bool report_playback_stopped(u64 position_ticks)
     }
     g_playback_report_active = false;
     g_playback_last_report_ms = 0;
+    g_home_dirty = true;
+    g_current.position_ticks = position_ticks;
+    g_current.played = g_playback_ended_naturally;
+    for (int i = 0; i < g_item_count; ++i) {
+        if (!strcmp(g_items[i].id, g_current.id)) {
+            g_items[i].position_ticks = position_ticks;
+            g_items[i].played = g_current.played;
+        }
+    }
 
     if (!playback_report_ready()) {
         return false;
@@ -1282,8 +1348,11 @@ static bool login_jellyfin(void)
     return true;
 }
 
+#include "home_api.inc"
+
 static bool load_libraries(void)
 {
+    browse_cancel_request();
     if (!g_cfg.token[0] || !g_cfg.user_id[0]) {
         return false;
     }
@@ -1312,19 +1381,28 @@ static bool load_libraries(void)
     g_current_parent_series_id[0] = 0;
     copy_safe(g_screen_title, sizeof(g_screen_title), tr(TR_LIBRARIES));
     g_view = VIEW_LIBRARIES;
+    browse_home_reset();
+    g_active_tab = g_nav_tab = 0;
+    g_tab_focus = false;
     set_status(tr(TR_STATUS_LOADED_LIBRARIES_FMT), g_library_count);
     return true;
 }
 
 static void build_items_page_path(char *path, size_t pathsz, const char *enc_parent, int start, int limit, bool user_endpoint)
 {
+    if (!strcmp(enc_parent, "%23FAVORITES%23")) {
+        snprintf(path, pathsz,
+                 "/Users/%s/Items?Recursive=true&Filters=IsFavorite&StartIndex=%d&Limit=%d&SortBy=SortName&SortOrder=Ascending&EnableUserData=true&Fields=Overview,ChildCount,RecursiveItemCount,MediaSources",
+                 g_cfg.user_id, start, limit);
+        return;
+    }
     if (user_endpoint) {
         snprintf(path, pathsz,
-                 "/Users/%s/Items?ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
+                 "/Users/%s/Items?ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=true&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_parent, start, limit);
     } else {
         snprintf(path, pathsz,
-                 "/Items?UserId=%s&ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
+                 "/Items?UserId=%s&ParentId=%s&StartIndex=%d&Limit=%d&Recursive=false&EnableImages=true&ImageTypeLimit=1&EnableUserData=true&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_parent, start, limit);
     }
 }
@@ -1332,19 +1410,20 @@ static void build_items_page_path(char *path, size_t pathsz, const char *enc_par
 static void build_series_seasons_page_path(char *path, size_t pathsz, const char *enc_series, int start, int limit)
 {
     snprintf(path, pathsz,
-             "/Shows/%s/Seasons?userId=%s&StartIndex=%d&Limit=%d&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
+             "/Shows/%s/Seasons?userId=%s&StartIndex=%d&Limit=%d&EnableImages=true&ImageTypeLimit=1&EnableUserData=true&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
              enc_series, g_cfg.user_id, start, limit);
 }
 
 static void build_season_episodes_page_path(char *path, size_t pathsz, const char *enc_series, const char *enc_season, int start, int limit)
 {
     snprintf(path, pathsz,
-             "/Shows/%s/Episodes?userId=%s&seasonId=%s&StartIndex=%d&Limit=%d&fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&isMissing=false&enableImages=true&imageTypeLimit=1&enableUserData=false",
+             "/Shows/%s/Episodes?userId=%s&seasonId=%s&StartIndex=%d&Limit=%d&fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&isMissing=false&enableImages=true&imageTypeLimit=1&enableUserData=true",
              enc_series, g_cfg.user_id, enc_season, start, limit);
 }
 
 static bool load_items_for_parent_ex(const char *parent_id, const char *title, const char *parent_type, const char *series_id)
 {
+    browse_cancel_request();
     char path[768];
     char enc_parent[160];
     char enc_series[160];
@@ -1438,8 +1517,9 @@ static bool load_items_for_media_item(const MediaItem *item)
     if (!item) {
         return false;
     }
-    const char *series_id = item->series_id[0] ? item->series_id : "";
-    return load_items_for_parent_ex(item->id, item->name, item->type, series_id);
+    /* Loading replaces g_items: do not keep pointers into that array. */
+    MediaItem copy = *item;
+    return load_items_for_parent_ex(copy.id, copy.name, copy.type, copy.series_id);
 }
 
 static bool load_search_results(const char *query)
@@ -1459,7 +1539,7 @@ static bool load_search_results(const char *query)
     for (;;) {
         char path[768];
         snprintf(path, sizeof(path),
-                 "/Users/%s/Items?SearchTerm=%s&Recursive=true&StartIndex=%d&Limit=%d&IncludeItemTypes=Movie,Series,Video,MusicVideo,BoxSet&EnableImages=true&ImageTypeLimit=1&EnableUserData=false&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
+                 "/Users/%s/Items?SearchTerm=%s&Recursive=true&StartIndex=%d&Limit=%d&IncludeItemTypes=Movie,Series,Video,MusicVideo,BoxSet&EnableImages=true&ImageTypeLimit=1&EnableUserData=true&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_query, start, ITEM_PAGE_SIZE);
 
         HttpResponse res;
@@ -1621,7 +1701,7 @@ static bool query_next_episode_from_server(MediaItem *out)
     url_encode(g_current.series_id, series, sizeof(series));
     url_encode(g_current.id, current, sizeof(current));
     snprintf(path, sizeof(path),
-             "/Shows/%s/Episodes?userId=%s&startItemId=%s&limit=4&fields=Path,MediaSources,ParentId&isMissing=false&enableImages=false&enableUserData=false",
+             "/Shows/%s/Episodes?userId=%s&startItemId=%s&limit=4&fields=Path,MediaSources,ParentId&isMissing=false&enableImages=false&enableUserData=true",
              series, g_cfg.user_id, current);
 
     HttpResponse res;
@@ -1980,6 +2060,9 @@ static bool request_playback_info(u64 start_time_ticks)
 
     if (!g_play_url[0]) {
         build_fallback_stream_url(&g_current, g_play_url, sizeof(g_play_url));
+        char start_query[64];
+        snprintf(start_query, sizeof(start_query), "StartTimeTicks=%llu", (unsigned long long)start_time_ticks);
+        append_query(g_play_url, sizeof(g_play_url), start_query);
         copy_safe(g_play_method, sizeof(g_play_method), "manual-ts");
     } else {
         normalize_transcode_url(g_play_url, sizeof(g_play_url));

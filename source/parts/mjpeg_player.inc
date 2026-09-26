@@ -4595,7 +4595,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
 
 static bool play_current_item_video(void)
 {
-    g_mjpeg_resume_ticks = 0;
+    g_mjpeg_resume_ticks = g_play_start_ticks;
     g_seek_osd_until_ms = 0;
     g_seek_osd_target_ticks = 0;
     g_seek_osd_delta_seconds = 0;
@@ -4622,7 +4622,7 @@ static bool play_current_item_video(void)
         set_play_status("%s", tr(TR_OLD3DS_MJPEG_PLAYBACK));
     }
 
-    u64 start_ticks = 0;
+    u64 start_ticks = g_mjpeg_resume_ticks;
     if (prefer_mpeg1) {
         char mpeg_url[STREAM_URL_CAP];
         for (int alias = 0; alias < 2; alias++) {
@@ -4731,6 +4731,9 @@ static bool probe_playback(void)
         return false;
     }
 
+    browse_cancel_request();
+    refresh_play_item();
+    g_play_start_ticks = media_resume_position(&g_current);
     bool played_any = false;
     for (;;) {
         g_view = VIEW_PLAYBACK;
@@ -4741,7 +4744,7 @@ static bool probe_playback(void)
         g_playback_ended_naturally = false;
         prepare_autoplay_next_episode();
 
-        if (!request_playback_info(0)) {
+        if (!request_playback_info(g_play_start_ticks)) {
             if (!g_exit_requested) {
                 g_view = g_return_view;
             }
@@ -4758,6 +4761,7 @@ static bool probe_playback(void)
             set_status(tr(TR_FINISHED_NO_NEXT_FMT), g_current.name[0] ? g_current.name : tr(TR_STREAM));
             break;
         }
+        g_play_start_ticks = 0;
         set_status(tr(TR_PLAYING_NEXT_FMT), g_current.name[0] ? g_current.name : tr(TR_STREAM));
     }
 

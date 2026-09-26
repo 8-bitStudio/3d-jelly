@@ -105,11 +105,11 @@ static bool ui_text_has_kana(const char *text)
     return false;
 }
 
-static void ui_text_parse(C2D_Text *text, const char *src)
+static void ui_text_parse_buffer(C2D_Text *text, C2D_TextBuf buffer, const char *src)
 {
     const char *safe = src ? src : "";
     if (g_font_kor && ui_text_has_hangul(safe)) {
-        C2D_TextFontParse(text, g_font_kor, g_text, safe);
+        C2D_TextFontParse(text, g_font_kor, buffer, safe);
     } else if ((g_font_chn || g_font_twn) &&
                (language_normalized(g_cfg.language) == LANG_ZH_HANS ||
                 language_normalized(g_cfg.language) == LANG_ZH_HANT ||
@@ -123,15 +123,22 @@ static void ui_text_parse(C2D_Text *text, const char *src)
         if (!font) {
             font = g_font_twn;
         }
-        C2D_TextFontParse(text, font, g_text, safe);
+        C2D_TextFontParse(text, font, buffer, safe);
     } else {
-        C2D_TextParse(text, g_text, safe);
+        C2D_TextParse(text, buffer, safe);
     }
+}
+
+static void ui_text_parse(C2D_Text *text, const char *src)
+{
+    ui_text_parse_buffer(text, g_text, src);
 }
 
 static void ui_draw_readable_text(const C2D_Text *text, u32 flags, float x, float y,
                                   float scale, u32 color, float wrap)
 {
+    x = (float)(int)(x + 0.5f);
+    y = (float)(int)(y + 0.5f);
     /* A one-pixel outline keeps setup text legible over the server artwork.
        Reuse the parsed glyphs for all passes to keep text-buffer use bounded. */
     if (g_view == VIEW_SETUP) {
@@ -174,8 +181,11 @@ static void draw_text_wrap(float x, float y, float scale, float wrap, u32 color,
 static float text_width_for_scale(const char *text, float scale)
 {
     C2D_Text t;
-    ui_text_parse(&t, text ? text : "");
-    C2D_TextOptimize(&t);
+    /* Measuring candidates must not fill the buffer used to draw both screens. */
+    if (g_measure_text) {
+        C2D_TextBufClear(g_measure_text);
+        ui_text_parse_buffer(&t, g_measure_text, text ? text : "");
+    } else ui_text_parse(&t, text ? text : "");
 
     float width = 0.0f;
     float height = 0.0f;
@@ -202,50 +212,44 @@ static int utf8_char_bytes(const char *s)
     return 1;
 }
 
-static void trim_text_to_width(char *text, size_t textsz, float scale, float wrap, bool ellipsis)
+static void text_remove_last_character(char *text)
 {
-    if (!text || textsz == 0) {
-        return;
-    }
-
-    while (text[0] && text_width_for_scale(text, scale) > wrap) {
-        size_t len = strlen(text);
-        if (len == 0) {
-            break;
-        }
-        do {
-            text[--len] = 0;
-        } while (len > 0 && ((unsigned char)text[len] & 0xC0) == 0x80);
-    }
-
-    while (strlen(text) > 0 && text[strlen(text) - 1] == ' ') {
-        text[strlen(text) - 1] = 0;
-    }
-
-    if (ellipsis && text[0]) {
-        while (strlen(text) + 3 >= textsz) {
-            size_t len = strlen(text);
-            if (len == 0) {
-                break;
-            }
-            do {
-                text[--len] = 0;
-            } while (len > 0 && ((unsigned char)text[len] & 0xC0) == 0x80);
-        }
-        strncat(text, "...", textsz - strlen(text) - 1);
-        while (text_width_for_scale(text, scale) > wrap && strlen(text) > 3) {
-            size_t len = strlen(text) - 3;
-            text[len] = 0;
-            do {
-                text[--len] = 0;
-            } while (len > 0 && ((unsigned char)text[len] & 0xC0) == 0x80);
-            strncat(text, "...", textsz - strlen(text) - 1);
-        }
-    }
+    size_t len = strlen(text);
+    if (!len) return;
+    --len;
+    while (len && ((unsigned char)text[len] & 0xC0) == 0x80) --len;
+    text[len] = 0;
 }
 
-static void draw_text_lines(float x, float y, float scale, float wrap, u32 color,
-                            const char *text, int max_lines, float line_step)
+static void fit_text_to_width(char *text, size_t textsz, float scale, float wrap,
+                              bool ellipsis, bool more_text)
+{
+    if (!text || !textsz) return;
+    bool shortened = more_text;
+    while (text[0] && text_width_for_scale(text, scale) > wrap) {
+        text_remove_last_character(text);
+        shortened = true;
+    }
+    if (!shortened || !ellipsis) return;
+    const char *suffix = "...";
+    float suffix_width = text_width_for_scale(suffix, scale);
+    if (textsz < 4 || suffix_width > wrap) return;
+    while (text[0] && (strlen(text) + 3 >= textsz ||
+           text_width_for_scale(text, scale) + suffix_width > wrap))
+        text_remove_last_character(text);
+    while (text[0] && text[strlen(text) - 1] == ' ')
+        text_remove_last_character(text);
+    strncat(text, suffix, textsz - strlen(text) - 1);
+}
+
+static void trim_text_to_width(char *text, size_t textsz, float scale, float wrap, bool ellipsis)
+{
+    fit_text_to_width(text, textsz, scale, wrap, ellipsis, false);
+}
+
+static void draw_text_lines_clipped(float x, float y, float scale, float wrap, u32 color,
+                                    const char *text, int max_lines, float line_step,
+                                    float clip_top, float clip_bottom)
 {
     if (!text || !text[0] || max_lines <= 0) {
         return;
@@ -288,11 +292,14 @@ static void draw_text_lines(float x, float y, float scale, float wrap, u32 color
             size_t word_len = (size_t)(p - word_start);
 
             char candidate[192];
-            if (out[0]) {
-                snprintf(candidate, sizeof(candidate), "%s %.*s", out, (int)word_len, word_start);
-            } else {
-                snprintf(candidate, sizeof(candidate), "%.*s", (int)word_len, word_start);
-            }
+            copy_safe(candidate, sizeof(candidate), out);
+            size_t used = strlen(candidate);
+            if (used && used < sizeof(candidate) - 1) candidate[used++] = ' ';
+            size_t available = sizeof(candidate) - used - 1;
+            size_t copied = word_len < available ? word_len : available;
+            while (copied && ((unsigned char)word_start[copied] & 0xC0) == 0x80) --copied;
+            memcpy(candidate + used, word_start, copied);
+            candidate[used + copied] = 0;
 
             if (text_width_for_scale(candidate, scale) <= wrap || !out[0]) {
                 copy_safe(out, sizeof(out), candidate);
@@ -317,16 +324,24 @@ static void draw_text_lines(float x, float y, float scale, float wrap, u32 color
                 rest++;
             }
             if (*rest) {
-                trim_text_to_width(out, sizeof(out), scale, wrap, true);
+                fit_text_to_width(out, sizeof(out), scale, wrap, true, true);
             }
         }
 
-        draw_text(x, y + (float)line * line_step, scale, color, "%s", out);
+        float line_y = y + (float)line * line_step;
+        if (line_y >= clip_top && line_y + 30 * scale <= clip_bottom)
+            draw_text(x, line_y, scale, color, "%s", out);
 
         if (forced_newline) {
             continue;
         }
     }
+}
+
+static void draw_text_lines(float x, float y, float scale, float wrap, u32 color,
+                            const char *text, int max_lines, float line_step)
+{
+    draw_text_lines_clipped(x, y, scale, wrap, color, text, max_lines, line_step, -10000, 10000);
 }
 
 static void draw_text_centered(float center_x, float y, float scale, u32 color, const char *fmt, ...)
@@ -765,14 +780,6 @@ enum {
     BROWSE_ART_TEX_H = 256
 };
 
-static C3D_Tex g_browse_art_tex;
-static Tex3DS_SubTexture g_browse_art_subtex;
-static bool g_browse_art_tex_ready;
-static bool g_browse_art_loaded;
-static bool g_browse_art_failed;
-static int g_browse_art_w;
-static int g_browse_art_h;
-static char g_browse_art_id[80];
 
 static const u8 BROWSE_TILE_REMAP[64] = {
     0x00, 0x01, 0x08, 0x09, 0x02, 0x03, 0x0A, 0x0B,
@@ -855,101 +862,10 @@ static bool browse_item_prefers_poster_art(const MediaItem *item)
            strcmp(item->type, "BoxSet") == 0;
 }
 
-static void browse_art_target_size(const MediaItem *item, int *out_w, int *out_h)
-{
-    if (browse_item_prefers_poster_art(item)) {
-        *out_w = BROWSE_POSTER_ART_W;
-        *out_h = BROWSE_POSTER_ART_H;
-    } else {
-        *out_w = BROWSE_LANDSCAPE_ART_W;
-        *out_h = BROWSE_LANDSCAPE_ART_H;
-    }
-}
 
-static void browse_set_art_size(int w, int h)
-{
-    if (w < 1) {
-        w = 1;
-    }
-    if (h < 1) {
-        h = 1;
-    }
-    if (w > BROWSE_ART_TEX_W) {
-        w = BROWSE_ART_TEX_W;
-    }
-    if (h > BROWSE_ART_TEX_H) {
-        h = BROWSE_ART_TEX_H;
-    }
 
-    g_browse_art_w = w;
-    g_browse_art_h = h;
-    g_browse_art_subtex.width = (u16)w;
-    g_browse_art_subtex.height = (u16)h;
-    g_browse_art_subtex.left = 0.0f;
-    g_browse_art_subtex.right = (float)w / (float)BROWSE_ART_TEX_W;
-    g_browse_art_subtex.top = 1.0f;
-    g_browse_art_subtex.bottom = 1.0f - ((float)h / (float)BROWSE_ART_TEX_H);
-}
 
-static bool browse_art_texture_init(void)
-{
-    if (g_browse_art_tex_ready) {
-        return true;
-    }
 
-    memset(&g_browse_art_tex, 0, sizeof(g_browse_art_tex));
-    if (!C3D_TexInit(&g_browse_art_tex, BROWSE_ART_TEX_W, BROWSE_ART_TEX_H, GPU_RGB565)) {
-        return false;
-    }
-    C3D_TexSetFilter(&g_browse_art_tex, GPU_LINEAR, GPU_LINEAR);
-    C3D_TexSetWrap(&g_browse_art_tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
-
-    browse_set_art_size(BROWSE_LANDSCAPE_ART_W, BROWSE_LANDSCAPE_ART_H);
-
-    g_browse_art_tex_ready = true;
-    return true;
-}
-
-static void browse_art_texture_free(void)
-{
-    if (g_browse_art_tex_ready) {
-        C3D_TexDelete(&g_browse_art_tex);
-        memset(&g_browse_art_tex, 0, sizeof(g_browse_art_tex));
-        g_browse_art_tex_ready = false;
-    }
-    g_browse_art_loaded = false;
-    g_browse_art_failed = false;
-    g_browse_art_w = 0;
-    g_browse_art_h = 0;
-    g_browse_art_id[0] = 0;
-}
-
-static void browse_fill_fallback_art(u16 *pixels, int view_w, int view_h)
-{
-    if (!pixels) {
-        return;
-    }
-    u16 bg = rgb565_from_rgb(15, 20, 27);
-    u16 line = rgb565_from_rgb(0, 164, 220);
-    u16 line2 = rgb565_from_rgb(170, 92, 195);
-    u16 pad = rgb565_from_rgb(10, 13, 18);
-    for (int y = 0; y < BROWSE_ART_TEX_H; y++) {
-        for (int x = 0; x < BROWSE_ART_TEX_W; x++) {
-            u16 color = pad;
-            if (x < view_w && y < view_h) {
-                color = bg;
-            }
-            if (y < 4 && x < view_w) {
-                color = line;
-            } else if (y >= view_h - 4 && y < view_h && x < view_w) {
-                color = line2;
-            } else if (x < view_w && y < view_h && ((x + y) & 31) < 2) {
-                color = rgb565_from_rgb(28, 39, 50);
-            }
-            pixels[y * BROWSE_ART_TEX_W + x] = color;
-        }
-    }
-}
 
 static bool browse_scale_into_art_texture(u16 *tex_pixels, const u16 *src, int src_w, int src_h,
                                           int max_w, int max_h, bool fill_frame)
@@ -1044,94 +960,7 @@ static void browse_extrude_art_edges(u16 *tex_pixels, int view_w, int view_h)
     }
 }
 
-static bool browse_fetch_primary_art(const MediaItem *item)
-{
-    if (!item || !item->id[0] || !g_cfg.server[0] || !g_cfg.token[0]) {
-        return false;
-    }
-    if (!browse_art_texture_init()) {
-        return false;
-    }
 
-    u16 *decoded = (u16 *)malloc(JPEG_PIXELS_CAP * sizeof(u16));
-    u16 *tex_pixels = (u16 *)malloc(BROWSE_ART_TEX_W * BROWSE_ART_TEX_H * sizeof(u16));
-    u16 *tiled_pixels = (u16 *)malloc(BROWSE_ART_TEX_W * BROWSE_ART_TEX_H * sizeof(u16));
-    if (!decoded || !tex_pixels || !tiled_pixels) {
-        free(decoded);
-        free(tex_pixels);
-        free(tiled_pixels);
-        return false;
-    }
-
-    char enc_id[160];
-    char path[320];
-    int max_w = 0;
-    int max_h = 0;
-    browse_art_target_size(item, &max_w, &max_h);
-    browse_set_art_size(max_w, max_h);
-    url_encode(item->id, enc_id, sizeof(enc_id));
-    snprintf(path, sizeof(path),
-             "/Items/%s/Images/Primary?fillWidth=%d&fillHeight=%d&quality=90&format=jpg",
-             enc_id, max_w, max_h);
-
-    bool ok = false;
-    HttpResponse res;
-    Result ret = api_get(path, &res);
-    if (R_SUCCEEDED(ret) && res.status >= 200 && res.status < 300 && res.body && res.size > 0) {
-        int img_w = 0;
-        int img_h = 0;
-        unsigned jpg_status = 0;
-        if (decode_jpeg_rgb565((const u8 *)res.body, res.size, decoded, &img_w, &img_h, &jpg_status)) {
-            if (browse_scale_into_art_texture(tex_pixels, decoded, img_w, img_h,
-                                              max_w, max_h, true)) {
-                browse_extrude_art_edges(tex_pixels, max_w, max_h);
-                browse_set_art_size(max_w, max_h);
-                browse_swizzle_rgb565(tex_pixels, tiled_pixels, BROWSE_ART_TEX_W, BROWSE_ART_TEX_H);
-                C3D_TexUpload(&g_browse_art_tex, tiled_pixels);
-                C3D_TexFlush(&g_browse_art_tex);
-                ok = true;
-            }
-        }
-    }
-    free_response(&res);
-
-    free(decoded);
-    free(tex_pixels);
-    free(tiled_pixels);
-    return ok;
-}
-
-static void browse_ensure_art_for_item(const MediaItem *item)
-{
-    const char *id = item ? item->id : "";
-    if (strcmp(g_browse_art_id, id) == 0) {
-        return;
-    }
-
-    copy_safe(g_browse_art_id, sizeof(g_browse_art_id), id);
-    g_browse_art_loaded = false;
-    g_browse_art_failed = false;
-
-    if (browse_fetch_primary_art(item)) {
-        g_browse_art_loaded = true;
-    } else {
-        u16 *tex_pixels = (u16 *)malloc(BROWSE_ART_TEX_W * BROWSE_ART_TEX_H * sizeof(u16));
-        u16 *tiled_pixels = (u16 *)malloc(BROWSE_ART_TEX_W * BROWSE_ART_TEX_H * sizeof(u16));
-        int max_w = 0;
-        int max_h = 0;
-        browse_art_target_size(item, &max_w, &max_h);
-        browse_set_art_size(max_w, max_h);
-        if (tex_pixels && tiled_pixels && browse_art_texture_init()) {
-            browse_fill_fallback_art(tex_pixels, max_w, max_h);
-            browse_swizzle_rgb565(tex_pixels, tiled_pixels, BROWSE_ART_TEX_W, BROWSE_ART_TEX_H);
-            C3D_TexUpload(&g_browse_art_tex, tiled_pixels);
-            C3D_TexFlush(&g_browse_art_tex);
-        }
-        free(tex_pixels);
-        free(tiled_pixels);
-        g_browse_art_failed = true;
-    }
-}
 
 static void browse_format_meta(const MediaItem *item, char *out, size_t outsz)
 {
@@ -1166,184 +995,27 @@ static void browse_format_meta(const MediaItem *item, char *out, size_t outsz)
     }
 }
 
-static void draw_browse_art(float x, float y)
-{
-    int art_w = g_browse_art_w > 0 ? g_browse_art_w : BROWSE_LANDSCAPE_ART_W;
-    int art_h = g_browse_art_h > 0 ? g_browse_art_h : BROWSE_LANDSCAPE_ART_H;
-    C2D_DrawRectSolid(x - 2, y - 2, 0, art_w + 4, art_h + 4, 0xFF07090C);
-    C2D_DrawRectSolid(x - 1, y - 1, 0, art_w + 2, art_h + 2, 0xFF2A323B);
-    if (g_browse_art_tex_ready) {
-        C2D_Image img = {&g_browse_art_tex, &g_browse_art_subtex};
-        C2D_DrawImageAt(img, x, y, 0.1f, NULL, 1.0f, 1.0f);
-    } else {
-        C2D_DrawRectSolid(x, y, 0, art_w, art_h, 0xFF121820);
-    }
-    if (g_browse_art_failed) {
-        C2D_DrawRectSolid(x, y + art_h - 16, 0, art_w, 16, 0xCC101820);
-        draw_text_centered(x + art_w * 0.5f, y + art_h - 13.0f, 0.25f, COL_MUTED, "%s", "No image");
-    }
-}
 
-static void draw_browse_preview(MediaItem *items, int count, const char *title)
-{
-    draw_header(title);
 
-    if (count <= 0) {
-        C2D_DrawRectSolid(24, 72, 0, 352, 86, COL_PAPER);
-        draw_text(40, 88, 0.55f, COL_WHITE, "%s", tr(TR_NO_ITEMS_FOUND));
-        draw_text_wrap(40, 116, 0.42f, 310, COL_MUTED, "%s", tr(TR_REFRESH_X_BACK_B));
-        return;
-    }
 
-    clamp_browse_selection(count, BROWSE_VISIBLE_ROWS);
 
-    MediaItem *item = &items[g_selected];
-
-    char name[128];
-    char meta[96];
-    char kind[48];
-    clipped_name(item->name, name, sizeof(name), 58);
-    browse_format_meta(item, meta, sizeof(meta));
-    clipped_name(display_item_kind(item), kind, sizeof(kind), 24);
-
-    bool poster_art = browse_item_prefers_poster_art(item);
-    float art_x = poster_art ? 18.0f : 14.0f;
-    float art_y = poster_art ? 47.0f : 52.0f;
-    float reserved_art_w = poster_art ? (float)BROWSE_POSTER_ART_W : (float)BROWSE_LANDSCAPE_ART_W;
-    float text_x = art_x + reserved_art_w + 22.0f;
-    float text_w = 388.0f - text_x;
-    if (text_w < 120.0f) {
-        text_w = 120.0f;
-    }
-    float meta_y = poster_art ? 106.0f : 112.0f;
-    float badge_y = poster_art ? 128.0f : 133.0f;
-    float overview_x = poster_art ? text_x : 24.0f;
-    float overview_y = poster_art ? 163.0f : 164.0f;
-    float overview_w = poster_art ? text_w : 352.0f;
-
-    C2D_DrawRectSolid(0, 35, 0, 400, 205, 0xFF0D1014);
-    C2D_DrawRectSolid(0, 35, 0, 400, 181, 0xFF171C22);
-    if (!poster_art) {
-        C2D_DrawRectSolid(0, 157, 0, 400, 59, 0xFF11161A);
-    }
-    C2D_DrawRectSolid(0, 216, 0, 400, 1, 0xFF303842);
-
-    draw_browse_art(art_x, art_y);
-
-    draw_text_lines(text_x, 54, poster_art ? 0.51f : 0.57f, text_w, COL_WHITE,
-                    name, 2, poster_art ? 18.0f : 20.0f);
-    draw_text(text_x, meta_y, 0.39f, COL_MUTED, "%s", meta);
-
-    C2D_DrawRectSolid(text_x, badge_y, 0, 102, 21, COL_PRIMARY_DARK);
-    C2D_DrawRectSolid(text_x, badge_y + 20, 0, 102, 1, COL_SECONDARY);
-    draw_text(text_x + 8, badge_y + 4, 0.33f, COL_WHITE, "%s", kind);
-
-    if (item->media_source_count > 1) {
-        draw_text(text_x + 112, badge_y + 5, 0.29f, COL_MUTED, "%d src", item->media_source_count);
-    } else if (item->is_missing || item->is_virtual_item || item->is_place_holder) {
-        draw_text(text_x + 112, badge_y + 5, 0.29f, COL_SECONDARY, "%s", "virtual");
-    }
-
-    char position[24];
-    snprintf(position, sizeof(position), "%d/%d", g_selected + 1, count);
-    C2D_DrawRectSolid(330, badge_y, 0, 50, 21, 0xFF242A32);
-    draw_text_centered(355.0f, badge_y + 5, 0.29f, COL_MUTED, "%s", position);
-
-    if (item->overview[0]) {
-        draw_text_lines(overview_x, overview_y, 0.35f, overview_w, COL_MUTED,
-                        item->overview, 3, 14.5f);
-    }
-}
-
-static void browse_preload_selected_art(void)
-{
-    MediaItem *items = NULL;
-    int count = 0;
-
-    if (g_view == VIEW_LIBRARIES) {
-        items = g_libraries;
-        count = g_library_count;
-    } else if (g_view == VIEW_ITEMS || g_view == VIEW_SEARCH) {
-        items = g_items;
-        count = g_item_count;
-    } else {
-        return;
-    }
-
-    if (count <= 0) {
-        return;
-    }
-
-    clamp_browse_selection(count, BROWSE_VISIBLE_ROWS);
-    browse_ensure_art_for_item(&items[g_selected]);
-}
-
-static void draw_browse_bottom_list(MediaItem *items, int count, const char *title, const char *help)
-{
-    C2D_DrawRectSolid(0, 0, 0, 320, 240, 0xFF12161B);
-    C2D_DrawRectSolid(0, 0, 0, 320, 28, 0xFF1E232A);
-    C2D_DrawRectSolid(0, 28, 0, 320, 2, COL_SECONDARY);
-
-    char short_title[48];
-    clipped_name(title ? title : "", short_title, sizeof(short_title), 22);
-    draw_text(12, 7, 0.35f, COL_WHITE, "%s", short_title);
-
-    if (count <= 0) {
-        draw_text_wrap(18, 52, 0.43f, 284, COL_WHITE, "%s", tr(TR_NO_ITEMS_FOUND));
-        draw_text_wrap(18, 84, 0.34f, 284, COL_MUTED, "%s", tr(TR_REFRESH_X_BACK_B));
-        return;
-    }
-
-    clamp_browse_selection(count, BROWSE_VISIBLE_ROWS);
-
-    char counter[24];
-    snprintf(counter, sizeof(counter), "%d/%d", g_selected + 1, count);
-    draw_text(270, 8, 0.32f, COL_MUTED, "%s", counter);
-
-    for (int row = 0; row < BROWSE_VISIBLE_ROWS && g_scroll + row < count; row++) {
-        int idx = g_scroll + row;
-        float y = 38.0f + row * 32.0f;
-        bool sel = idx == g_selected;
-        u32 fill = sel ? 0xFF0B6386 : ((idx & 1) ? 0xFF1B2730 : 0xFF172129);
-        C2D_DrawRectSolid(10, y, 0, 300, 27, fill);
-        C2D_DrawRectSolid(10, y, 0, 4, 27, sel ? COL_SECONDARY : 0xFF39414B);
-        C2D_DrawRectSolid(10, y + 26, 0, 300, 1, sel ? COL_SECONDARY : 0x55000000);
-
-        char row_name[72];
-        char row_kind[36];
-        clipped_name(items[idx].name, row_name, sizeof(row_name), 28);
-        clipped_name(display_item_kind(&items[idx]), row_kind, sizeof(row_kind), 12);
-        draw_text(21, y + 6, 0.36f, sel ? COL_WHITE : COL_MUTED, "%s", row_name);
-        draw_text(240, y + 8, 0.29f, sel ? COL_WHITE : COL_MUTED, "%s", row_kind);
-    }
-
-    if (count > BROWSE_VISIBLE_ROWS) {
-        float rail_y = 38.0f;
-        float rail_h = 155.0f;
-        int max_scroll = count - BROWSE_VISIBLE_ROWS;
-        float thumb_h = ((float)BROWSE_VISIBLE_ROWS / (float)count) * rail_h;
-        if (thumb_h < 18.0f) {
-            thumb_h = 18.0f;
-        }
-        float thumb_y = rail_y + (max_scroll > 0 ? ((float)g_scroll / (float)max_scroll) * (rail_h - thumb_h) : 0.0f);
-        C2D_DrawRectSolid(314, rail_y, 0, 3, rail_h, 0xFF303844);
-        C2D_DrawRectSolid(314, thumb_y, 0, 3, thumb_h, COL_PRIMARY);
-    }
-
-    C2D_DrawRectSolid(0, 204, 0, 320, 36, 0xFF1B2027);
-    C2D_DrawRectSolid(0, 204, 0, 320, 1, COL_PRIMARY);
-    char help_buf[192];
-    if (g_view == VIEW_LIBRARIES || g_view == VIEW_ITEMS) {
-        snprintf(help_buf, sizeof(help_buf), "%s  SELECT %s", help ? help : "", tr(TR_SEARCH));
-    } else {
-        snprintf(help_buf, sizeof(help_buf), "%s", help ? help : "");
-    }
-    draw_text_wrap(12, 212, 0.29f, 296, COL_MUTED, "%s", help_buf);
-}
-
+#include "browse_ui.inc"
 #include "setup.inc"
 
+static void open_server_setup(void)
+{
+    browse_cancel_request();
+    setup_cancel_http();
+    g_setup_resume_session = false;
+    g_setup_started = true;
+    g_setup_row = 0;
+    g_tab_focus = false;
+    g_browse_repeat_key = 0;
+    setup_start_scan();
+}
+
 enum {
+    SETTINGS_ROW_SETUP,
     SETTINGS_ROW_QUALITY,
     SETTINGS_ROW_PLAYBACK,
     SETTINGS_ROW_BUFFER,
@@ -1380,6 +1052,9 @@ static void settings_value(int row, char *out, size_t outsz)
     }
     out[0] = 0;
     switch (row) {
+    case SETTINGS_ROW_SETUP:
+        copy_safe(out, outsz, "Choose / sign in");
+        break;
     case SETTINGS_ROW_QUALITY:
         format_quality_label(out, outsz, g_cfg.quality);
         break;
@@ -1422,6 +1097,8 @@ static void settings_value(int row, char *out, size_t outsz)
 static const char *settings_label(int row)
 {
     switch (row) {
+    case SETTINGS_ROW_SETUP:
+        return "Server setup";
     case SETTINGS_ROW_QUALITY:
         return tr(TR_DEFAULT_QUALITY);
     case SETTINGS_ROW_PLAYBACK:
@@ -1476,37 +1153,28 @@ static void draw_settings(void)
         C2D_DrawRectSolid(28, y + 20, 0, 344, 1, selected ? COL_SECONDARY : 0x55000000);
         char value[96];
         settings_value(idx, value, sizeof(value));
-        draw_text(36, y + 2, 0.37f, COL_WHITE, "%s", settings_label(idx));
-        draw_text(188, y + 2, 0.35f, selected ? COL_WHITE : COL_MUTED, "%s", value);
+        browse_label(36, y + 2, 146, 0.45f, COL_WHITE, settings_label(idx));
+        browse_label(188, y + 2, 176, 0.45f, selected ? COL_WHITE : COL_MUTED, value);
     }
 
-    if (g_settings_row == SETTINGS_ROW_BUFFER) {
-        draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
-                       "%s", tr(TR_BUFFER_NOTE));
-    } else if (g_settings_row == SETTINGS_ROW_AUDIO) {
-        int rate = settings_audio_sample_rate_normalized(g_cfg.audio_sample_rate);
-        if (!g_is_new_3ds && rate == 40000) {
-            draw_text_wrap(28, 217, 0.31f, 344, COL_SECONDARY,
-                           "%s", tr(TR_AUDIO_40000_NOTE));
-        } else {
-            draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
-                           "%s", tr(TR_AUDIO_240_NOTE));
-        }
-    } else if (g_settings_row == SETTINGS_ROW_BOTTOM_DIM) {
-        draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
-                       "%s", tr(TR_BOTTOM_DIM_NOTE));
-    } else if (g_settings_row == SETTINGS_ROW_LANGUAGE) {
-        draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
-                       "%s", tr(TR_LANGUAGE_NOTE));
-    } else if (g_settings_confirm_row == g_settings_row && osGetTime() < g_settings_confirm_until_ms) {
-        draw_text_wrap(28, 217, 0.31f, 344, COL_SECONDARY,
-                       "%s", tr(TR_CONFIRM_AGAIN));
-    } else {
-        draw_text_wrap(28, 217, 0.31f, 344, COL_MUTED,
-                       "%s", tr(TR_SETTINGS_HINT));
-    }
+    draw_text(28, 217, 0.45f, COL_WHITE, "A: Change   B: Back   D-pad: Move");
 
     draw_language_selector();
+}
+
+static void draw_settings_bottom(void)
+{
+    C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_BG);
+    draw_text_lines(12, 14, 0.5f, 296, COL_WHITE, tr(TR_SETTINGS_HELP_1), 2, 18);
+    draw_text_lines(12, 58, 0.5f, 296, COL_MUTED, tr(TR_SETTINGS_HELP_2), 3, 18);
+    const char *note = tr(TR_SETTINGS_HINT);
+    if (g_settings_row == SETTINGS_ROW_SETUP) note = "Find a server or open sign-in. Your current login stays saved.";
+    else if (g_settings_row == SETTINGS_ROW_BUFFER) note = tr(TR_BUFFER_NOTE);
+    else if (g_settings_row == SETTINGS_ROW_AUDIO) note = tr(TR_AUDIO_240_NOTE);
+    else if (g_settings_row == SETTINGS_ROW_BOTTOM_DIM) note = tr(TR_BOTTOM_DIM_NOTE);
+    else if (g_settings_row == SETTINGS_ROW_LANGUAGE) note = tr(TR_LANGUAGE_NOTE);
+    draw_text_lines(12, 127, 0.5f, 296, COL_WHITE, note, 3, 18);
+    draw_text_lines(12, 193, 0.45f, 296, COL_MUTED, g_status, 2, 16);
 }
 
 static void draw_detail(void)
@@ -1553,9 +1221,9 @@ static void render(void)
 {
     if ((g_view == VIEW_SETUP || g_view == VIEW_CONNECTING) && g_frame_counter > 1 && g_qc_state == QC_OFF)
         setup_tick_assets();
-    browse_preload_selected_art();
-
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+    /* The previous GPU frame is complete before artwork is uploaded/evicted. */
+    browse_tick();
     C2D_TextBufClear(g_text);
 
     C2D_TargetClear(g_top, COL_BG);
@@ -1571,13 +1239,13 @@ static void render(void)
         draw_settings();
         break;
     case VIEW_LIBRARIES:
-        draw_browse_preview(g_libraries, g_library_count, tr(TR_LIBRARIES));
+        draw_browse_top();
         break;
     case VIEW_ITEMS:
-        draw_browse_preview(g_items, g_item_count, g_screen_title);
+        draw_browse_top();
         break;
     case VIEW_SEARCH:
-        draw_browse_preview(g_items, g_item_count, g_screen_title);
+        draw_browse_top();
         break;
     case VIEW_DETAIL:
         draw_detail();
@@ -1599,20 +1267,12 @@ static void render(void)
     } else if (g_view == VIEW_SETUP) {
         draw_setup_bottom();
     } else if (g_view == VIEW_SETTINGS) {
-        draw_bottom_help(tr(TR_SETTINGS_HELP_1),
-                         tr(TR_SETTINGS_HELP_2));
+        draw_settings_bottom();
     } else if (g_view == VIEW_PLAYBACK) {
         draw_bottom_help(tr(TR_PLAYBACK_HELP_1),
                          tr(TR_PLAYBACK_HELP_2));
-    } else if (g_view == VIEW_LIBRARIES) {
-        draw_browse_bottom_list(g_libraries, g_library_count, tr(TR_LIBRARIES),
-                                tr(TR_LIBRARIES_HELP_1));
-    } else if (g_view == VIEW_SEARCH) {
-        draw_browse_bottom_list(g_items, g_item_count, g_screen_title,
-                                tr(TR_SEARCH_HELP_1));
     } else {
-        draw_browse_bottom_list(g_items, g_item_count, g_screen_title,
-                                tr(TR_ITEMS_HELP_1));
+        draw_browse_bottom();
     }
 
     C3D_FrameEnd(0);
@@ -1633,6 +1293,7 @@ static void ui_graphics_init(void)
     g_top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
     g_bottom = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
     g_text = C2D_TextBufNew(8192);
+    g_measure_text = C2D_TextBufNew(1024);
     if (g_cfgu_ready) {
         g_font_kor = C2D_FontLoadSystem(CFG_REGION_KOR);
         g_font_chn = C2D_FontLoadSystem(CFG_REGION_CHN);
@@ -1651,6 +1312,10 @@ static void ui_graphics_exit(void)
         C2D_TextBufDelete(g_text);
         g_text = NULL;
     }
+    if (g_measure_text) {
+        C2D_TextBufDelete(g_measure_text);
+        g_measure_text = NULL;
+    }
     if (g_font_kor) {
         C2D_FontFree(g_font_kor);
         g_font_kor = NULL;
@@ -1664,7 +1329,7 @@ static void ui_graphics_exit(void)
         g_font_twn = NULL;
     }
     setup_free_wallpaper();
-    browse_art_texture_free();
+    browse_shutdown();
     C2D_Fini();
     C3D_Fini();
     if (g_cfgu_ready) {
@@ -1678,68 +1343,11 @@ static void ui_graphics_exit(void)
     g_ui_ready = false;
 }
 
-static void move_selection(int delta, int count)
-{
-    if (count <= 0) {
-        return;
-    }
-    g_selected += delta;
-    if (g_selected < 0) {
-        g_selected = count - 1;
-    }
-    if (g_selected >= count) {
-        g_selected = 0;
-    }
-}
-
-enum {
-    NAV_REPEAT_START_MS = 320,
-    NAV_REPEAT_INTERVAL_MS = 72
-};
-
-static int g_nav_repeat_dir;
-static View g_nav_repeat_view;
-static u64 g_nav_repeat_next_ms;
-
-static int nav_dir_from_keys(u32 keys)
-{
-    bool down = (keys & KEY_DOWN) != 0;
-    bool up = (keys & KEY_UP) != 0;
-    if (down == up) {
-        return 0;
-    }
-    return down ? 1 : -1;
-}
 
 static void reset_nav_repeat(void)
 {
-    g_nav_repeat_dir = 0;
-    g_nav_repeat_next_ms = 0;
-}
-
-static int repeated_nav_delta(u32 down, u32 held)
-{
-    int pressed_dir = nav_dir_from_keys(down);
-    u64 now = osGetTime();
-    if (pressed_dir != 0) {
-        g_nav_repeat_dir = pressed_dir;
-        g_nav_repeat_view = g_view;
-        g_nav_repeat_next_ms = now + NAV_REPEAT_START_MS;
-        return pressed_dir;
-    }
-
-    int held_dir = nav_dir_from_keys(held);
-    if (held_dir == 0 || held_dir != g_nav_repeat_dir || g_nav_repeat_view != g_view) {
-        reset_nav_repeat();
-        return 0;
-    }
-
-    if (now < g_nav_repeat_next_ms) {
-        return 0;
-    }
-
-    g_nav_repeat_next_ms = now + NAV_REPEAT_INTERVAL_MS;
-    return held_dir;
+    g_browse_repeat_key = 0;
+    g_browse_repeat_at = 0;
 }
 
 static void change_quality(int dir)
@@ -2013,6 +1621,9 @@ static void handle_settings(u32 down)
     }
 
     switch (g_settings_row) {
+    case SETTINGS_ROW_SETUP:
+        open_server_setup();
+        break;
     case SETTINGS_ROW_QUALITY:
         change_quality(1);
         break;
@@ -2111,10 +1722,10 @@ static void return_from_search(void)
         g_scroll = g_search_return_scroll;
         clamp_browse_selection(g_item_count, BROWSE_VISIBLE_ROWS);
     } else {
-        load_libraries();
-        g_selected = g_search_return_selected;
-        g_scroll = g_search_return_scroll;
-        clamp_browse_selection(g_library_count, BROWSE_VISIBLE_ROWS);
+        g_view = VIEW_LIBRARIES;
+        g_active_tab = g_nav_tab = 0;
+        g_current_parent_id[0] = g_current_parent_type[0] = g_current_parent_series_id[0] = 0;
+        g_stack_depth = 0;
     }
 }
 
@@ -2136,7 +1747,7 @@ static void open_search_keyboard(bool capture_return)
         return;
     }
 
-    load_search_results(query);
+    if (load_search_results(query)) g_tab_focus = false;
 }
 
 static void handle_input(u32 down, u32 held)
@@ -2154,93 +1765,62 @@ static void handle_input(u32 down, u32 held)
 
     handle_common(down);
 
-    if (g_view == VIEW_LIBRARIES) {
-        int nav_delta = repeated_nav_delta(down, held);
-        if (nav_delta != 0) {
-            move_selection(nav_delta, g_library_count);
+    if (browse_is_view()) {
+        browse_clamp();
+        if (down & (KEY_L | KEY_R)) {
+            g_nav_tab = g_active_tab + ((down & KEY_R) ? 1 : -1);
+            if (g_nav_tab < 0) g_nav_tab = g_library_count + 1;
+            if (g_nav_tab >= g_library_count + 2) g_nav_tab = 0;
+            browse_activate_tab();
+            return;
         }
+        browse_move(browse_repeat(down, held));
+        if (down & KEY_Y) { browse_cancel_request(); open_settings(); return; }
+        if (down & KEY_SELECT) { browse_cancel_request(); open_search_keyboard(true); return; }
         if (down & KEY_X) {
-            load_libraries();
-        }
-        if (down & KEY_Y) {
-            open_settings();
-        }
-        if (down & KEY_SELECT) {
-            open_search_keyboard(true);
+            browse_cancel_request();
+            for (int i = 0; i < BROWSE_CACHE_COUNT; ++i) g_browse_images[i].failed = false;
+            if (g_view == VIEW_LIBRARIES) load_libraries();
+            else if (g_view == VIEW_SEARCH) load_search_results(g_search_query);
+            else load_items_for_parent_ex(g_current_parent_id, g_screen_title,
+                                           g_current_parent_type, g_current_parent_series_id);
             return;
         }
         if (down & KEY_B) {
-            g_view = VIEW_SETUP;
-            set_status("%s", tr(TR_SETUP_OPENED));
+            browse_cancel_request();
+            if (g_tab_focus) g_tab_focus = false;
+            else if (g_view == VIEW_SEARCH) return_from_search();
+            else if (g_view == VIEW_ITEMS) pop_nav();
+            else if (g_home_row) g_home_row = 0;
+            else open_server_setup();
+            return;
         }
-        if ((down & KEY_A) && g_library_count > 0) {
-            push_nav("", tr(TR_LIBRARIES));
-            load_items_for_parent(g_libraries[g_selected].id, g_libraries[g_selected].name);
-        }
-    } else if (g_view == VIEW_ITEMS) {
-        int nav_delta = repeated_nav_delta(down, held);
-        if (nav_delta != 0) {
-            move_selection(nav_delta, g_item_count);
-        }
-        if (down & KEY_X) {
-            if (g_current_parent_id[0]) {
-                load_items_for_parent_ex(g_current_parent_id, g_screen_title,
-                                         g_current_parent_type, g_current_parent_series_id);
+        if (down & KEY_TOUCH) {
+            touchPosition touch;
+            hidTouchRead(&touch);
+            if (touch.py >= BROWSE_MENU_TOP && touch.py < BROWSE_MENU_BOTTOM) {
+                if (touch.px >= 10 && touch.px < 155) open_server_setup();
+                else if (touch.px >= 165 && touch.px < 310) { browse_cancel_request(); open_settings(); }
+                return;
+            }
+            if (touch.py >= BROWSE_ACTION_TOP && touch.py < BROWSE_ACTION_BOTTOM) {
+                MediaItem *item = browse_focused();
+                bool library = g_tab_focus || (g_view == VIEW_LIBRARIES && !g_home_row);
+                if (item && !library && touch.px >= 165) {
+                    browse_cancel_request();
+                    bool removed = item->is_favorite;
+                    if (toggle_favorite(item) && removed && g_view == VIEW_ITEMS &&
+                        !strcmp(g_current_parent_id, FAVORITES_PARENT_ID)) {
+                        int selected = g_selected;
+                        load_items_for_parent(FAVORITES_PARENT_ID, "Favorites");
+                        g_selected = selected;
+                    }
+                    g_browse_notice_until = osGetTime() + 3500;
+                } else if (touch.px >= 10 && touch.px <= 310) browse_activate_item();
+                return;
             }
         }
-        if (down & KEY_B) {
-            pop_nav();
-        }
-        if (down & KEY_Y) {
-            open_settings();
-        }
-        if (down & KEY_SELECT) {
-            open_search_keyboard(true);
-            return;
-        }
-        if ((down & KEY_A) && g_item_count > 0) {
-            MediaItem *item = &g_items[g_selected];
-            if (is_playable(item)) {
-                g_current = *item;
-                g_return_view = VIEW_ITEMS;
-                probe_playback();
-            } else {
-                push_nav(g_current_parent_id, g_screen_title);
-                load_items_for_media_item(item);
-            }
-        }
-    } else if (g_view == VIEW_SEARCH) {
-        int nav_delta = repeated_nav_delta(down, held);
-        if (nav_delta != 0) {
-            move_selection(nav_delta, g_item_count);
-        }
-        if (down & KEY_X) {
-            open_search_keyboard(false);
-            return;
-        }
-        if (down & KEY_SELECT) {
-            open_search_keyboard(false);
-            return;
-        }
-        if (down & KEY_B) {
-            return_from_search();
-            return;
-        }
-        if (down & KEY_Y) {
-            open_settings();
-            return;
-        }
-        if ((down & KEY_A) && g_item_count > 0) {
-            MediaItem *item = &g_items[g_selected];
-            if (is_playable(item)) {
-                g_current = *item;
-                g_return_view = VIEW_SEARCH;
-                probe_playback();
-            } else {
-                push_nav(SEARCH_NAV_PARENT_ID, g_screen_title);
-                load_items_for_media_item(item);
-            }
-        }
+        if (down & KEY_A) browse_activate_item();
     } else if (g_view == VIEW_DETAIL) {
         if (down & KEY_B) {
             g_view = VIEW_ITEMS;

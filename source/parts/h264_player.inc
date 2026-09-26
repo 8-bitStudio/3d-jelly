@@ -577,7 +577,7 @@ static bool play_stream_url(const char *url)
     } else {
         h264_report_start_ms = osGetTime();
         h264_report_started = true;
-        report_playback_start(0, false, false, g_cfg.volume_percent);
+        report_playback_start(g_play_start_ticks, false, false, g_cfg.volume_percent);
         set_play_status("%s", tr(TR_H264_PLAYING_STOP));
         player_console(&player, g_play_status);
         u64 last_console_ms = osGetTime();
@@ -601,7 +601,7 @@ static bool play_stream_url(const char *url)
                 paused_total += now_ms - h264_pause_started_ms;
             }
             u64 elapsed_ms = now_ms > h264_report_start_ms + paused_total ? now_ms - h264_report_start_ms - paused_total : 0;
-            u64 position_ticks = clamp_media_ticks(elapsed_ms * (TICKS_PER_SECOND / 1000ULL));
+            u64 position_ticks = clamp_media_ticks(g_play_start_ticks + elapsed_ms * (TICKS_PER_SECOND / 1000ULL));
             RemoteCommand remote_cmd;
             if (remote_control_poll(&remote_cmd)) {
                 if (remote_cmd.type == REMOTE_CMD_STOP) {
@@ -689,8 +689,9 @@ static bool play_stream_url(const char *url)
             paused_total += now_ms - h264_pause_started_ms;
         }
         u64 elapsed_ms = now_ms > h264_report_start_ms + paused_total ? now_ms - h264_report_start_ms - paused_total : 0;
-        u64 position_ticks = clamp_media_ticks(elapsed_ms * (TICKS_PER_SECOND / 1000ULL));
-        report_playback_stopped(position_ticks);
+        u64 position_ticks = clamp_media_ticks(g_play_start_ticks + elapsed_ms * (TICKS_PER_SECOND / 1000ULL));
+        g_mjpeg_resume_ticks = g_playback_ended_naturally && g_current.runtime_ticks ? g_current.runtime_ticks : position_ticks;
+        report_playback_stopped(g_mjpeg_resume_ticks);
     }
     if (!app_system_closing() && (h264_report_started || remote_started)) {
         remote_control_stop();
