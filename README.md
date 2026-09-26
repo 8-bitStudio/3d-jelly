@@ -7,6 +7,8 @@ The project is early, there will be bugs. 3dJelly is being actively worked on.
 ## Features
 
 - Username and password login through Jellyfin
+- Tap-to-select local Jellyfin servers (UDP discovery on port 7359)
+- Touchscreen User / Pass form with the server's branding splashscreen
 - Saved server, user, and token configuration on the SD card
 - Library and item browsing
 - 144p, 240p, and 240HQ available on old Nintendo 3ds systems. 360p and 480p are available on New Nintendo 3ds systems.
@@ -33,6 +35,27 @@ Current playback paths:
 - Azahar: can use the fallback path for testing when hardware video decode is not available.
 
 ## Server Setup
+
+On first launch, select a Jellyfin server found on your Wi-Fi, or tap **Add Server**
+to enter its address. Tap **Search Again** (or press X) to repeat discovery.
+The server must allow UDP port 7359 and be reachable from the 3DS's network.
+Discovery retries subnet broadcasts and probes UDP port 7359 directly on the
+local subnet (up to 1024 addresses; the device's /24 on larger networks).
+
+After selecting a server, tap **User**, **Pass**, then **Sign In**. D-pad and A
+also work. **Change Server** returns to discovery. Saved sessions still sign in
+automatically without flashing the sign-in form. While a saved session connects,
+a neutral loading screen is shown; B opens sign-in explicitly. Connection or
+session failures return to setup. Clear the saved login in Settings to sign out.
+
+The background uses Jellyfin's enabled branding splashscreen
+(`/Branding/Splashscreen?format=jpg`), with a dark fallback when unavailable.
+It loads in the background and caches the decoded image on the SD card. Large
+wallpapers use full-detail decoding and averaged downsampling because the splashscreen endpoint returns
+the original dimensions. Download/decode progress is shown on the sign-in screen;
+diagnostics are saved to `sdmc:/3dJelly/setup-network.log`. An
+unreachable saved server returns to discovery without blocking the initial UI.
+Quick Connect is not implemented yet.
 
 Use the local network address of your Jellyfin server. For example:
 

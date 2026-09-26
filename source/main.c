@@ -13,6 +13,7 @@
 #include <inttypes.h>
 #include <malloc.h>
 #include <netdb.h>
+#include <arpa/inet.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -111,6 +112,7 @@
 #define TICKS_PER_SECOND 10000000ULL
 
 typedef enum {
+    VIEW_CONNECTING,
     VIEW_SETUP,
     VIEW_SETTINGS,
     VIEW_LIBRARIES,
@@ -393,13 +395,8 @@ int main(void)
 
     load_config();
     apply_hardware_defaults();
-    if (g_cfg.token[0] && g_cfg.user_id[0]) {
-        if (!load_libraries()) {
-            g_view = VIEW_SETUP;
-        }
-    } else {
-        g_view = VIEW_SETUP;
-    }
+    g_setup_resume_session = g_cfg.server[0] && g_cfg.token[0] && g_cfg.user_id[0];
+    g_view = g_setup_resume_session ? VIEW_CONNECTING : VIEW_SETUP;
 
     while (app_keep_running()) {
         hidScanInput();
@@ -425,6 +422,8 @@ int main(void)
         remote_control_stop();
     }
     if (!system_closing) {
+        setup_stop_scan();
+        setup_cancel_http();
         curl_http_shutdown();
     }
     if (g_http_ready && !system_closing) {

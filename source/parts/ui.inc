@@ -129,6 +129,20 @@ static void ui_text_parse(C2D_Text *text, const char *src)
     }
 }
 
+static void ui_draw_readable_text(const C2D_Text *text, u32 flags, float x, float y,
+                                  float scale, u32 color, float wrap)
+{
+    /* A one-pixel outline keeps setup text legible over the server artwork.
+       Reuse the parsed glyphs for all passes to keep text-buffer use bounded. */
+    if (g_view == VIEW_SETUP) {
+        static const int offsets[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+        for (int i = 0; i < 4; i++)
+            C2D_DrawText(text, flags, x + offsets[i][0], y + offsets[i][1],
+                         0.49f, scale, scale, 0xEF000000, wrap);
+    }
+    C2D_DrawText(text, flags, x, y, 0.5f, scale, scale, color, wrap);
+}
+
 static void draw_text(float x, float y, float scale, u32 color, const char *fmt, ...)
 {
     char buf[384];
@@ -140,7 +154,7 @@ static void draw_text(float x, float y, float scale, u32 color, const char *fmt,
     C2D_Text t;
     ui_text_parse(&t, buf);
     C2D_TextOptimize(&t);
-    C2D_DrawText(&t, C2D_WithColor, x, y, 0.5f, scale, scale, color);
+    ui_draw_readable_text(&t, C2D_WithColor, x, y, scale, color, 0);
 }
 
 static void draw_text_wrap(float x, float y, float scale, float wrap, u32 color, const char *fmt, ...)
@@ -154,7 +168,7 @@ static void draw_text_wrap(float x, float y, float scale, float wrap, u32 color,
     C2D_Text t;
     ui_text_parse(&t, buf);
     C2D_TextOptimize(&t);
-    C2D_DrawText(&t, C2D_WithColor | C2D_WordWrap, x, y, 0.5f, scale, scale, color, wrap);
+    ui_draw_readable_text(&t, C2D_WithColor | C2D_WordWrap, x, y, scale, color, wrap);
 }
 
 static float text_width_for_scale(const char *text, float scale)
@@ -330,7 +344,7 @@ static void draw_text_centered(float center_x, float y, float scale, u32 color, 
     float height = 0.0f;
     C2D_TextGetDimensions(&t, scale, scale, &width, &height);
     (void)height;
-    C2D_DrawText(&t, C2D_WithColor, center_x - width * 0.5f, y, 0.5f, scale, scale, color);
+    ui_draw_readable_text(&t, C2D_WithColor, center_x - width * 0.5f, y, scale, color, 0);
 }
 
 static void draw_text_plain_z(float x, float y, float z, float scale, u32 color, const char *text)
@@ -1327,33 +1341,7 @@ static void draw_browse_bottom_list(MediaItem *items, int count, const char *tit
     draw_text_wrap(12, 212, 0.29f, 296, COL_MUTED, "%s", help_buf);
 }
 
-static void draw_setup(void)
-{
-    draw_header(tr(TR_SETUP));
-    C2D_DrawRectSolid(18, 48, 0, 364, 146, COL_PAPER);
-
-    const char *labels[] = {tr(TR_SERVER), tr(TR_USERNAME), tr(TR_PASSWORD), tr(TR_LOGIN)};
-    char values[4][256];
-    snprintf(values[0], sizeof(values[0]), "%s", g_cfg.server);
-    snprintf(values[1], sizeof(values[1]), "%s", g_cfg.username[0] ? g_cfg.username : tr(TR_NOT_SET));
-    snprintf(values[2], sizeof(values[2]), "%s", g_cfg.password[0] ? tr(TR_STORED) : tr(TR_NOT_SET));
-    snprintf(values[3], sizeof(values[3]), "%s", g_cfg.token[0] ? tr(TR_REFRESH_TOKEN_SESSION) : tr(TR_AUTHENTICATE));
-    QualityProfile q = quality_profile();
-    char quality_label[16];
-    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-
-    for (int i = 0; i < 4; i++) {
-        float y = 58.0f + i * 32.0f;
-        if (i == g_setup_row) {
-            C2D_DrawRectSolid(28, y - 4, 0, 344, 24, COL_PRIMARY_DARK);
-        }
-        draw_text(36, y, 0.43f, COL_WHITE, "%s", labels[i]);
-        draw_text(130, y, 0.39f, i == g_setup_row ? COL_WHITE : COL_MUTED, "%s", values[i]);
-    }
-
-    draw_text(28, 204, 0.34f, COL_MUTED, tr(TR_QUALITY_SETUP_FMT), quality_label, q.width, q.height);
-    draw_text(28, 220, 0.34f, COL_MUTED, tr(TR_PLAYBACK_SETUP_FMT), g_is_new_3ds ? tr(TR_PLAYBACK_NEW3DS_LABEL) : tr(TR_PLAYBACK_OLD3DS_LABEL));
-}
+#include "setup.inc"
 
 enum {
     SETTINGS_ROW_QUALITY,
@@ -1563,6 +1551,8 @@ static void draw_playback(void)
 
 static void render(void)
 {
+    if ((g_view == VIEW_SETUP || g_view == VIEW_CONNECTING) && g_frame_counter > 1)
+        setup_tick_assets();
     browse_preload_selected_art();
 
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
@@ -1571,6 +1561,9 @@ static void render(void)
     C2D_TargetClear(g_top, COL_BG);
     C2D_SceneBegin(g_top);
     switch (g_view) {
+    case VIEW_CONNECTING:
+        draw_connecting(false);
+        break;
     case VIEW_SETUP:
         draw_setup();
         break;
@@ -1601,9 +1594,10 @@ static void render(void)
     } else if (language_select_visible()) {
         draw_bottom_help(tr(TR_LANGUAGE_SELECT_HELP),
                          "");
+    } else if (g_view == VIEW_CONNECTING) {
+        draw_connecting(true);
     } else if (g_view == VIEW_SETUP) {
-        draw_bottom_help(tr(TR_SETUP_HELP_1),
-                         tr(TR_SETUP_HELP_2));
+        draw_setup_bottom();
     } else if (g_view == VIEW_SETTINGS) {
         draw_bottom_help(tr(TR_SETTINGS_HELP_1),
                          tr(TR_SETTINGS_HELP_2));
@@ -1669,6 +1663,7 @@ static void ui_graphics_exit(void)
         C2D_FontFree(g_font_twn);
         g_font_twn = NULL;
     }
+    setup_free_wallpaper();
     browse_art_texture_free();
     C2D_Fini();
     C3D_Fini();
@@ -2085,38 +2080,6 @@ static void handle_settings(u32 down)
     }
 }
 
-static void handle_setup(u32 down)
-{
-    if (down & KEY_DOWN) {
-        g_setup_row = (g_setup_row + 1) % 4;
-    }
-    if (down & KEY_UP) {
-        g_setup_row = (g_setup_row + 3) % 4;
-    }
-    if (down & KEY_B) {
-        if (g_cfg.token[0] && g_cfg.user_id[0]) {
-            load_libraries();
-        }
-    }
-    if (down & KEY_A) {
-        if (g_setup_row == 0 && edit_text(tr(TR_SERVER_URL), g_cfg.server, sizeof(g_cfg.server), false)) {
-            normalize_server_url(g_cfg.server);
-            save_config();
-        } else if (g_setup_row == 1 && edit_text(tr(TR_USERNAME), g_cfg.username, sizeof(g_cfg.username), false)) {
-            g_cfg.token[0] = 0;
-            g_cfg.user_id[0] = 0;
-            save_config();
-        } else if (g_setup_row == 2 && edit_text(tr(TR_PASSWORD), g_cfg.password, sizeof(g_cfg.password), true)) {
-            g_cfg.token[0] = 0;
-            g_cfg.user_id[0] = 0;
-            save_config();
-        } else if (g_setup_row == 3) {
-            if (login_jellyfin()) {
-                load_libraries();
-            }
-        }
-    }
-}
 
 static void handle_common(u32 down)
 {
@@ -2178,7 +2141,7 @@ static void open_search_keyboard(bool capture_return)
 
 static void handle_input(u32 down, u32 held)
 {
-    if (g_view == VIEW_SETUP) {
+    if (g_view == VIEW_SETUP || g_view == VIEW_CONNECTING) {
         reset_nav_repeat();
         handle_setup(down);
         return;

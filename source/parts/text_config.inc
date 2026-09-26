@@ -656,9 +656,6 @@ static void save_config_secret(FILE *f, const char *key, const char *field, cons
 
 static void ensure_defaults(void)
 {
-    if (!g_cfg.server[0]) {
-        copy_safe(g_cfg.server, sizeof(g_cfg.server), "http://192.168.1.2:8096");
-    }
     normalize_server_url(g_cfg.server);
 
     if (!g_cfg.device_id[0]) {
