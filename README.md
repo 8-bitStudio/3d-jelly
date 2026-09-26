@@ -7,6 +7,7 @@ The project is early, there will be bugs. 3dJelly is being actively worked on.
 ## Features
 
 - Username and password login through Jellyfin
+- Quick Connect sign-in using approval from another signed-in Jellyfin device
 - Automatic local Jellyfin server discovery with tap-to-select results (UDP port 7359)
 - Touchscreen User / Pass form with the server's branding splashscreen
 - Saved server, user, and token configuration on the SD card
@@ -47,6 +48,15 @@ also work. **Change Server** returns to discovery. Saved sessions still sign in
 automatically without flashing the sign-in form. While a saved session connects,
 a neutral loading screen is shown; B opens sign-in explicitly. Connection or
 session failures return to setup. Clear the saved login in Settings to sign out.
+
+For password-free sign-in, tap **Use Quick Connect** below **Sign In**. On a phone
+or computer already signed in to the same Jellyfin server, open **Settings >
+Quick Connect**, enter the six-character code shown on the 3DS, and approve it.
+The 3DS signs in automatically and saves the session. The code expires after
+10 minutes; **Try Again** (or X) requests a new code after an error or expiry.
+**Cancel** (or B) returns to the sign-in form. Quick Connect must be enabled on
+the server; username/password sign-in remains available when it is disabled.
+See [Jellyfin's Quick Connect guide](https://jellyfin.org/docs/general/server/quick-connect/).
 
 The background uses Jellyfin's enabled branding splashscreen
 (`/Branding/Splashscreen?format=jpg`), with a dark fallback when unavailable.
@@ -98,6 +108,11 @@ make icon
 ```
 
 CIA packaging requires `makerom.exe`. Put it at `tools/makerom.exe` or make it available on `PATH`.
+
+On Windows with devkitPro MSYS2 and Python installed, run
+`python tests/run_quick_connect_tests.py` for the Quick Connect HTTP regression
+tests. They exercise approval, retries, disabled servers, expiry, cancellation,
+malformed responses, and saved-session protection against a local API fixture.
 
 ## Project Layout
 

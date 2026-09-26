@@ -423,6 +423,7 @@ int main(void)
     }
     if (!system_closing) {
         setup_stop_scan();
+        quick_connect_cancel();
         setup_cancel_http();
         curl_http_shutdown();
     }

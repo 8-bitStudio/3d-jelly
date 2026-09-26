@@ -1244,6 +1244,8 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     return button == SWKBD_BUTTON_RIGHT;
 }
 
+#include "auth_session.inc"
+
 static bool login_jellyfin(void)
 {
     if (!starts_with_http(g_cfg.server) || !g_cfg.username[0]) {
@@ -1268,22 +1270,13 @@ static bool login_jellyfin(void)
         return false;
     }
 
-    const char *end = res.body + res.size;
-    bool ok = json_get_string_range(res.body, end, "AccessToken", g_cfg.token, sizeof(g_cfg.token));
-    const char *user_obj = NULL;
-    const char *user_end = NULL;
-    if (json_get_object_range(res.body, end, "User", &user_obj, &user_end)) {
-        json_get_string_range(user_obj, user_end, "Id", g_cfg.user_id, sizeof(g_cfg.user_id));
-    }
-
+    bool ok = accept_authentication_response(res.body, res.size, false);
     free_response(&res);
-    if (!ok || !g_cfg.token[0] || !g_cfg.user_id[0]) {
+    if (!ok) {
         set_status("%s", tr(TR_STATUS_LOGIN_MISSING));
         return false;
     }
 
-    save_config();
-    g_session_capabilities_reported = false;
     report_session_capabilities();
     set_status(tr(TR_STATUS_LOGGED_IN_FMT), g_cfg.username);
     return true;

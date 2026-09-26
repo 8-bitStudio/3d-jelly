@@ -1,5 +1,6 @@
 /* Jellyfin LAN discovery and touch-first sign-in. Included after UI helpers. */
 #include "setup_socket.inc"
+static void quick_connect_cancel(void);
 
 typedef struct {
     char id[96];
@@ -63,6 +64,7 @@ static void setup_send_probe(struct in_addr address)
 
 static void setup_start_scan(void)
 {
+    quick_connect_cancel();
     g_view = VIEW_SETUP;
     setup_stop_scan();
     g_setup_choose_server = true;
@@ -175,6 +177,7 @@ static void setup_poll_scan(void)
 }
 
 #include "setup_assets.inc"
+#include "quick_connect.inc"
 
 static void setup_background(bool bottom)
 {
@@ -202,6 +205,17 @@ static void draw_connecting(bool bottom)
 static void draw_setup(void)
 {
     setup_background(false);
+    if (g_qc_state != QC_OFF) {
+        draw_text_centered(200, 23, 0.9f, COL_WHITE, "Quick Connect");
+        if (g_qc_code[0]) {
+            draw_text_centered(200, 69, 1.65f, COL_WHITE, "%s", g_qc_code);
+            draw_text_centered(200, 120, 0.45f, COL_WHITE, "Enter this code on your signed-in device.");
+        } else draw_text_centered(200, 93, 0.55f, COL_WHITE,
+            g_qc_state == QC_ERROR ? "Unable to sign in" : "Connecting to your server...");
+        C2D_DrawRectSolid(12, 170, 0, 376, 60, 0xC0111111);
+        draw_text_wrap(24, 178, 0.43f, 350, COL_WHITE, "%s", g_status);
+        return;
+    }
     draw_text_centered(200, 45, 1.05f, COL_WHITE, "3dJelly");
     draw_text_centered(200, 91, 0.65f, COL_WHITE,
                        "%s", g_setup_choose_server ? "Select Server" : "Please sign in");
@@ -232,6 +246,21 @@ static void setup_button(int y, int h, bool selected, bool primary, const char *
 static void draw_setup_bottom(void)
 {
     setup_background(true);
+    if (g_qc_state != QC_OFF) {
+        draw_text_centered(160, 8, 0.62f, COL_WHITE, "Use Quick Connect");
+        draw_text_wrap(24, 42, 0.47f, 272, COL_WHITE, "%s", g_qc_state == QC_ERROR ?
+            "Choose Try Again to request a new code, or Cancel to return to User and Pass sign-in." :
+            "On a phone or computer signed in to this Jellyfin server, open Settings > Quick Connect and enter the code above.");
+        u64 now = osGetTime();
+        if (g_qc_code[0] && g_qc_deadline > now) {
+            unsigned seconds = (unsigned)((g_qc_deadline - now) / 1000);
+            draw_text_centered(160, 145, 0.42f, COL_MUTED, "Code expires in %u:%02u", seconds / 60, seconds % 60);
+        }
+        if (g_qc_state == QC_ERROR)
+            setup_button(168, 29, g_qc_retry_selected, true, "Try Again  (X)");
+        setup_button(203, 29, !g_qc_retry_selected, false, "Cancel  (B)");
+        return;
+    }
     if (g_setup_choose_server) {
         draw_text_centered(160, 6, 0.62f, COL_WHITE, "Select Server");
         if (g_setup_server_row < g_setup_server_count) {
@@ -259,7 +288,7 @@ static void draw_setup_bottom(void)
         draw_text_centered(160, 6, 0.62f, COL_WHITE, "Please sign in");
         const char *labels[] = {"User", "Pass"};
         for (int i = 0; i < 2; i++) {
-            int y = 51 + i * 53;
+            int y = 45 + i * 51;
             draw_text(20, y - 18, 0.47f, COL_WHITE, "%s", labels[i]);
             C2D_DrawRectSolid(20, y, 0, 280, 31, g_setup_row == i ? 0xFFD0A400 : 0xFF444444);
             C2D_DrawRectSolid(22, y + 2, 0, 276, 27, 0xFF252525);
@@ -268,13 +297,15 @@ static void draw_setup_bottom(void)
             if (text_width_for_scale(value, 0.52f) > 258) trim_text_to_width(value, sizeof(value), 0.52f, 258, true);
             draw_text(30, y + 6, 0.52f, COL_WHITE, "%s", value);
         }
-        setup_button(152, 34, g_setup_row == 2, true, "Sign In");
-        setup_button(194, 28, g_setup_row == 3, false, "Change Server");
+        setup_button(136, 30, g_setup_row == 2, true, "Sign In");
+        setup_button(170, 28, g_setup_row == 3, false, "Use Quick Connect");
+        setup_button(204, 28, g_setup_row == 4, false, "Change Server");
     }
 }
 
 static void setup_select_server(const char *address)
 {
+    quick_connect_cancel();
     setup_cancel_http();
     g_setup_resume_session = false;
     if (strcmp(address, g_cfg.server)) {
@@ -317,6 +348,30 @@ static void handle_setup(u32 down)
         }
         return;
     }
+    if (g_qc_state != QC_OFF) {
+        bool cancel = (down & KEY_B) != 0;
+        bool retry = g_qc_state == QC_ERROR && (down & KEY_X);
+        if (g_qc_state == QC_ERROR && (down & (KEY_UP | KEY_DOWN)))
+            g_qc_retry_selected = !g_qc_retry_selected;
+        if (down & KEY_A) {
+            if (g_qc_state == QC_ERROR && g_qc_retry_selected) retry = true;
+            else cancel = true;
+        }
+        if (down & KEY_TOUCH) {
+            touchPosition p; hidTouchRead(&p);
+            if (p.px >= 20 && p.px < 300) {
+                if (p.py >= 203 && p.py < 232) cancel = true;
+                if (g_qc_state == QC_ERROR && p.py >= 168 && p.py < 197) retry = true;
+            }
+        }
+        if (cancel) {
+            quick_connect_cancel();
+            g_setup_row = 3;
+            set_status("Enter your User and Pass, or use Quick Connect.");
+        } else if (retry) quick_connect_start();
+        else quick_connect_tick();
+        return;
+    }
     setup_poll_scan();
     if (!g_cfg.server[0] && !g_setup_choose_server) setup_start_scan();
     bool activate = (down & KEY_A) != 0;
@@ -348,16 +403,17 @@ static void handle_setup(u32 down)
         } else setup_start_scan();
         return;
     }
-    if (down & KEY_DOWN) g_setup_row = (g_setup_row + 1) % 4;
-    if (down & KEY_UP) g_setup_row = (g_setup_row + 3) % 4;
+    if (down & KEY_DOWN) g_setup_row = (g_setup_row + 1) % 5;
+    if (down & KEY_UP) g_setup_row = (g_setup_row + 4) % 5;
     if (down & KEY_B) { setup_cancel_http(); g_setup_resume_session = false; setup_start_scan(); return; }
     if (down & KEY_TOUCH) {
         touchPosition p; hidTouchRead(&p);
         if (p.px >= 20 && p.px < 300) {
-            if (p.py >= 51 && p.py < 82) { g_setup_row = 0; activate = true; }
-            else if (p.py >= 104 && p.py < 135) { g_setup_row = 1; activate = true; }
-            else if (p.py >= 152 && p.py < 186) { g_setup_row = 2; activate = true; }
-            else if (p.py >= 194 && p.py < 222) { g_setup_row = 3; activate = true; }
+            if (p.py >= 45 && p.py < 76) { g_setup_row = 0; activate = true; }
+            else if (p.py >= 96 && p.py < 127) { g_setup_row = 1; activate = true; }
+            else if (p.py >= 136 && p.py < 166) { g_setup_row = 2; activate = true; }
+            else if (p.py >= 170 && p.py < 198) { g_setup_row = 3; activate = true; }
+            else if (p.py >= 204 && p.py < 232) { g_setup_row = 4; activate = true; }
         }
     }
     if (!activate) return;
@@ -372,5 +428,10 @@ static void handle_setup(u32 down)
         setup_cancel_http();
         g_setup_resume_session = false;
         if (login_jellyfin()) load_libraries();
+    } else if (g_setup_row == 3) {
+        setup_cancel_http();
+        g_setup_resume_session = false;
+        setup_stop_scan();
+        quick_connect_start();
     } else { setup_cancel_http(); g_setup_resume_session = false; setup_start_scan(); }
 }

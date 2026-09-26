@@ -1551,7 +1551,7 @@ static void draw_playback(void)
 
 static void render(void)
 {
-    if ((g_view == VIEW_SETUP || g_view == VIEW_CONNECTING) && g_frame_counter > 1)
+    if ((g_view == VIEW_SETUP || g_view == VIEW_CONNECTING) && g_frame_counter > 1 && g_qc_state == QC_OFF)
         setup_tick_assets();
     browse_preload_selected_art();
 
