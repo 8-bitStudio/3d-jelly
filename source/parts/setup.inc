@@ -1,4 +1,6 @@
 /* Jellyfin LAN discovery and touch-first sign-in. Included after UI helpers. */
+#include "setup_socket.inc"
+
 typedef struct {
     char id[96];
     char name[128];
@@ -71,9 +73,6 @@ static void setup_start_scan(void)
         return;
     }
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    struct sockaddr_in local = {0};
-    local.sin_family = AF_INET;
-    local.sin_addr.s_addr = INADDR_ANY;
     if (fd < 0) {
         setup_socket_failure("socket");
         return;
@@ -89,7 +88,7 @@ static void setup_start_scan(void)
         return;
     }
 #endif
-    if (bind(fd, (struct sockaddr *)&local, sizeof(local)) < 0) {
+    if (setup_bind_scan_socket(fd, (unsigned int)osGetTime()) < 0) {
         setup_socket_failure("bind");
         close(fd);
         return;

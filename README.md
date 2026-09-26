@@ -7,7 +7,7 @@ The project is early, there will be bugs. 3dJelly is being actively worked on.
 ## Features
 
 - Username and password login through Jellyfin
-- Tap-to-select local Jellyfin servers (UDP discovery on port 7359)
+- Automatic local Jellyfin server discovery with tap-to-select results (UDP port 7359)
 - Touchscreen User / Pass form with the server's branding splashscreen
 - Saved server, user, and token configuration on the SD card
 - Library and item browsing
@@ -55,7 +55,6 @@ wallpapers use full-detail decoding and averaged downsampling because the splash
 the original dimensions. Download/decode progress is shown on the sign-in screen;
 diagnostics are saved to `sdmc:/3dJelly/setup-network.log`. An
 unreachable saved server returns to discovery without blocking the initial UI.
-Quick Connect is not implemented yet.
 
 Use the local network address of your Jellyfin server. For example:
 
