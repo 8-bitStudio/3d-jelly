@@ -1020,6 +1020,7 @@ enum {
     SETTINGS_ROW_PLAYBACK,
     SETTINGS_ROW_BUFFER,
     SETTINGS_ROW_AUDIO,
+    SETTINGS_ROW_MUSIC,
     SETTINGS_ROW_BOTTOM_DIM,
     SETTINGS_ROW_SERVER,
     SETTINGS_ROW_USERNAME,
@@ -1067,6 +1068,9 @@ static void settings_value(int row, char *out, size_t outsz)
     case SETTINGS_ROW_AUDIO:
         format_audio_rate_label(out, outsz, g_cfg.audio_sample_rate);
         break;
+    case SETTINGS_ROW_MUSIC:
+        snprintf(out, outsz, "%s / %s", g_cfg.music.sample_rate == 44100 ? "44.1 kHz" : g_cfg.music.sample_rate == 32000 ? "32 kHz" : "48 kHz", g_cfg.music.channels == 1 ? "Mono" : "Stereo");
+        break;
     case SETTINGS_ROW_BOTTOM_DIM:
         format_bottom_dim_label(out, outsz, g_cfg.bottom_dim_seconds);
         break;
@@ -1106,7 +1110,9 @@ static const char *settings_label(int row)
     case SETTINGS_ROW_BUFFER:
         return tr(TR_STREAM_BUFFER);
     case SETTINGS_ROW_AUDIO:
-        return tr(TR_AUDIO_RATE);
+        return "Video audio rate";
+    case SETTINGS_ROW_MUSIC:
+        return "Music sound";
     case SETTINGS_ROW_BOTTOM_DIM:
         return tr(TR_BOTTOM_DIM);
     case SETTINGS_ROW_SERVER:
@@ -1171,6 +1177,7 @@ static void draw_settings_bottom(void)
     if (g_settings_row == SETTINGS_ROW_SETUP) note = "Find a server or open sign-in. Your current login stays saved.";
     else if (g_settings_row == SETTINGS_ROW_BUFFER) note = tr(TR_BUFFER_NOTE);
     else if (g_settings_row == SETTINGS_ROW_AUDIO) note = tr(TR_AUDIO_240_NOTE);
+    else if (g_settings_row == SETTINGS_ROW_MUSIC) note = "Set music quality, stereo or mono, buffering and volume. Music starts at 48 kHz, 16-bit stereo.";
     else if (g_settings_row == SETTINGS_ROW_BOTTOM_DIM) note = tr(TR_BOTTOM_DIM_NOTE);
     else if (g_settings_row == SETTINGS_ROW_LANGUAGE) note = tr(TR_LANGUAGE_NOTE);
     draw_text_lines(12, 127, 0.5f, 296, COL_WHITE, note, 3, 18);
@@ -1253,6 +1260,12 @@ static void render(void)
     case VIEW_PLAYBACK:
         draw_playback();
         break;
+    case VIEW_MUSIC:
+        draw_music_top();
+        break;
+    case VIEW_MUSIC_SETTINGS:
+        draw_music_settings_top();
+        break;
     }
 
     C2D_TargetClear(g_bottom, COL_PAPER);
@@ -1268,6 +1281,10 @@ static void render(void)
         draw_setup_bottom();
     } else if (g_view == VIEW_SETTINGS) {
         draw_settings_bottom();
+    } else if (g_view == VIEW_MUSIC) {
+        draw_music_bottom();
+    } else if (g_view == VIEW_MUSIC_SETTINGS) {
+        draw_music_settings_bottom();
     } else if (g_view == VIEW_PLAYBACK) {
         draw_bottom_help(tr(TR_PLAYBACK_HELP_1),
                          tr(TR_PLAYBACK_HELP_2));
@@ -1561,6 +1578,7 @@ static void settings_reset_defaults(void)
     g_cfg.playback_mode = PLAYBACK_MODE_AUTO;
     g_cfg.stream_buffer_kb = SETTINGS_BUFFER_KB_DEFAULT;
     g_cfg.audio_sample_rate = default_audio_sample_rate();
+    g_cfg.music = music_sound_defaults();
     g_cfg.bottom_dim_seconds = BOTTOM_DIM_DEFAULT_SECONDS;
     save_config();
     char quality_label[16];
@@ -1635,6 +1653,9 @@ static void handle_settings(u32 down)
         break;
     case SETTINGS_ROW_AUDIO:
         change_audio_rate_setting(1);
+        break;
+    case SETTINGS_ROW_MUSIC:
+        open_music_settings();
         break;
     case SETTINGS_ROW_BOTTOM_DIM:
         change_bottom_dim_setting(1);
@@ -1752,6 +1773,8 @@ static void open_search_keyboard(bool capture_return)
 
 static void handle_input(u32 down, u32 held)
 {
+    if (g_view == VIEW_MUSIC) { handle_music_input(down); return; }
+    if (g_view == VIEW_MUSIC_SETTINGS) { handle_music_settings(down); return; }
     if (g_view == VIEW_SETUP || g_view == VIEW_CONNECTING) {
         reset_nav_repeat();
         handle_setup(down);
@@ -1788,7 +1811,8 @@ static void handle_input(u32 down, u32 held)
         }
         if (down & KEY_B) {
             browse_cancel_request();
-            if (g_tab_focus) g_tab_focus = false;
+            if (g_music_mode_focus) g_music_mode_focus = false;
+            else if (g_tab_focus) g_tab_focus = false;
             else if (g_view == VIEW_SEARCH) return_from_search();
             else if (g_view == VIEW_ITEMS) pop_nav();
             else if (g_home_row) g_home_row = 0;

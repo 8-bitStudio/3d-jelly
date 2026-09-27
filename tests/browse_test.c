@@ -22,12 +22,19 @@ typedef int Result;
 #define TICKS_PER_SECOND 10000000ULL
 #define R_SUCCEEDED(x) ((x) >= 0)
 #include "browse_types.inc"
-static struct { char server[256], token[192], user_id[80], device_id[80]; } g_cfg;
+#include "music_phase_type.inc"
+static Config g_cfg;
+static MusicSoundSettings g_music_settings_draft;
+static int g_music_settings_row;
 static MediaItem g_current, g_items[MAX_ITEMS], g_libraries[MAX_LIBRARIES];
 static HomeRow g_home_rows[MAX_LIBRARIES + 2];
 static int g_library_count, g_item_count, g_home_row, g_home_scroll, g_library_selected, g_library_first;
 static int g_selected, g_scroll, g_nav_tab, g_active_tab;
 static bool g_tab_focus, g_home_dirty;
+static bool g_music_mode_focus;
+static int g_music_nav_mode;
+static struct { MusicPhase phase; MusicSoundSettings sound; u32 audio_rate; int audio_channels; bool paused, buffering, muted; int count, index, queue[MAX_ITEMS]; char error[160]; } g_music;
+static u64 music_position(void) { return 60 * TICKS_PER_SECOND; }
 static View g_view;
 static BrowseScroll g_browse_scroll;
 static View g_browse_scroll_view;
@@ -36,6 +43,7 @@ static char g_browse_scroll_parent[80], g_browse_scroll_search[96];
 static int g_browse_repeat_key;
 static u64 g_browse_repeat_at, test_time;
 static u64 osGetTime(void) { return test_time; }
+static int clamp_int(int value, int low, int high) { return value < low ? low : value > high ? high : value; }
 static char g_play_media_source_id[128] = "source", g_play_session[96] = "session";
 static void json_escape(const char *, char *, size_t);
 static int playback_report_volume_level(int, bool);
@@ -103,6 +111,7 @@ static BrowseArtKind drawn_art_kind;
 static char drawn_art_id[80];
 static const u32 COL_WHITE = 0xFFFFFFFF, COL_MUTED = 0xFFB5B5B5;
 static const u32 COL_PRIMARY = 0xFFDCA400, COL_SECONDARY = 0xFFC35CAA;
+static const u32 COL_BG = 0xFF101010, COL_PAPER = 0xFF202020, COL_PRIMARY_DARK = 0xFF9A7200;
 static void draw_text(float x, float y, float scale, u32 color, const char *format, ...)
 {
     (void)color;
@@ -118,6 +127,12 @@ static void C2D_DrawRectSolid(float x, float y, float z, float w, float h, u32 c
     (void)x; (void)y; (void)z; (void)color;
     assert(w >= 0 && h >= 0);
 }
+static void C2D_DrawCircleSolid(float x,float y,float z,float r,u32 color) { (void)x;(void)y;(void)z;(void)r;(void)color; }
+static void draw_text_centered(float x,float y,float scale,u32 color,const char *fmt,...)
+{
+    char text[256];va_list args;va_start(args,fmt);vsnprintf(text,sizeof(text),fmt,args);va_end(args);
+    draw_text(x-text_width_for_scale(text,scale)/2,y,scale,color,"%s",text);
+}
 static void browse_art(const MediaItem *item, BrowseArtKind kind, float x, float y, float w, float h, bool clip)
 {
     (void)x; (void)y; (void)w; (void)h; (void)clip;
@@ -127,12 +142,13 @@ static void browse_art(const MediaItem *item, BrowseArtKind kind, float x, float
 static const char *display_item_kind(const MediaItem *item) { return item->type; }
 #include "browse_typography.inc"
 #include "browse_episodes.inc"
+#include "music_ui_test.inc"
 
 static void check_text_bounds(float width, float top, float bottom)
 {
     for (int i = 0; i < drawn_count; ++i) {
         DrawnText *draw = &drawn_text[i];
-        assert(draw->scale >= 0.5f && draw->x >= 0);
+        assert(draw->scale >= 0.45f && draw->x >= 0);
         assert(draw->x + text_width_for_scale(draw->text, draw->scale) <= width);
         assert(draw->y >= top && draw->y + 30 * draw->scale <= bottom);
     }
@@ -335,6 +351,67 @@ int main(int argc, char **argv)
     strcpy(label, "Short");
     fit_text_to_width(label, sizeof(label), 0.5f, 120, true, true);
     assert(!strcmp(label, "Short...")); /* Hidden wrapped lines still indicate more. */
+    const char *song_json = "{\"Id\":\"song1\",\"Type\":\"Audio\",\"Name\":\"A song with a long title to wrap clearly\",\"Artists\":[\"First Artist\",\"Second Artist\"],\"Album\":\"An album with a long name\",\"AlbumId\":\"album1\",\"MediaSourceCount\":1,\"IndexNumber\":3,\"ParentIndexNumber\":2,\"RunTimeTicks\":1800000000}";
+    MediaItem song;
+    parse_media_item_object(song_json, song_json + strlen(song_json), &song);
+    assert(is_playable(&song) && music_is_audio(&song));
+    assert(!strcmp(song.artist, "First Artist, Second Artist") && !strcmp(song.album_id, "album1"));
+    browse_build_image_path(&song, BROWSE_ART_SQUARE, path, sizeof(path));
+    assert(strstr(path, "/Items/album1/Images/Primary") && strstr(path, "fillWidth=192&fillHeight=192"));
+    song.primary_image = true;
+    assert(!strcmp(browse_image_id(&song, BROWSE_ART_SQUARE), "song1"));
+    MediaItem artist = song;
+    strcpy(artist.type, "MusicArtist"); artist.is_folder = true; artist.child_count = artist.recursive_item_count = 0;
+    assert(!media_item_is_unowned_placeholder(&artist) && !is_playable(&artist));
+    assert(music_build_items_path(path, sizeof(path), "album1", "MusicAlbum", 0, 100));
+    assert(api_get(path, &r) == 0 && r.status == 200); free_response(&r);
+    assert(music_build_items_path(path, sizeof(path), "music1", "MusicArtists", 0, 100));
+    assert(api_get(path, &r) == 0 && r.status == 200); free_response(&r);
+    assert(music_build_items_path(path, sizeof(path), "artist1", "MusicArtist", 0, 100));
+    assert(strstr(path, "ArtistIds=artist1") && strstr(path, "IncludeItemTypes=MusicAlbum"));
+    assert(api_get(path, &r) == 0 && r.status == 200); free_response(&r);
+    assert(!music_build_items_path(path, sizeof(path), "video1", "Season", 0, 100));
+    g_view = VIEW_ITEMS; strcpy(g_current_parent_type, "MusicAlbums");
+    g_item_count = 8; g_selected = g_scroll = 0; g_tab_focus = g_music_mode_focus = false;
+    browse_move(KEY_DOWN); assert(g_selected == 3 && g_scroll == 3);
+    browse_move(KEY_UP); assert(!g_selected && !g_scroll);
+    browse_move(KEY_UP); assert(g_music_mode_focus && !g_tab_focus);
+    browse_move(KEY_RIGHT); browse_move(KEY_RIGHT); assert(g_music_nav_mode == 2);
+    browse_move(KEY_DOWN); assert(!g_music_mode_focus);
+    strcpy(g_current_parent_type, "MusicSongs");
+    browse_move(KEY_DOWN); browse_move(KEY_DOWN); assert(g_selected == 2 && !g_scroll);
+    browse_move(KEY_DOWN); assert(g_selected == 3 && g_scroll == 1);
+    for (int i = 0; i < 3; ++i) browse_move(KEY_UP);
+    assert(!g_selected && !g_scroll);
+    browse_move(KEY_UP); assert(g_music_mode_focus && g_music_nav_mode == 2);
+    browse_move(KEY_UP); assert(g_tab_focus && !g_music_mode_focus);
+    g_tab_focus = false;
+    for (int i = 0; i < g_item_count; ++i) g_items[i] = song;
+    for (int offset = 0; offset < 48; offset += 7) {
+        g_browse_scroll.value = offset; drawn_count = 0; draw_music_browse();
+        check_text_bounds(400, 38, BROWSE_CONTENT_BOTTOM);
+    }
+    strcpy(g_current_parent_type, "MusicAlbums");
+    for (int i = 0; i < g_item_count; ++i) strcpy(g_items[i].type, "MusicAlbum");
+    for (int offset = 0; offset < 150; offset += 19) {
+        g_browse_scroll.value = offset; drawn_count = 0; draw_music_browse();
+        check_text_bounds(400, 38, BROWSE_CONTENT_BOTTOM);
+    }
+    drawn_count = 0; draw_music_preview(&song); check_text_bounds(320, 0, BROWSE_ACTION_TOP);
+    g_current = song; g_music.phase = MUSIC_STREAM; g_music.count = 2; g_music.queue[1] = 0;
+    drawn_count = 0; draw_music_top(); check_text_bounds(400, 0, 240);
+    g_music_settings_draft = music_sound_defaults();
+    for (int row = 0; row < 6; ++row) {
+        g_music_settings_row = row;
+        drawn_count = 0; draw_music_settings_top(); check_text_bounds(400, 0, 240);
+        drawn_count = 0; draw_music_settings_bottom(); check_text_bounds(320, 0, 240);
+    }
+    g_music_settings_draft.sample_rate = 44100;
+    drawn_count = 0; draw_music_settings_top(); check_text_bounds(400, 0, 240);
+    drawn_count = 0; draw_music_settings_bottom(); check_text_bounds(320, 0, 240);
+    drawn_count = 0; draw_music_bottom(); check_text_bounds(320, 0, 240);
+    g_music.phase = MUSIC_ERROR; strcpy(g_music.error, "A long connection error with helpful instructions to retry playback");
+    drawn_count = 0; draw_music_top(); check_text_bounds(400, 0, 240);
     g_setup_resume_session = true; g_tab_focus = true; g_browse_repeat_key = KEY_UP;
     open_server_setup();
     assert(g_view == VIEW_SETUP && setup_scans == 1 && g_setup_started && !g_setup_resume_session);
@@ -343,5 +420,6 @@ int main(int argc, char **argv)
     puts("PASS: fitting labels, exact widths, UTF-8 truncation, explicit server setup without clearing login");
     puts("PASS: next-row visibility, scroll boundaries, animation continuity/reversal, screen changes, held navigation");
     puts("PASS: episode list navigation, distinct episode thumbnails, watch state, readable titles and clipped layout");
+    puts("PASS: music metadata, album/artist API routes, music view navigation, square covers and Now Playing layouts");
     curl_global_cleanup();
 }

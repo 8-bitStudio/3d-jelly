@@ -17,7 +17,8 @@
 typedef enum {
     BROWSE_ART_LANDSCAPE,
     BROWSE_ART_POSTER,
-    BROWSE_ART_EPISODE
+    BROWSE_ART_EPISODE,
+    BROWSE_ART_SQUARE
 } BrowseArtKind;
 typedef struct {
     float value, from, target;
@@ -26,7 +27,7 @@ typedef struct {
 } BrowseScroll;
 typedef struct {
     char id[80];
-    bool poster, thumb, ready, failed;
+    bool poster, thumb, square, ready, failed;
     unsigned used;
     C3D_Tex tex;
     Tex3DS_SubTexture sub;
@@ -47,6 +48,14 @@ static u64 g_browse_notice_until;
 static BrowseScroll g_browse_scroll;
 static View g_browse_scroll_view;
 static char g_browse_scroll_parent[80], g_browse_scroll_search[96];
+static bool g_music_mode_focus;
+static int g_music_nav_mode;
+static bool music_browse_view(void);
+static bool music_track_list(void);
+static void draw_music_browse(void);
+static void draw_music_preview(const MediaItem *item);
+static void music_activate_mode(void);
+static const char *music_mode_name(int mode);
 
 static void browse_scroll_step(BrowseScroll *scroll, float target, u64 now)
 {
@@ -186,7 +195,15 @@ static void browse_clamp(void)
     } else {
         if (g_selected >= g_item_count) g_selected = g_item_count > 0 ? g_item_count - 1 : 0;
         if (g_selected < 0) g_selected = 0;
-        if (browse_is_episode_list()) {
+        if (music_track_list()) {
+            if (g_selected < g_scroll) g_scroll = g_selected;
+            if (g_selected >= g_scroll + 3) g_scroll = g_selected - 2;
+            int last = g_item_count > 3 ? g_item_count - 3 : 0;
+            if (g_scroll > last) g_scroll = last;
+            if (g_scroll < 0) g_scroll = 0;
+        } else if (music_browse_view()) {
+            g_scroll = g_selected / 3 * 3;
+        } else if (browse_is_episode_list()) {
             /* Keep both visible episodes in place until focus reaches an edge. */
             if (g_selected < g_scroll) g_scroll = g_selected;
             if (g_selected >= g_scroll + EPISODE_VISIBLE_ROWS) g_scroll = g_selected - EPISODE_VISIBLE_ROWS + 1;
@@ -209,13 +226,15 @@ static void browse_update_scroll(void)
         copy_safe(g_browse_scroll_parent, sizeof(g_browse_scroll_parent), g_current_parent_id);
         copy_safe(g_browse_scroll_search, sizeof(g_browse_scroll_search), g_search_query);
     }
-    float target = g_view == VIEW_LIBRARIES ? g_home_scroll : browse_is_episode_list() ?
+    float target = g_view == VIEW_LIBRARIES ? g_home_scroll : music_track_list() ? g_scroll * 48 :
+        music_browse_view() ? g_scroll / 3 * 150 : browse_is_episode_list() ?
         g_scroll * EPISODE_ROW_HEIGHT : (g_scroll / GRID_COLUMNS) * GRID_ROW_HEIGHT;
     browse_scroll_step(&g_browse_scroll, target, osGetTime());
 }
 
 static MediaItem *browse_focused(void)
 {
+    if (g_music_mode_focus && music_browse_view()) return NULL;
     if (g_tab_focus) {
         return g_nav_tab >= 2 && g_nav_tab - 2 < g_library_count ? &g_libraries[g_nav_tab - 2] : NULL;
     }
@@ -229,6 +248,7 @@ static MediaItem *browse_focused(void)
 
 static const char *browse_image_id(const MediaItem *item, BrowseArtKind kind)
 {
+    if (kind == BROWSE_ART_SQUARE && music_is_audio(item) && !item->primary_image && item->album_id[0]) return item->album_id;
     if (item->series_id[0] && !strcmp(item->type, "Episode") &&
         (kind == BROWSE_ART_POSTER || (kind == BROWSE_ART_LANDSCAPE && item->series_thumb)))
         return item->series_id;
@@ -245,18 +265,19 @@ static void browse_build_image_path(const MediaItem *item, BrowseArtKind kind, c
     char id[240];
     url_encode(browse_image_id(item, kind), id, sizeof(id));
     bool poster = kind == BROWSE_ART_POSTER;
+    bool square = kind == BROWSE_ART_SQUARE;
     snprintf(path, size, "/Items/%s/Images/%s?fillWidth=%d&fillHeight=%d&quality=85&format=jpg",
-             id, browse_image_is_thumb(item, kind) ? "Thumb" : "Primary", poster ? 112 : 184, poster ? 160 : 104);
+             id, browse_image_is_thumb(item, kind) ? "Thumb" : "Primary", square ? 192 : poster ? 112 : 184, square ? 192 : poster ? 160 : 104);
 }
 
 static BrowseImage *browse_find_image(const MediaItem *item, BrowseArtKind kind, bool create)
 {
     const char *id = browse_image_id(item, kind);
-    bool poster = kind == BROWSE_ART_POSTER, thumb = browse_image_is_thumb(item, kind);
+    bool poster = kind == BROWSE_ART_POSTER, thumb = browse_image_is_thumb(item, kind), square = kind == BROWSE_ART_SQUARE;
     int oldest = -1;
     for (int i = 0; i < BROWSE_CACHE_COUNT; ++i) {
         BrowseImage *entry = &g_browse_images[i];
-        if (entry->id[0] && !strcmp(entry->id, id) && entry->poster == poster && entry->thumb == thumb) {
+        if (entry->id[0] && !strcmp(entry->id, id) && entry->poster == poster && entry->thumb == thumb && entry->square == square) {
             entry->used = ++g_browse_image_clock;
             return entry;
         }
@@ -269,13 +290,14 @@ static BrowseImage *browse_find_image(const MediaItem *item, BrowseArtKind kind,
     copy_safe(entry->id, sizeof(entry->id), id);
     entry->poster = poster;
     entry->thumb = thumb;
+    entry->square = square;
     entry->used = ++g_browse_image_clock;
     return entry;
 }
 
 static bool browse_upload_image(BrowseImage *entry)
 {
-    int w = entry->poster ? 112 : 184, h = entry->poster ? 160 : 104;
+    int w = entry->square ? 192 : entry->poster ? 112 : 184, h = entry->square ? 192 : entry->poster ? 160 : 104;
     u16 *decoded = malloc(JPEG_PIXELS_CAP * sizeof(u16));
     u16 *pixels = malloc(256 * 256 * sizeof(u16));
     u16 *tiled = malloc(256 * 256 * sizeof(u16));
@@ -327,7 +349,9 @@ static bool browse_request_row(int row)
 
 static void browse_tick(void)
 {
-    if (!browse_is_view()) { g_browse_scroll.ready = false; return; }
+    bool playing_music = g_view == VIEW_MUSIC || (g_view == VIEW_MUSIC_SETTINGS && g_music.active);
+    if (!browse_is_view() && !playing_music) { g_browse_scroll.ready = false; return; }
+    if (!music_browse_view()) g_music_mode_focus = false;
     if (strcmp(g_browse_server, g_cfg.server) || strcmp(g_browse_user, g_cfg.user_id)) {
         browse_shutdown();
         copy_safe(g_browse_server, sizeof(g_browse_server), g_cfg.server);
@@ -340,10 +364,10 @@ static void browse_tick(void)
         memset(g_home_rows, 0, 2 * sizeof(HomeRow));
         g_home_dirty = false;
     }
-    browse_clamp();
+    if (!playing_music) browse_clamp();
     /* Advance even while a network request is pending. */
-    browse_update_scroll();
-    bool moving = g_browse_scroll.value != g_browse_scroll.target;
+    if (!playing_music) browse_update_scroll();
+    bool moving = !playing_music && g_browse_scroll.value != g_browse_scroll.target;
     if (g_browse_http) {
         int running = 0, remaining = 0;
         CURLMcode result = curl_multi_perform(g_browse_multi, &running);
@@ -370,10 +394,11 @@ static void browse_tick(void)
     }
     if (g_view == VIEW_LIBRARIES && browse_request_row(g_home_row)) return;
     if (moving) return;
-    MediaItem *focused = browse_focused();
-    BrowseArtKind focused_art = browse_is_episode_list() && !g_tab_focus ? BROWSE_ART_EPISODE :
+    MediaItem *focused = playing_music ? &g_current : browse_focused();
+    BrowseArtKind focused_art = music_is_item(focused) ? BROWSE_ART_SQUARE : browse_is_episode_list() && !g_tab_focus ? BROWSE_ART_EPISODE :
         browse_item_prefers_poster_art(focused) ? BROWSE_ART_POSTER : BROWSE_ART_LANDSCAPE;
     if (focused && browse_request_art(focused, focused_art)) return;
+    if (playing_music) return;
     if (g_view == VIEW_LIBRARIES) {
         /* Fetch the two watch rows early, then only visible recently-added rows. */
         if (browse_request_row(1) || browse_request_row(2)) return;
@@ -384,14 +409,17 @@ static void browse_tick(void)
             int count, *selected, *first;
             MediaItem *items = home_items(r, &count, &selected, &first);
             for (int i = *first; i < count && i < *first + (r < 3 ? HOME_LANDSCAPE_COLUMNS : GRID_COLUMNS); ++i)
-                if (browse_request_art(&items[i], r >= 3 ? BROWSE_ART_POSTER : BROWSE_ART_LANDSCAPE)) return;
+                if (browse_request_art(&items[i], music_is_item(&items[i]) ? BROWSE_ART_SQUARE : r >= 3 ? BROWSE_ART_POSTER : BROWSE_ART_LANDSCAPE)) return;
         }
+    } else if (music_browse_view()) {
+        for (int i = g_scroll; i < g_item_count && i < g_scroll + 6; ++i)
+            if (browse_request_art(&g_items[i], BROWSE_ART_SQUARE)) return;
     } else if (browse_is_episode_list()) {
         for (int i = g_scroll > 0 ? g_scroll - 1 : 0; i < g_item_count && i < g_scroll + 4; ++i)
             if (browse_request_art(&g_items[i], BROWSE_ART_EPISODE)) return;
     } else {
         for (int i = g_scroll; i < g_item_count && i < g_scroll + GRID_COLUMNS * 2; ++i)
-            if (browse_request_art(&g_items[i], BROWSE_ART_POSTER)) return;
+            if (browse_request_art(&g_items[i], music_is_item(&g_items[i]) ? BROWSE_ART_SQUARE : BROWSE_ART_POSTER)) return;
     }
 }
 
@@ -432,6 +460,16 @@ static void browse_art(const MediaItem *item, BrowseArtKind kind, float x, float
         if (!sub.height) return;
         C2D_Image image = { &entry->tex, &sub };
         C2D_DrawImageAt(image, x, sy, 0, NULL, w / sub.width, (ey - sy) / sub.height);
+    } else if (kind == BROWSE_ART_SQUARE) {
+        unsigned hue = 0;
+        for (const char *p = item->id; *p; ++p) hue = hue * 33 + (unsigned char)*p;
+        u32 color = 0xFF000000 | ((40 + hue % 55) << 16) | ((30 + (hue >> 8) % 45) << 8) | (55 + (hue >> 16) % 55);
+        browse_rect(x, y, w, h, color, clip);
+        if (y >= top && y + h <= bottom) {
+            C2D_DrawCircleSolid(x + w / 2, y + h / 2, 0, w * 0.34f, 0xFF252020);
+            C2D_DrawCircleSolid(x + w / 2, y + h / 2, 0, w * 0.12f, COL_SECONDARY);
+            C2D_DrawCircleSolid(x + w / 2, y + h / 2, 0, w * 0.035f, color);
+        }
     } else if (y + h / 2 - 8 >= top && y + h / 2 + 8 <= bottom) {
         browse_label(x + 5, y + h / 2 - 8, w - 10, 0.5f, COL_MUTED,
                      entry && entry->failed ? "No image" : display_item_kind(item));
@@ -441,8 +479,9 @@ static void browse_art(const MediaItem *item, BrowseArtKind kind, float x, float
 static void browse_card(MediaItem *item, bool poster, float x, float y, bool focused)
 {
     float w = poster ? 88 : 184, h = poster ? 122 : 104;
+    if (music_is_item(item)) h = w;
     if (focused) browse_rect(x - 2, y - 2, w + 4, h + 4, COL_PRIMARY, true);
-    browse_art(item, poster ? BROWSE_ART_POSTER : BROWSE_ART_LANDSCAPE, x, y, w, h, true);
+    browse_art(item, music_is_item(item) ? BROWSE_ART_SQUARE : poster ? BROWSE_ART_POSTER : BROWSE_ART_LANDSCAPE, x, y, w, h, true);
     if (item->is_favorite && y >= browse_clip_top() && y + 18 < BROWSE_CONTENT_BOTTOM) {
         C2D_DrawRectSolid(x + w - 20, y + 2, 0, 18, 18, 0xE0202020);
         draw_text(x + w - 18, y + 2, 0.5f, COL_SECONDARY, "\xE2\x99\xA5");
@@ -559,7 +598,9 @@ static void home_row_title(int row, char *out, size_t size)
 static void draw_browse_scroll_hint(void)
 {
     float top = browse_clip_top(), visible = BROWSE_CONTENT_BOTTOM - top;
-    float total = g_view == VIEW_LIBRARIES ? home_y(g_library_count + 3) : browse_is_episode_list() ?
+    float total = g_view == VIEW_LIBRARIES ? home_y(g_library_count + 3) : music_track_list() ?
+        (g_item_count > 3 ? g_item_count - 3 : 0) * 48 + visible : music_browse_view() ?
+        (g_item_count ? (g_item_count - 1) / 3 : 0) * 150 + visible : browse_is_episode_list() ?
         (g_item_count > EPISODE_VISIBLE_ROWS ? g_item_count - EPISODE_VISIBLE_ROWS : 0) * EPISODE_ROW_HEIGHT + visible :
         (g_item_count ? (g_item_count - 1) / GRID_COLUMNS : 0) * GRID_ROW_HEIGHT + visible;
     if (total > visible) {
@@ -572,13 +613,16 @@ static void draw_browse_scroll_hint(void)
         C2D_DrawRectSolid(396, top + position * (visible - thumb), 0, 3, thumb, COL_PRIMARY);
     }
     char hint[256];
-    if (g_tab_focus) copy_safe(hint, sizeof(hint), "Down: Browse   L/R: Libraries");
+    if (g_music_mode_focus && music_browse_view()) copy_safe(hint, sizeof(hint), "Left/Right: Choose   A: Open   Down: Browse");
+    else if (g_tab_focus) copy_safe(hint, sizeof(hint), "Down: Browse   L/R: Libraries");
     else if (g_view == VIEW_LIBRARIES) {
         if (g_home_row < g_library_count + 2) {
             char next[192];
             home_row_title(g_home_row + 1, next, sizeof(next));
             snprintf(hint, sizeof(hint), "Down: %s", next);
         } else copy_safe(hint, sizeof(hint), "Up: Previous rows");
+    } else if (music_browse_view()) {
+        copy_safe(hint, sizeof(hint), music_track_list() ? "A: Play   Up/Down: Songs   B: Back" : "A: Open   Up: Music views   B: Back");
     } else if (browse_is_episode_list()) {
         copy_safe(hint, sizeof(hint), !g_item_count ? "B: Back   L/R: Libraries" :
                   g_selected + 1 < g_item_count ? "Down: More episodes   B: Back" : "Up: Episodes   B: Back");
@@ -620,6 +664,8 @@ static void draw_browse_top(void)
                 browse_card(&items[i], poster, 10 + (i - *first) * (poster ? 97 : 196), y + HOME_CARD_TOP,
                             !g_tab_focus && r == g_home_row && i == *selected);
         }
+    } else if (music_browse_view()) {
+        draw_music_browse();
     } else {
         browse_label(10, 40, 308, 0.55f, COL_WHITE, g_screen_title);
         draw_text(325, 41, 0.45f, COL_MUTED, "%d/%d", g_item_count ? g_selected + 1 : 0, g_item_count);
@@ -652,7 +698,8 @@ static void draw_browse_bottom(void)
     if (item) {
         bool library = g_tab_focus || (g_view == VIEW_LIBRARIES && !g_home_row);
         bool episode = browse_is_episode_list() && !library;
-        if (episode) draw_episode_preview(item);
+        if (!library && music_is_item(item)) draw_music_preview(item);
+        else if (episode) draw_episode_preview(item);
         else {
             bool poster = browse_item_prefers_poster_art(item);
             float tx = poster ? 104 : 12, ty = poster ? 10 : 92, tw = poster ? 204 : 296;
@@ -668,25 +715,25 @@ static void draw_browse_bottom(void)
             if (poster && item->overview[0]) draw_text_lines(tx, ty + 63, 0.5f, tw, COL_MUTED, item->overview, 5, 17);
         }
         u64 resume = media_resume_position(item);
-        if (resume && !episode) {
+        if (resume && !episode && !music_is_item(item)) {
             char at[32];
             format_playback_time(resume, at, sizeof(at));
             draw_text(12, 162, 0.5f, COL_PRIMARY, "Resume at %s", at);
         }
         C2D_DrawRectSolid(10, BROWSE_ACTION_TOP, 0, library ? 300 : 145, 27, COL_PRIMARY_DARK);
         draw_text_centered(library ? 160 : 82, BROWSE_ACTION_TOP + 5, 0.5f, COL_WHITE,
-                           "%s", library ? "Open library" : is_playable(item) ? (resume ? "Resume" : "Play") : "Open");
+                           "%s", library ? "Open library" : is_playable(item) ? (resume && !music_is_audio(item) ? "Resume" : "Play") : "Open");
         if (!library) {
             C2D_DrawRectSolid(165, BROWSE_ACTION_TOP, 0, 145, 27, 0xFF30232D);
             draw_text_centered(237, BROWSE_ACTION_TOP + 5, 0.5f, item->is_favorite ? COL_SECONDARY : COL_WHITE,
                                "%s", item->is_favorite ? "Unfavorite" : "Favorite");
         }
     } else {
-        const char *title = g_tab_focus ? browse_tab_name(g_nav_tab) : "Your Jellyfin library";
+        const char *title = g_music_mode_focus ? music_mode_name(g_music_nav_mode) : g_tab_focus ? browse_tab_name(g_nav_tab) : "Your Jellyfin library";
         draw_text_centered(160, 54, 0.65f, COL_WHITE, "%s", title);
         draw_text_lines(20, 93, 0.5f, 280, COL_MUTED,
-                        g_tab_focus ? "Press A or tap Open." : "Choose a library or title on the top screen.", 2, 18);
-        if (g_tab_focus) {
+                        (g_tab_focus || g_music_mode_focus) ? "Press A or tap Open." : "Choose a library or title on the top screen.", 2, 18);
+        if (g_tab_focus || g_music_mode_focus) {
             C2D_DrawRectSolid(10, BROWSE_ACTION_TOP, 0, 300, 27, COL_PRIMARY_DARK);
             draw_text_centered(160, BROWSE_ACTION_TOP + 5, 0.5f, COL_WHITE, "Open");
         }
@@ -703,6 +750,7 @@ static void draw_browse_bottom(void)
 
 static void browse_activate_tab(void)
 {
+    g_music_mode_focus = false;
     int target = g_nav_tab;
     browse_cancel_request();
     bool ok = true;
@@ -725,6 +773,7 @@ static void browse_activate_tab(void)
 static void browse_activate_item(void)
 {
     if (g_tab_focus) { browse_activate_tab(); return; }
+    if (g_music_mode_focus) { music_activate_mode(); return; }
     MediaItem *item = browse_focused();
     if (!item) return;
     MediaItem copy = *item;
@@ -732,6 +781,8 @@ static void browse_activate_item(void)
     if (g_view == VIEW_LIBRARIES && !g_home_row) {
         g_nav_tab = g_library_selected + 2;
         browse_activate_tab();
+    } else if (music_is_audio(&copy)) {
+        music_start(&copy);
     } else if (is_playable(&copy)) {
         g_current = copy;
         g_return_view = g_view;
@@ -771,6 +822,21 @@ static void browse_move(u32 keys)
             home_items(g_home_row, &count, &selected, &first);
             *selected += dx;
         }
+    } else if (music_browse_view()) {
+        if (g_music_mode_focus) {
+            g_music_nav_mode = clamp_int(g_music_nav_mode + dx, 0, 2);
+            if (dy > 0) g_music_mode_focus = false;
+            if (dy < 0) { g_music_mode_focus = false; g_tab_focus = true; g_nav_tab = g_active_tab; }
+        } else {
+            int columns = music_track_list() ? 1 : 3;
+            if (dy < 0 && g_selected < columns) {
+                if (music_is_root_type(g_current_parent_type)) {
+                    g_music_mode_focus = true;
+                    g_music_nav_mode = music_mode_for_type(g_current_parent_type);
+                } else { g_tab_focus = true; g_nav_tab = g_active_tab; }
+            } else if (dy) g_selected += dy * columns;
+            else if (dx) g_selected += dx;
+        }
     } else if (browse_is_episode_list()) {
         if (dy < 0 && !g_selected) { g_tab_focus = true; g_nav_tab = g_active_tab; }
         else if (dy) g_selected += dy;
@@ -782,3 +848,5 @@ static void browse_move(u32 keys)
     }
     browse_clamp();
 }
+
+#include "music_ui.inc"

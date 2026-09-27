@@ -24,7 +24,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define APP_VERSION "0.5.3"
+#define APP_VERSION "0.4.2"
 #define CONFIG_DIR "sdmc:/3dJelly"
 #define CONFIG_PATH "sdmc:/3dJelly/config.ini"
 
@@ -118,7 +118,9 @@ typedef enum {
     VIEW_ITEMS,
     VIEW_SEARCH,
     VIEW_DETAIL,
-    VIEW_PLAYBACK
+    VIEW_PLAYBACK,
+    VIEW_MUSIC,
+    VIEW_MUSIC_SETTINGS
 } View;
 
 typedef enum {
@@ -165,6 +167,10 @@ typedef struct {
     char series_name[128];
     char season_id[80];
     char overview[256];
+    char artist[128];
+    char album[128];
+    char album_id[80];
+    bool primary_image;
     bool is_folder;
     bool is_missing;
     bool is_virtual_item;
@@ -202,6 +208,13 @@ typedef struct {
 } NavFrame;
 
 typedef struct {
+    int sample_rate;
+    int channels;
+    int buffer_kb;
+    int volume_percent;
+} MusicSoundSettings;
+
+typedef struct {
     char server[256];
     char username[96];
     char password[96];
@@ -213,6 +226,7 @@ typedef struct {
     int stream_buffer_kb;
     int audio_sample_rate;
     int volume_percent;
+    MusicSoundSettings music;
     int bottom_dim_seconds;
     int language;
 } Config;
@@ -389,6 +403,10 @@ static bool remote_http_post_json_quick(const char *path, const char *body, int 
 static void browse_cancel_request(void);
 static void browse_home_reset(void);
 static void browse_shutdown(void);
+static bool music_start(const MediaItem *item);
+static void music_stop(void);
+static void music_tick(void);
+static void handle_music_input(u32 down);
 
 static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 241, 360, 480};
 static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
@@ -400,10 +418,13 @@ static const int BOTTOM_DIM_LEVELS[] = {15, 30, 60, 120, 300, 0};
 #include "generated/lang.inc"
 #include "parts/app_core.inc"
 #include "parts/text_config.inc"
+#include "parts/music_common.inc"
 #include "parts/jellyfin_api.inc"
 #include "parts/websocket_remote.inc"
 #include "parts/h264_player.inc"
 #include "parts/mjpeg_player.inc"
+#include "parts/music_stream.inc"
+#include "parts/music_player.inc"
 #include "parts/ui.inc"
 
 int main(void)
@@ -427,6 +448,7 @@ int main(void)
     g_setup_resume_session = g_cfg.server[0] && g_cfg.token[0] && g_cfg.user_id[0];
     g_view = g_setup_resume_session ? VIEW_CONNECTING : VIEW_SETUP;
 
+    u64 music_draw_at = 0;
     while (app_keep_running()) {
         hidScanInput();
         u32 down = hidKeysDown();
@@ -440,10 +462,21 @@ int main(void)
             break;
         }
         g_frame_counter++;
+        music_tick();
+        /* Static album art and a progress bar do not need 60 full redraws/sec.
+         * Buttons redraw immediately; audio workers run independently. */
+        if (g_music.active && (g_view == VIEW_MUSIC || g_view == VIEW_MUSIC_SETTINGS)) {
+            u64 now = osGetTime();
+            if (!down && now < music_draw_at) { gspWaitForVBlank(); continue; }
+            bool still = g_view == VIEW_MUSIC_SETTINGS || (g_music.paused && !g_music.buffering) ||
+                g_music.phase == MUSIC_ENDED || g_music.phase == MUSIC_ERROR;
+            music_draw_at = now + (still ? 250 : 50);
+        } else music_draw_at = 0;
         render();
     }
 
     bool system_closing = app_system_closing();
+    music_stop();
     if (!system_closing) {
         save_config();
     }

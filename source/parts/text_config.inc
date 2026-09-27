@@ -654,6 +654,19 @@ static void save_config_secret(FILE *f, const char *key, const char *field, cons
     }
 }
 
+static MusicSoundSettings music_sound_defaults(void)
+{
+    return (MusicSoundSettings){48000, 2, 1024, 100};
+}
+
+static void music_sound_normalize(MusicSoundSettings *sound)
+{
+    if (sound->sample_rate != 32000 && sound->sample_rate != 44100 && sound->sample_rate != 48000) sound->sample_rate = 48000;
+    if (sound->channels != 1 && sound->channels != 2) sound->channels = 2;
+    if (sound->buffer_kb != 128 && sound->buffer_kb != 512 && sound->buffer_kb != 1024) sound->buffer_kb = 1024;
+    if (sound->volume_percent < 0 || sound->volume_percent > 100) sound->volume_percent = 100;
+}
+
 static void ensure_defaults(void)
 {
     normalize_server_url(g_cfg.server);
@@ -669,6 +682,7 @@ static void ensure_defaults(void)
     }
     g_cfg.stream_buffer_kb = settings_buffer_normalized_kb(g_cfg.stream_buffer_kb);
     g_cfg.audio_sample_rate = settings_audio_sample_rate_normalized(g_cfg.audio_sample_rate);
+    music_sound_normalize(&g_cfg.music);
     if (g_cfg.volume_percent < VOLUME_MIN_PERCENT || g_cfg.volume_percent > VOLUME_MAX_PERCENT) {
         g_cfg.volume_percent = VOLUME_DEFAULT_PERCENT;
     }
@@ -695,6 +709,11 @@ static void save_config(void)
     fprintf(f, "stream_buffer_kb=%d\n", g_cfg.stream_buffer_kb);
     fprintf(f, "audio_sample_rate=%d\n", g_cfg.audio_sample_rate);
     fprintf(f, "volume_percent=%d\n", g_cfg.volume_percent);
+    fprintf(f, "music_sample_rate=%d\n", g_cfg.music.sample_rate);
+    fprintf(f, "music_channels=%d\n", g_cfg.music.channels);
+    fprintf(f, "music_buffer_kb=%d\n", g_cfg.music.buffer_kb);
+    fprintf(f, "music_buffer_revision=1\n");
+    fprintf(f, "music_volume_percent=%d\n", g_cfg.music.volume_percent);
     fprintf(f, "bottom_dim_seconds=%d\n", g_cfg.bottom_dim_seconds);
     fprintf(f, "language=%d\n", g_cfg.language);
     fclose(f);
@@ -707,6 +726,7 @@ static void load_config(void)
     g_cfg.stream_buffer_kb = SETTINGS_BUFFER_KB_DEFAULT;
     g_cfg.audio_sample_rate = 0;
     g_cfg.volume_percent = -1;
+    g_cfg.music = music_sound_defaults();
     g_cfg.bottom_dim_seconds = BOTTOM_DIM_DEFAULT_SECONDS;
     g_cfg.language = LANG_EN;
     FILE *f = fopen(CONFIG_PATH, "r");
@@ -717,6 +737,7 @@ static void load_config(void)
 
     char password_enc[512] = "";
     char token_enc[512] = "";
+    bool music_buffer_revised = false;
     char line[768];
     while (fgets(line, sizeof(line), f)) {
         trim_newline(line);
@@ -751,6 +772,16 @@ static void load_config(void)
             g_cfg.audio_sample_rate = atoi(eq);
         } else if (strcmp(line, "volume_percent") == 0) {
             g_cfg.volume_percent = atoi(eq);
+        } else if (strcmp(line, "music_sample_rate") == 0) {
+            g_cfg.music.sample_rate = atoi(eq);
+        } else if (strcmp(line, "music_channels") == 0) {
+            g_cfg.music.channels = atoi(eq);
+        } else if (strcmp(line, "music_buffer_kb") == 0) {
+            g_cfg.music.buffer_kb = atoi(eq);
+        } else if (strcmp(line, "music_buffer_revision") == 0) {
+            music_buffer_revised = atoi(eq) >= 1;
+        } else if (strcmp(line, "music_volume_percent") == 0) {
+            g_cfg.music.volume_percent = atoi(eq);
         } else if (strcmp(line, "bottom_dim_seconds") == 0) {
             g_cfg.bottom_dim_seconds = atoi(eq);
         } else if (strcmp(line, "language") == 0) {
@@ -758,6 +789,9 @@ static void load_config(void)
         }
     }
     fclose(f);
+    /* Upgrade the previous default once; keep explicit smaller choices saved
+     * by this build, and retain the old 128 KB option if deliberately selected. */
+    if (!music_buffer_revised && g_cfg.music.buffer_kb == 512) g_cfg.music.buffer_kb = 1024;
     ensure_defaults();
 
     char decrypted[192];

@@ -6,7 +6,7 @@ static bool media_item_is_leaf_media_type(const MediaItem *item)
     return strcmp(item->type, "Movie") == 0 ||
            strcmp(item->type, "Episode") == 0 ||
            strcmp(item->type, "Video") == 0 ||
-           strcmp(item->type, "MusicVideo") == 0;
+           strcmp(item->type, "MusicVideo") == 0 || music_is_audio(item);
 }
 
 static bool media_item_is_unowned_placeholder(const MediaItem *item)
@@ -20,7 +20,7 @@ static bool media_item_is_unowned_placeholder(const MediaItem *item)
     if (!item->is_folder && strcmp(item->location_type, "Virtual") == 0) {
         return true;
     }
-    if (item->is_folder && item->child_count == 0 && item->recursive_item_count == 0) {
+    if (item->is_folder && strcmp(item->type, "MusicArtist") && item->child_count == 0 && item->recursive_item_count == 0) {
         return true;
     }
     if (!item->is_folder && media_item_is_leaf_media_type(item) && item->media_source_count == 0) {
@@ -66,6 +66,12 @@ static void parse_media_item_object(const char *os, const char *oe, MediaItem *i
     item->series_thumb = json_get_string_range(os, oe, "SeriesThumbImageTag", image_tag, sizeof(image_tag)) && image_tag[0];
     json_get_string_range(os, oe, "SeasonId", item->season_id, sizeof(item->season_id));
     json_get_string_range(os, oe, "Overview", item->overview, sizeof(item->overview));
+    music_parse_artists(os, oe, item->artist, sizeof(item->artist));
+    json_get_string_range(os, oe, "Album", item->album, sizeof(item->album));
+    json_get_string_range(os, oe, "AlbumId", item->album_id, sizeof(item->album_id));
+    const char *images, *images_end;
+    item->primary_image = json_get_object_range(os, oe, "ImageTags", &images, &images_end) &&
+        json_get_string_range(images, images_end, "Primary", image_tag, sizeof(image_tag)) && image_tag[0];
     json_get_bool_range(os, oe, "IsFolder", &item->is_folder);
     json_get_bool_range(os, oe, "IsMissing", &item->is_missing);
     json_get_bool_range(os, oe, "IsVirtualItem", &item->is_virtual_item);
@@ -861,7 +867,7 @@ static bool report_session_capabilities(void)
 
     const char *body =
         "{"
-        "\"PlayableMediaTypes\":[\"Video\"],"
+        "\"PlayableMediaTypes\":[\"Video\",\"Audio\"],"
         "\"SupportedCommands\":[\"PlayState\",\"DisplayMessage\",\"Mute\",\"Unmute\",\"ToggleMute\",\"SetVolume\",\"VolumeUp\",\"VolumeDown\"],"
         "\"SupportsMediaControl\":true,"
         "\"SupportsPersistentIdentifier\":true"
@@ -874,7 +880,7 @@ static bool report_session_capabilities(void)
     free_response(&res);
 
     if (!ok && unsupported) {
-        ret = api_post("/Sessions/Capabilities?playableMediaTypes=Video&supportedCommands=PlayState,DisplayMessage,Mute,Unmute,ToggleMute,SetVolume,VolumeUp,VolumeDown&supportsMediaControl=true&supportsPersistentIdentifier=true", NULL, true, &res);
+        ret = api_post("/Sessions/Capabilities?playableMediaTypes=Video,Audio&supportedCommands=PlayState,DisplayMessage,Mute,Unmute,ToggleMute,SetVolume,VolumeUp,VolumeDown&supportsMediaControl=true&supportsPersistentIdentifier=true", NULL, true, &res);
         ok = R_SUCCEEDED(ret) && res.status >= 200 && res.status < 300;
         unsupported = res.status == 404 || res.status == 405;
         free_response(&res);
@@ -1441,7 +1447,9 @@ static bool load_items_for_parent_ex(const char *parent_id, const char *title, c
     for (;;) {
         HttpResponse res;
         set_status(tr(TR_STATUS_LOADING_ITEMS_FMT), title && title[0] ? title : tr(TR_ITEMS_GENERIC), g_item_count);
-        if (show_seasons) {
+        if (music_build_items_path(path, sizeof(path), enc_parent, parent_type ? parent_type : "", start, ITEM_PAGE_SIZE)) {
+            /* Music albums, artists, and songs use explicit types and track order. */
+        } else if (show_seasons) {
             build_series_seasons_page_path(path, sizeof(path), enc_parent, start, ITEM_PAGE_SIZE);
         } else if (show_episodes) {
             build_season_episodes_page_path(path, sizeof(path), enc_series, enc_parent, start, ITEM_PAGE_SIZE);
@@ -1449,7 +1457,7 @@ static bool load_items_for_parent_ex(const char *parent_id, const char *title, c
             build_items_page_path(path, sizeof(path), enc_parent, start, ITEM_PAGE_SIZE, user_endpoint);
         }
         Result ret = api_get(path, &res);
-        if (!show_seasons && !show_episodes && !user_endpoint && start == 0 && parent_id[0] &&
+        if (!show_seasons && !show_episodes && !(parent_type && !strncmp(parent_type, "Music", 5)) && !user_endpoint && start == 0 && parent_id[0] &&
             (R_FAILED(ret) || res.status == HTTP_STATUS_NONE || res.status >= 400)) {
             free_response(&res);
             user_endpoint = true;
@@ -1519,7 +1527,7 @@ static bool load_items_for_media_item(const MediaItem *item)
     }
     /* Loading replaces g_items: do not keep pointers into that array. */
     MediaItem copy = *item;
-    return load_items_for_parent_ex(copy.id, copy.name, copy.type, copy.series_id);
+    return load_items_for_parent_ex(copy.id, copy.name, !strcmp(copy.collection_type, "music") ? "MusicAlbums" : copy.type, copy.series_id);
 }
 
 static bool load_search_results(const char *query)
@@ -1539,7 +1547,7 @@ static bool load_search_results(const char *query)
     for (;;) {
         char path[768];
         snprintf(path, sizeof(path),
-                 "/Users/%s/Items?SearchTerm=%s&Recursive=true&StartIndex=%d&Limit=%d&IncludeItemTypes=Movie,Series,Video,MusicVideo,BoxSet&EnableImages=true&ImageTypeLimit=1&EnableUserData=true&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
+                 "/Users/%s/Items?SearchTerm=%s&Recursive=true&StartIndex=%d&Limit=%d&IncludeItemTypes=Movie,Series,Video,MusicVideo,BoxSet,Audio,MusicAlbum,MusicArtist&EnableImages=true&ImageTypeLimit=1&EnableUserData=true&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
                  g_cfg.user_id, enc_query, start, ITEM_PAGE_SIZE);
 
         HttpResponse res;
@@ -1607,7 +1615,7 @@ static bool is_playable(const MediaItem *item)
     if (media_item_is_unowned_placeholder(item)) {
         return false;
     }
-    if (strcmp(item->type, "Audio") == 0) {
+    if (!strcmp(item->type, "MusicAlbum") || !strcmp(item->type, "MusicArtist")) {
         return false;
     }
     return strcmp(item->type, "Movie") == 0 ||
