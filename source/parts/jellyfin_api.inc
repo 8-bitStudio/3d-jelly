@@ -1548,86 +1548,6 @@ static bool load_items_for_media_item(const MediaItem *item)
     return load_items_for_parent_ex(copy.id, copy.name, !strcmp(copy.collection_type, "music") ? "MusicAlbums" : copy.type, copy.series_id);
 }
 
-static bool load_search_results(const char *query)
-{
-    if (!g_cfg.token[0] || !g_cfg.user_id[0] || !query || !query[0]) {
-        return false;
-    }
-
-    char enc_query[192];
-    url_encode(query, enc_query, sizeof(enc_query));
-
-    int new_count = 0;
-    int start = 0;
-    int total = -1;
-    bool hit_cap = false;
-
-    for (;;) {
-        char path[768];
-        snprintf(path, sizeof(path),
-                 "/Users/%s/Items?SearchTerm=%s&Recursive=true&StartIndex=%d&Limit=%d&IncludeItemTypes=Movie,Series,Video,MusicVideo,BoxSet,Audio,MusicAlbum,MusicArtist&EnableImages=true&ImageTypeLimit=1&EnableUserData=true&EnableTotalRecordCount=true&Fields=Path,MediaSources,ParentId,Overview,PrimaryImageAspectRatio,ChildCount,RecursiveItemCount&IsMissing=false&IsUnaired=false",
-                 g_cfg.user_id, enc_query, start, ITEM_PAGE_SIZE);
-
-        HttpResponse res;
-        set_status(tr(TR_STATUS_SEARCHING_FMT), query);
-        Result ret = api_get(path, &res);
-        if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
-            set_http_failure(tr(TR_PREFIX_SEARCH_FAILED), &res, ret);
-            free_response(&res);
-            return false;
-        }
-
-        int raw_count = 0;
-        if (!parse_items(res.body, g_items, &new_count, MAX_ITEMS, true, &raw_count)) {
-            set_status("%s", tr(TR_STATUS_PARSE_ITEMS_FAIL));
-            free_response(&res);
-            return false;
-        }
-        int page_total = parse_total_record_count(res.body);
-        if (page_total >= 0) {
-            total = page_total;
-        }
-        free_response(&res);
-
-        if (raw_count <= 0) {
-            break;
-        }
-
-        start += raw_count;
-        if (new_count >= MAX_ITEMS) {
-            hit_cap = total < 0 || start < total || raw_count >= ITEM_PAGE_SIZE;
-            break;
-        }
-        if (total >= 0) {
-            if (start >= total) {
-                break;
-            }
-        } else if (raw_count < ITEM_PAGE_SIZE) {
-            break;
-        }
-    }
-
-    copy_safe(g_search_query, sizeof(g_search_query), query);
-    snprintf(g_screen_title, sizeof(g_screen_title), tr(TR_SEARCH_RESULTS_FMT), g_search_query);
-    g_current_parent_id[0] = 0;
-    g_current_parent_type[0] = 0;
-    g_current_parent_series_id[0] = 0;
-    g_item_count = new_count;
-    g_selected = 0;
-    g_scroll = 0;
-    g_stack_depth = 0;
-    g_view = VIEW_SEARCH;
-
-    if (g_item_count <= 0) {
-        set_status(tr(TR_STATUS_SEARCH_EMPTY_FMT), g_search_query);
-    } else if (hit_cap) {
-        set_status(tr(TR_STATUS_FIRST_ENTRIES_FMT), g_screen_title, g_item_count);
-    } else {
-        set_status(tr(TR_STATUS_SEARCH_RESULTS_FMT), g_item_count, g_search_query);
-    }
-    return true;
-}
-
 static bool is_playable(const MediaItem *item)
 {
     if (media_item_is_unowned_placeholder(item)) {
@@ -1800,7 +1720,7 @@ static void pop_nav(void)
 
     NavFrame f = g_stack[--g_stack_depth];
     if (strcmp(f.parent_id, SEARCH_NAV_PARENT_ID) == 0) {
-        load_search_results(g_search_query);
+        search_restore_view();
     } else if (f.parent_id[0]) {
         load_items_for_parent_ex(f.parent_id, f.title, f.parent_type, f.series_id);
     } else {

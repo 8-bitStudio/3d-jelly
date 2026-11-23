@@ -56,6 +56,18 @@ static void draw_music_browse(void);
 static void draw_music_preview(const MediaItem *item);
 static void music_activate_mode(void);
 static const char *music_mode_name(int mode);
+static void search_tick(void);
+static void search_clamp(void);
+static float search_scroll_target(void);
+static MediaItem *search_focused_item(void);
+static bool search_bar_focused(void);
+static void search_move(int dx, int dy);
+static bool search_request_art(void);
+static void search_draw_top(void);
+static void search_draw_bottom(void);
+static void search_play_song(const MediaItem *song);
+static void search_draw_icon(float cx, float cy, float size, u32 color);
+static void open_search_keyboard(bool capture_return);
 
 static void browse_scroll_step(BrowseScroll *scroll, float target, u64 now)
 {
@@ -187,7 +199,9 @@ static void browse_clamp(void)
     if (g_home_row < 0) g_home_row = 0;
     if (g_nav_tab < 0) g_nav_tab = 0;
     if (g_nav_tab >= g_library_count + 2) g_nav_tab = g_library_count + 1;
-    if (g_view == VIEW_LIBRARIES) {
+    if (g_view == VIEW_SEARCH) {
+        search_clamp();
+    } else if (g_view == VIEW_LIBRARIES) {
         int count, *selected, *first;
         home_items(g_home_row, &count, &selected, &first);
         if (*selected >= count) *selected = count > 0 ? count - 1 : 0;
@@ -234,7 +248,7 @@ static void browse_update_scroll(void)
         copy_safe(g_browse_scroll_parent, sizeof(g_browse_scroll_parent), g_current_parent_id);
         copy_safe(g_browse_scroll_search, sizeof(g_browse_scroll_search), g_search_query);
     }
-    float target = g_view == VIEW_LIBRARIES ? g_home_scroll : music_track_list() ? g_scroll * 48 :
+    float target = g_view == VIEW_SEARCH ? search_scroll_target() : g_view == VIEW_LIBRARIES ? g_home_scroll : music_track_list() ? g_scroll * 48 :
         music_browse_view() ? g_scroll / 3 * 150 : browse_is_episode_list() ?
         g_scroll * EPISODE_ROW_HEIGHT : (g_scroll / GRID_COLUMNS) * GRID_ROW_HEIGHT;
     browse_scroll_step(&g_browse_scroll, target, osGetTime());
@@ -242,6 +256,7 @@ static void browse_update_scroll(void)
 
 static MediaItem *browse_focused(void)
 {
+    if (g_view == VIEW_SEARCH) return search_focused_item();
     if (g_music_mode_focus && music_browse_view()) return NULL;
     if (g_tab_focus) {
         return g_nav_tab >= 2 && g_nav_tab - 2 < g_library_count ? &g_libraries[g_nav_tab - 2] : NULL;
@@ -358,6 +373,7 @@ static bool browse_request_row(int row)
 
 static void browse_tick(void)
 {
+    search_tick();
     bool playing_music = g_view == VIEW_MUSIC || (g_view == VIEW_MUSIC_SETTINGS && g_music.active);
     if (!browse_is_view() && !playing_music) { g_browse_scroll.ready = false; return; }
     if (!music_browse_view()) g_music_mode_focus = false;
@@ -404,11 +420,14 @@ static void browse_tick(void)
     if (g_view == VIEW_LIBRARIES && browse_request_row(g_home_row)) return;
     if (moving) return;
     MediaItem *focused = playing_music ? &g_current : browse_focused();
-    BrowseArtKind focused_art = music_is_item(focused) ? BROWSE_ART_SQUARE : browse_is_episode_list() && !g_tab_focus ? BROWSE_ART_EPISODE :
+    bool search_episode = g_view == VIEW_SEARCH && focused && (!strcmp(focused->type, "Episode") || !strcmp(focused->type, "Video") || !strcmp(focused->type, "MusicVideo"));
+    BrowseArtKind focused_art = music_is_item(focused) ? BROWSE_ART_SQUARE : (browse_is_episode_list() && !g_tab_focus) || search_episode ? BROWSE_ART_EPISODE :
         browse_item_prefers_poster_art(focused) ? BROWSE_ART_POSTER : BROWSE_ART_LANDSCAPE;
     if (focused && browse_request_art(focused, focused_art)) return;
     if (playing_music) return;
-    if (g_view == VIEW_LIBRARIES) {
+    if (g_view == VIEW_SEARCH) {
+        search_request_art();
+    } else if (g_view == VIEW_LIBRARIES) {
         /* Fetch the two watch rows early, then only visible recently-added rows. */
         if (browse_request_row(1) || browse_request_row(2)) return;
         for (int r = 0; r < g_library_count + 3; ++r) {
@@ -442,7 +461,7 @@ static void browse_label(float x, float y, float width, float scale, u32 color, 
 
 static float browse_clip_top(void)
 {
-    return g_view == VIEW_LIBRARIES ? BROWSE_CONTENT_TOP : GRID_CARD_TOP - 2;
+    return g_view == VIEW_LIBRARIES || g_view == VIEW_SEARCH ? BROWSE_CONTENT_TOP : GRID_CARD_TOP - 2;
 }
 
 static void browse_rect(float x, float y, float w, float h, u32 color, bool clip)
@@ -645,6 +664,7 @@ static void draw_browse_scroll_hint(void)
 
 static void draw_browse_top(void)
 {
+    if (g_view == VIEW_SEARCH) { search_draw_top(); return; }
     C2D_DrawRectSolid(0, 0, 0, 400, 240, COL_BG);
     if (g_view == VIEW_LIBRARIES) {
         for (int r = 0; r < g_library_count + 3; ++r) {
@@ -659,7 +679,7 @@ static void draw_browse_top(void)
             if (!count && y + 24 >= BROWSE_CONTENT_TOP && y + 40 < BROWSE_CONTENT_BOTTOM) {
                 const char *empty = r == 1 ? "No unfinished videos" : r == 2 ? "No next episodes yet" : "No items yet";
                 if (r && !g_home_rows[r - 1].loaded) empty = "Loading...";
-                if (r && g_home_rows[r - 1].failed) empty = "Could not load. X: retry";
+                if (r && g_home_rows[r - 1].failed) empty = "Could not load. SELECT: retry";
                 browse_label(14, y + 24, 370, 0.5f, COL_MUTED, empty);
             }
             bool poster = r >= 3;
@@ -700,8 +720,27 @@ static void draw_browse_top(void)
     draw_browse_scroll_hint();
 }
 
+static void draw_browse_menu(void)
+{
+    if (osGetTime() < g_browse_notice_until) {
+        C2D_DrawRectSolid(0, 154, 0, 320, 27, COL_PAPER);
+        browse_label(10, 161, 300, 0.5f, COL_WHITE, g_status);
+    }
+    static const char *const labels[3] = {"Search", "Server", "Settings"};
+    for (int i = 0; i < 3; ++i) {
+        float x = 10 + i * 103;
+        bool search = i == 0;
+        C2D_DrawRectSolid(x, BROWSE_MENU_TOP, 0, 94, 26, search ? 0xFF3A3024 : COL_PAPER);
+        if (search) {
+            search_draw_icon(x + 20, BROWSE_MENU_TOP + 13, 16, COL_PRIMARY);
+            draw_text(x + 32, BROWSE_MENU_TOP + 4, 0.5f, COL_WHITE, "%s", labels[i]);
+        } else draw_text_centered(x + 47, BROWSE_MENU_TOP + 4, 0.5f, COL_WHITE, "%s", labels[i]);
+    }
+}
+
 static void draw_browse_bottom(void)
 {
+    if (g_view == VIEW_SEARCH) { search_draw_bottom(); draw_browse_menu(); return; }
     MediaItem *item = browse_focused();
     C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_BG);
     if (item) {
@@ -747,14 +786,7 @@ static void draw_browse_bottom(void)
             draw_text_centered(160, BROWSE_ACTION_TOP + 5, 0.5f, COL_WHITE, "Open");
         }
     }
-    if (osGetTime() < g_browse_notice_until) {
-        C2D_DrawRectSolid(0, 154, 0, 320, 27, COL_PAPER);
-        browse_label(10, 161, 300, 0.5f, COL_WHITE, g_status);
-    }
-    C2D_DrawRectSolid(10, BROWSE_MENU_TOP, 0, 145, 26, COL_PAPER);
-    C2D_DrawRectSolid(165, BROWSE_MENU_TOP, 0, 145, 26, COL_PAPER);
-    draw_text_centered(82, BROWSE_MENU_TOP + 4, 0.5f, COL_WHITE, "Server setup");
-    draw_text_centered(237, BROWSE_MENU_TOP + 4, 0.5f, COL_WHITE, "Settings");
+    draw_browse_menu();
 }
 
 static void browse_activate_tab(void)
@@ -781,13 +813,16 @@ static void browse_activate_tab(void)
 
 static void browse_activate_item(void)
 {
+    if (g_view == VIEW_SEARCH && search_bar_focused()) { browse_cancel_request(); open_search_keyboard(true); return; }
     if (g_tab_focus) { browse_activate_tab(); return; }
     if (g_music_mode_focus) { music_activate_mode(); return; }
     MediaItem *item = browse_focused();
     if (!item) return;
     MediaItem copy = *item;
     browse_cancel_request();
-    if (g_view == VIEW_LIBRARIES && !g_home_row) {
+    if (g_view == VIEW_SEARCH && music_is_audio(&copy)) {
+        search_play_song(&copy);
+    } else if (g_view == VIEW_LIBRARIES && !g_home_row) {
         g_nav_tab = g_library_selected + 2;
         browse_activate_tab();
     } else if (music_is_audio(&copy)) {
@@ -820,6 +855,11 @@ static void browse_move(u32 keys)
 {
     int dx = (keys & KEY_RIGHT) ? 1 : (keys & KEY_LEFT) ? -1 : 0;
     int dy = (keys & KEY_DOWN) ? 1 : (keys & KEY_UP) ? -1 : 0;
+    if (g_view == VIEW_SEARCH) {
+        g_tab_focus = false;
+        search_move(dx, dy);
+        return;
+    }
     if (g_tab_focus) {
         g_nav_tab += dx;
         if (dy > 0) g_tab_focus = false;
@@ -859,3 +899,4 @@ static void browse_move(u32 keys)
 }
 
 #include "music_ui.inc"
+#include "search_ui.inc"

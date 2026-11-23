@@ -413,6 +413,8 @@ static bool remote_http_post_json_quick(const char *path, const char *body, int 
 static void browse_cancel_request(void);
 static void browse_home_reset(void);
 static void browse_shutdown(void);
+static void search_start(const char *query);
+static void search_restore_view(void);
 static bool music_start(const MediaItem *item);
 static void music_stop(void);
 static void music_tick(void);

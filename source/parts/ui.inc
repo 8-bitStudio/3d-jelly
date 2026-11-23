@@ -1798,7 +1798,7 @@ static void open_search_keyboard(bool capture_return)
         return;
     }
 
-    if (load_search_results(query)) g_tab_focus = false;
+    search_start(query);
 }
 
 static void handle_input(u32 down, u32 held)
@@ -1829,12 +1829,12 @@ static void handle_input(u32 down, u32 held)
         }
         browse_move(browse_repeat(down, held));
         if (down & KEY_Y) { browse_cancel_request(); open_settings(); return; }
-        if (down & KEY_SELECT) { browse_cancel_request(); open_search_keyboard(true); return; }
-        if (down & KEY_X) {
+        if (down & KEY_X) { browse_cancel_request(); open_search_keyboard(true); return; }
+        if (down & KEY_SELECT) {
             browse_cancel_request();
             for (int i = 0; i < BROWSE_CACHE_COUNT; ++i) g_browse_images[i].failed = false;
             if (g_view == VIEW_LIBRARIES) load_libraries();
-            else if (g_view == VIEW_SEARCH) load_search_results(g_search_query);
+            else if (g_view == VIEW_SEARCH) search_start(g_search_query);
             else load_items_for_parent_ex(g_current_parent_id, g_screen_title,
                                            g_current_parent_type, g_current_parent_series_id);
             return;
@@ -1853,12 +1853,18 @@ static void handle_input(u32 down, u32 held)
             touchPosition touch;
             hidTouchRead(&touch);
             if (touch.py >= BROWSE_MENU_TOP && touch.py < BROWSE_MENU_BOTTOM) {
-                if (touch.px >= 10 && touch.px < 155) open_server_setup();
-                else if (touch.px >= 165 && touch.px < 310) { browse_cancel_request(); open_settings(); }
+                browse_cancel_request();
+                if (touch.px >= 10 && touch.px < 104) open_search_keyboard(true);
+                else if (touch.px >= 113 && touch.px < 207) open_server_setup();
+                else if (touch.px >= 216 && touch.px < 310) open_settings();
                 return;
             }
             if (touch.py >= BROWSE_ACTION_TOP && touch.py < BROWSE_ACTION_BOTTOM) {
                 MediaItem *item = browse_focused();
+                if (g_view == VIEW_SEARCH && !item) {
+                    if (touch.px >= 10 && touch.px <= 310) { browse_cancel_request(); open_search_keyboard(true); }
+                    return;
+                }
                 bool library = g_tab_focus || (g_view == VIEW_LIBRARIES && !g_home_row);
                 if (item && !library && touch.px >= 165) {
                     browse_cancel_request();
