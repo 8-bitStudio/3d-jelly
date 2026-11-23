@@ -376,8 +376,10 @@ static void enable_playback_performance_mode(void)
 static void apply_hardware_defaults(void)
 {
     bool changed = false;
-    if (!g_is_new_3ds && (g_cfg.quality == 360 || g_cfg.quality == 480)) {
-        g_cfg.quality = 241;
+    /* Old 3DS: 240HQ (and 360/480) are more than its Wi-Fi and CPU can
+     * stream smoothly, so saved settings step down to plain 240p. */
+    if (!g_is_new_3ds && (g_cfg.quality == 241 || g_cfg.quality == 360 || g_cfg.quality == 480)) {
+        g_cfg.quality = 240;
         changed = true;
     }
     if (!is_supported_quality(g_cfg.quality)) {

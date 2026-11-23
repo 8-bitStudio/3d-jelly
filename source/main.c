@@ -230,7 +230,7 @@ typedef struct {
     char token[192];
     char user_id[80];
     char device_id[80];
-    int quality; /* 144, 240, 241 (Old3DS 240HQ), 360, or 480 */
+    int quality; /* 144, 240, 241 (New3DS 240HQ), 360, or 480 */
     int playback_mode;
     int stream_buffer_kb;
     int audio_sample_rate;
@@ -418,7 +418,7 @@ static void music_tick(void);
 static void handle_music_input(u32 down);
 
 static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 241, 360, 480};
-static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
+static const int QUALITY_LEVELS_OLD3DS[] = {144, 240};
 static const int AUDIO_RATE_LEVELS_NEW3DS[] = {22050, 32000, 44100};
 static const int AUDIO_RATE_LEVELS_OLD3DS[] = {22050, 32000, 40000};
 static const int BOTTOM_DIM_LEVELS[] = {15, 30, 60, 120, 300, 0};
