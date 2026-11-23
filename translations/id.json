@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Saat ini: %s",
     "TR_SELECT": "Pilih",
     "TR_BACK": "Kembali",
-    "TR_CONFIRM": "Konfirmasi"
+    "TR_CONFIRM": "Konfirmasi",
+    "TR_BOTTOM_TRACKS": "X AUDIO/SUB",
+    "TR_TRACKS_AUDIO": "Audio",
+    "TR_TRACKS_SUBTITLES": "Subtitle",
+    "TR_TRACKS_OFF": "Mati",
+    "TR_TRACKS_NO_AUDIO": "Tidak ada trek audio",
+    "TR_TRACKS_NO_OTHER_AUDIO": "Tidak ada bahasa audio lain",
+    "TR_TRACKS_NO_SUBTITLES": "Tidak ada subtitle",
+    "TR_TRACKS_HINT": "D-Pad pindah   A pilih   B tutup",
+    "TR_TRACKS_LOADING": "Memuat subtitle...",
+    "TR_TRACKS_LOAD_FAILED": "Gagal memuat subtitle",
+    "TR_TRACKS_BURNED_IN": "ditanam",
+    "TR_TRACKS_SWITCHING": "Mengganti trek...",
+    "TR_TRACKS_TRACK_FMT": "Trek %d"
   }
 }

@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Attuale: %s",
     "TR_SELECT": "Scegli",
     "TR_BACK": "Indietro",
-    "TR_CONFIRM": "Conferma"
+    "TR_CONFIRM": "Conferma",
+    "TR_BOTTOM_TRACKS": "X AUDIO/SOTT.",
+    "TR_TRACKS_AUDIO": "Audio",
+    "TR_TRACKS_SUBTITLES": "Sottotitoli",
+    "TR_TRACKS_OFF": "Disattivati",
+    "TR_TRACKS_NO_AUDIO": "Nessuna traccia audio",
+    "TR_TRACKS_NO_OTHER_AUDIO": "Nessun'altra lingua audio",
+    "TR_TRACKS_NO_SUBTITLES": "Nessun sottotitolo disponibile",
+    "TR_TRACKS_HINT": "Croce sposta   A scegli   B chiudi",
+    "TR_TRACKS_LOADING": "Caricamento sottotitoli...",
+    "TR_TRACKS_LOAD_FAILED": "Impossibile caricare i sottotitoli",
+    "TR_TRACKS_BURNED_IN": "impressi",
+    "TR_TRACKS_SWITCHING": "Cambio traccia...",
+    "TR_TRACKS_TRACK_FMT": "Traccia %d"
   }
 }

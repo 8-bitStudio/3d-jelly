@@ -899,6 +899,7 @@ static void draw_rgb565_frame(MjpegPlayer *player, const u16 *pixels, int img_w,
     mjpeg_prepare_scale_maps(player, img_w, img_h, dst_w, dst_h);
     blit_rgb565_columns(fb, player, pixels, x0, y0, dst_w, dst_h);
 
+    subtitle_overlay_draw(fb, mjpeg_current_ticks(player));
     draw_volume_osd(player, fb);
     draw_quality_osd(player, fb);
     draw_seek_osd(fb);
@@ -2501,6 +2502,39 @@ static void bottom_draw_button(u8 *fb, int x, int y, int w, int h, const char *l
     bottom_draw_text_centered(fb, x + w / 2, y + (h - bottom_text_height(label, 1)) / 2, label, 1, 238, 241, 246);
 }
 
+static bool pixel_font_can_draw(const char *text)
+{
+    const char *p = text ? text : "";
+    while (*p) {
+        u32 cp = 0;
+        if (!text_next_codepoint(&p, &cp)) {
+            break;
+        }
+        if (cp < 0x80 || codepoint_is_hangul_syllable(cp) || codepoint_is_cjk_supported(cp) ||
+            latin_fallback_char_for_codepoint(cp)) {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+/* Like bottom_draw_button, but uses the system font for labels the pixel font
+ * has no glyphs for. */
+static void bottom_draw_button_any(u8 *fb, int x, int y, int w, int h, const char *label, bool active)
+{
+    if (pixel_font_can_draw(label) || !sysfont_ready()) {
+        bottom_draw_button(fb, x, y, w, h, label, active);
+        return;
+    }
+    bottom_draw_button(fb, x, y, w, h, "", active);
+    int tw = bottom_sys_text_width(label, 13.0f);
+    if (tw > w - 6) {
+        tw = w - 6;
+    }
+    bottom_sys_text(fb, x + (w - tw) / 2, y + (h - 13) / 2, label, 13.0f, w - 6, 238, 241, 246);
+}
+
 static void playback_bottom_dim_begin(void)
 {
     g_bottom_dim_activity_ms = osGetTime();
@@ -2544,7 +2578,7 @@ static int playback_bottom_dim_percent(void)
 
 static bool playback_bottom_dim_should_be_active(const MjpegPlayer *player)
 {
-    if (!player || player->paused) {
+    if (!player || player->paused || g_track_menu.open) {
         return false;
     }
     int seconds = settings_bottom_dim_normalized_seconds(g_cfg.bottom_dim_seconds);
@@ -2729,6 +2763,10 @@ static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
 
 static void draw_playback_bottom_ui_to(u8 *fb, const MjpegPlayer *player, const char *line)
 {
+    if (g_track_menu.open) {
+        track_menu_draw_bottom(fb);
+        return;
+    }
 
     char quality_label[16];
     const char *state = playback_state_label(player, line);
@@ -2754,9 +2792,10 @@ static void draw_playback_bottom_ui_to(u8 *fb, const MjpegPlayer *player, const 
     bottom_fill_rect(fb, 12, 120, 296, 1, 55, 206, 224);
     bottom_stroke_rect(fb, 12, 120, 296, 104, 40, 45, 57);
 
-    bottom_draw_button(fb, 24, 138, 78, 24, paused ? tr(TR_BOTTOM_RESUME) : tr(TR_BOTTOM_PAUSE), true);
-    bottom_draw_button(fb, 112, 138, 62, 24, tr(TR_BOTTOM_BACK), false);
-    bottom_draw_button(fb, 184, 138, 100, 24, playback_button_y(player ? player->audio : NULL), false);
+    /* B still stops playback; its slot shows the audio/subtitle picker (X). */
+    bottom_draw_button(fb, 20, 138, 82, 24, paused ? tr(TR_BOTTOM_RESUME) : tr(TR_BOTTOM_PAUSE), true);
+    bottom_draw_button_any(fb, 112, 138, 86, 24, tr(TR_BOTTOM_TRACKS), false);
+    bottom_draw_button(fb, 208, 138, 92, 24, playback_button_y(player ? player->audio : NULL), false);
     bottom_draw_button(fb, 20, 180, 82, 24, tr(TR_BOTTOM_SEEK), true);
     bottom_draw_button(fb, 112, 180, 86, 24, tr(TR_BOTTOM_QUALITY), false);
     bottom_draw_button(fb, 208, 180, 92, 24, tr(TR_BOTTOM_VOLUME), false);
@@ -4247,6 +4286,7 @@ static void draw_mpeg1_frame_rgb565(MjpegPlayer *player, const plm_frame_t *fram
     if (player) {
         player->last_width = img_w;
         player->last_height = img_h;
+        subtitle_overlay_draw(fb, mjpeg_current_ticks(player));
     }
     draw_volume_osd(player, fb);
     draw_quality_osd(player, fb);
@@ -4675,6 +4715,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     player.position_ticks = player.start_time_ticks;
     player.frame_interval_ns = 1000000000ULL / (player.target_fps ? player.target_fps : 1);
     player.avi_mode = avi_container;
+    track_menu_close();
     player.buf = (u8 *)malloc(MJPEG_FRAME_CAP);
     player.pixels = (u16 *)linearMemAlign(JPEG_PIXELS_CAP * sizeof(u16), 0x40);
     player.reader_min_chunks = -1;
@@ -4775,6 +4816,41 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 set_play_status("%s", tr(TR_PLAYBACK_STOPPED));
                 break;
             }
+
+            if (subtitles_poll()) {
+                if (g_track_menu.open) {
+                    mjpeg_console(&player, g_play_status);
+                }
+                if (player.paused) {
+                    mjpeg_redraw_last_frame(&player);
+                }
+            }
+            if (g_track_menu.open) {
+                TrackMenuAction action = track_menu_input(&down);
+                if (action == TRACK_MENU_RESTART) {
+                    /* Audio changes (and burned-in subtitles) need a new
+                     * transcode; restart at the same position like a quality change. */
+                    g_mjpeg_resume_ticks = mjpeg_current_ticks(&player);
+                    report_playback_progress(g_mjpeg_resume_ticks, player.paused, audio_muted_for_report(&audio), audio_volume_for_report(&audio));
+                    g_stream_switch_serial++;
+                    set_play_status("%s", tr(TR_TRACKS_SWITCHING));
+                    mjpeg_redraw_last_frame(&player);
+                    mjpeg_console(&player, g_play_status);
+                    result = MJPEG_PLAY_RESTART;
+                    break;
+                }
+                if (action == TRACK_MENU_REDRAW) {
+                    subtitles_poll();
+                    mjpeg_console(&player, g_play_status);
+                    if (player.paused) {
+                        mjpeg_redraw_last_frame(&player);
+                    }
+                }
+            } else if (down & KEY_X) {
+                track_menu_open();
+                mjpeg_console(&player, g_play_status);
+            }
+
             if (down & KEY_B) {
                 if (autoplay_countdown_visible(&player)) {
                     g_autoplay_cancelled = true;
@@ -5264,6 +5340,7 @@ static bool probe_playback(void)
     browse_cancel_request();
     refresh_play_item();
     g_play_start_ticks = media_resume_position(&g_current);
+    tracks_reset_item();
     bool played_any = false;
     for (;;) {
         g_view = VIEW_PLAYBACK;
@@ -5275,10 +5352,7 @@ static bool probe_playback(void)
         prepare_autoplay_next_episode();
 
         if (!request_playback_info(g_play_start_ticks)) {
-            if (!g_exit_requested) {
-                g_view = g_return_view;
-            }
-            return played_any;
+            break;
         }
 
         bool played = play_current_item_video();
@@ -5295,6 +5369,10 @@ static bool probe_playback(void)
         set_status(tr(TR_PLAYING_NEXT_FMT), g_current.name[0] ? g_current.name : tr(TR_STREAM));
     }
 
+    track_menu_close();
+    subtitles_release();
+    subtitle_overlay_free();
+    tracks_reset_item();
     if (!g_exit_requested) {
         g_view = g_return_view;
     }

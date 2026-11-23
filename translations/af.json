@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Huidige: %s",
     "TR_SELECT": "Kies",
     "TR_BACK": "Terug",
-    "TR_CONFIRM": "Bevestig"
+    "TR_CONFIRM": "Bevestig",
+    "TR_BOTTOM_TRACKS": "X OUDIO/ONDS",
+    "TR_TRACKS_AUDIO": "Oudio",
+    "TR_TRACKS_SUBTITLES": "Onderskrifte",
+    "TR_TRACKS_OFF": "Af",
+    "TR_TRACKS_NO_AUDIO": "Geen oudiosnitte nie",
+    "TR_TRACKS_NO_OTHER_AUDIO": "Geen ander oudiotale nie",
+    "TR_TRACKS_NO_SUBTITLES": "Geen onderskrifte beskikbaar nie",
+    "TR_TRACKS_HINT": "D-Pad skuif   A kies   B sluit",
+    "TR_TRACKS_LOADING": "Laai onderskrifte...",
+    "TR_TRACKS_LOAD_FAILED": "Kon nie onderskrifte laai nie",
+    "TR_TRACKS_BURNED_IN": "ingebrand",
+    "TR_TRACKS_SWITCHING": "Wissel snitte...",
+    "TR_TRACKS_TRACK_FMT": "Snit %d"
   }
 }

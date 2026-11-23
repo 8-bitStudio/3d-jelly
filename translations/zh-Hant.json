@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "目前：%s",
     "TR_SELECT": "選擇",
     "TR_BACK": "返回",
-    "TR_CONFIRM": "確認"
+    "TR_CONFIRM": "確認",
+    "TR_BOTTOM_TRACKS": "X 音訊/字幕",
+    "TR_TRACKS_AUDIO": "音訊",
+    "TR_TRACKS_SUBTITLES": "字幕",
+    "TR_TRACKS_OFF": "關閉",
+    "TR_TRACKS_NO_AUDIO": "沒有音軌",
+    "TR_TRACKS_NO_OTHER_AUDIO": "沒有其他音訊語言",
+    "TR_TRACKS_NO_SUBTITLES": "沒有可用字幕",
+    "TR_TRACKS_HINT": "十字鍵 移動   A 選擇   B 關閉",
+    "TR_TRACKS_LOADING": "正在載入字幕...",
+    "TR_TRACKS_LOAD_FAILED": "無法載入字幕",
+    "TR_TRACKS_BURNED_IN": "內嵌",
+    "TR_TRACKS_SWITCHING": "正在切換音軌...",
+    "TR_TRACKS_TRACK_FMT": "軌道 %d"
   }
 }

@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Geçerli: %s",
     "TR_SELECT": "Seç",
     "TR_BACK": "Geri",
-    "TR_CONFIRM": "Onayla"
+    "TR_CONFIRM": "Onayla",
+    "TR_BOTTOM_TRACKS": "X SES/ALTYAZI",
+    "TR_TRACKS_AUDIO": "Ses",
+    "TR_TRACKS_SUBTITLES": "Altyazı",
+    "TR_TRACKS_OFF": "Kapalı",
+    "TR_TRACKS_NO_AUDIO": "Ses parçası yok",
+    "TR_TRACKS_NO_OTHER_AUDIO": "Başka ses dili yok",
+    "TR_TRACKS_NO_SUBTITLES": "Altyazı yok",
+    "TR_TRACKS_HINT": "Yön tuşu gezin   A seç   B kapat",
+    "TR_TRACKS_LOADING": "Altyazılar yükleniyor...",
+    "TR_TRACKS_LOAD_FAILED": "Altyazılar yüklenemedi",
+    "TR_TRACKS_BURNED_IN": "gömülü",
+    "TR_TRACKS_SWITCHING": "Parça değiştiriliyor...",
+    "TR_TRACKS_TRACK_FMT": "Parça %d"
   }
 }

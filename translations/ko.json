@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "현재: %s",
     "TR_SELECT": "선택",
     "TR_BACK": "뒤로",
-    "TR_CONFIRM": "확인"
+    "TR_CONFIRM": "확인",
+    "TR_BOTTOM_TRACKS": "X 음성/자막",
+    "TR_TRACKS_AUDIO": "음성",
+    "TR_TRACKS_SUBTITLES": "자막",
+    "TR_TRACKS_OFF": "끄기",
+    "TR_TRACKS_NO_AUDIO": "음성 트랙 없음",
+    "TR_TRACKS_NO_OTHER_AUDIO": "다른 음성 언어 없음",
+    "TR_TRACKS_NO_SUBTITLES": "사용 가능한 자막 없음",
+    "TR_TRACKS_HINT": "십자 버튼 이동   A 선택   B 닫기",
+    "TR_TRACKS_LOADING": "자막 불러오는 중...",
+    "TR_TRACKS_LOAD_FAILED": "자막을 불러올 수 없음",
+    "TR_TRACKS_BURNED_IN": "영상에 합성",
+    "TR_TRACKS_SWITCHING": "트랙 전환 중...",
+    "TR_TRACKS_TRACK_FMT": "트랙 %d"
   }
 }

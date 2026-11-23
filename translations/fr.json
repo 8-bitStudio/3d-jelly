@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Actuelle : %s",
     "TR_SELECT": "Choisir",
     "TR_BACK": "Retour",
-    "TR_CONFIRM": "Confirmer"
+    "TR_CONFIRM": "Confirmer",
+    "TR_BOTTOM_TRACKS": "X AUDIO/ST",
+    "TR_TRACKS_AUDIO": "Audio",
+    "TR_TRACKS_SUBTITLES": "Sous-titres",
+    "TR_TRACKS_OFF": "Désactivés",
+    "TR_TRACKS_NO_AUDIO": "Aucune piste audio",
+    "TR_TRACKS_NO_OTHER_AUDIO": "Aucune autre langue audio",
+    "TR_TRACKS_NO_SUBTITLES": "Aucun sous-titre disponible",
+    "TR_TRACKS_HINT": "Croix bouger   A choisir   B fermer",
+    "TR_TRACKS_LOADING": "Chargement des sous-titres...",
+    "TR_TRACKS_LOAD_FAILED": "Impossible de charger les sous-titres",
+    "TR_TRACKS_BURNED_IN": "incrustés",
+    "TR_TRACKS_SWITCHING": "Changement de piste...",
+    "TR_TRACKS_TRACK_FMT": "Piste %d"
   }
 }

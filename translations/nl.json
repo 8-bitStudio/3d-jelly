@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Huidig: %s",
     "TR_SELECT": "Kies",
     "TR_BACK": "Terug",
-    "TR_CONFIRM": "Bevestig"
+    "TR_CONFIRM": "Bevestig",
+    "TR_BOTTOM_TRACKS": "X AUDIO/SUB",
+    "TR_TRACKS_AUDIO": "Audio",
+    "TR_TRACKS_SUBTITLES": "Ondertitels",
+    "TR_TRACKS_OFF": "Uit",
+    "TR_TRACKS_NO_AUDIO": "Geen audiosporen",
+    "TR_TRACKS_NO_OTHER_AUDIO": "Geen andere audiotalen",
+    "TR_TRACKS_NO_SUBTITLES": "Geen ondertitels beschikbaar",
+    "TR_TRACKS_HINT": "D-pad verplaats   A kies   B sluit",
+    "TR_TRACKS_LOADING": "Ondertitels laden...",
+    "TR_TRACKS_LOAD_FAILED": "Ondertitels konden niet worden geladen",
+    "TR_TRACKS_BURNED_IN": "ingebrand",
+    "TR_TRACKS_SWITCHING": "Spoor wisselen...",
+    "TR_TRACKS_TRACK_FMT": "Spoor %d"
   }
 }

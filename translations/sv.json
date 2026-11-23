@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Nuvarande: %s",
     "TR_SELECT": "Välj",
     "TR_BACK": "Tillbaka",
-    "TR_CONFIRM": "Bekräfta"
+    "TR_CONFIRM": "Bekräfta",
+    "TR_BOTTOM_TRACKS": "X LJUD/TEXT",
+    "TR_TRACKS_AUDIO": "Ljud",
+    "TR_TRACKS_SUBTITLES": "Undertexter",
+    "TR_TRACKS_OFF": "Av",
+    "TR_TRACKS_NO_AUDIO": "Inga ljudspår",
+    "TR_TRACKS_NO_OTHER_AUDIO": "Inga andra ljudspråk",
+    "TR_TRACKS_NO_SUBTITLES": "Inga undertexter tillgängliga",
+    "TR_TRACKS_HINT": "Styrkors flytta   A välj   B stäng",
+    "TR_TRACKS_LOADING": "Läser in undertexter...",
+    "TR_TRACKS_LOAD_FAILED": "Kunde inte läsa in undertexter",
+    "TR_TRACKS_BURNED_IN": "inbrända",
+    "TR_TRACKS_SWITCHING": "Byter spår...",
+    "TR_TRACKS_TRACK_FMT": "Spår %d"
   }
 }

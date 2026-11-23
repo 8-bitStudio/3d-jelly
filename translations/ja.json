@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "現在: %s",
     "TR_SELECT": "決定",
     "TR_BACK": "戻る",
-    "TR_CONFIRM": "確認"
+    "TR_CONFIRM": "確認",
+    "TR_BOTTOM_TRACKS": "X 音声/字幕",
+    "TR_TRACKS_AUDIO": "音声",
+    "TR_TRACKS_SUBTITLES": "字幕",
+    "TR_TRACKS_OFF": "オフ",
+    "TR_TRACKS_NO_AUDIO": "音声トラックがありません",
+    "TR_TRACKS_NO_OTHER_AUDIO": "他の音声言語はありません",
+    "TR_TRACKS_NO_SUBTITLES": "字幕はありません",
+    "TR_TRACKS_HINT": "十字ボタン 移動   A 選択   B 閉じる",
+    "TR_TRACKS_LOADING": "字幕を読み込み中...",
+    "TR_TRACKS_LOAD_FAILED": "字幕を読み込めませんでした",
+    "TR_TRACKS_BURNED_IN": "焼き付け",
+    "TR_TRACKS_SWITCHING": "トラックを切り替え中...",
+    "TR_TRACKS_TRACK_FMT": "トラック %d"
   }
 }

@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Obecny: %s",
     "TR_SELECT": "Wybierz",
     "TR_BACK": "Wstecz",
-    "TR_CONFIRM": "Potwierdź"
+    "TR_CONFIRM": "Potwierdź",
+    "TR_BOTTOM_TRACKS": "X AUDIO/NAPISY",
+    "TR_TRACKS_AUDIO": "Dźwięk",
+    "TR_TRACKS_SUBTITLES": "Napisy",
+    "TR_TRACKS_OFF": "Wyłączone",
+    "TR_TRACKS_NO_AUDIO": "Brak ścieżek dźwiękowych",
+    "TR_TRACKS_NO_OTHER_AUDIO": "Brak innych języków dźwięku",
+    "TR_TRACKS_NO_SUBTITLES": "Brak dostępnych napisów",
+    "TR_TRACKS_HINT": "Krzyżak ruch   A wybierz   B zamknij",
+    "TR_TRACKS_LOADING": "Wczytywanie napisów...",
+    "TR_TRACKS_LOAD_FAILED": "Nie udało się wczytać napisów",
+    "TR_TRACKS_BURNED_IN": "wypalone",
+    "TR_TRACKS_SWITCHING": "Zmiana ścieżki...",
+    "TR_TRACKS_TRACK_FMT": "Ścieżka %d"
   }
 }

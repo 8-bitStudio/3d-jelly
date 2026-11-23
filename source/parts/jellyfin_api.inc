@@ -1251,12 +1251,23 @@ static void build_playback_state_body(char *out, size_t outsz, u64 position_tick
     json_escape(g_current.id, item_id, sizeof(item_id));
     json_escape(g_play_media_source_id, media_source_id, sizeof(media_source_id));
     json_escape(g_play_session, play_session_id, sizeof(play_session_id));
+    char stream_fields[80] = "";
+    if (tracks_for_current_item()) {
+        int audio_index = tracks_effective_audio_index();
+        if (audio_index >= 0) {
+            snprintf(stream_fields, sizeof(stream_fields), "\"AudioStreamIndex\":%d,\"SubtitleStreamIndex\":%d,",
+                     audio_index, g_sel_sub_index);
+        } else {
+            snprintf(stream_fields, sizeof(stream_fields), "\"SubtitleStreamIndex\":%d,", g_sel_sub_index);
+        }
+    }
 
     snprintf(out, outsz,
              "{"
              "\"CanSeek\":true,"
              "\"ItemId\":\"%s\","
              "\"MediaSourceId\":\"%s\","
+             "%s"
              "\"IsPaused\":%s,"
              "\"IsMuted\":%s,"
              "\"PositionTicks\":%llu,"
@@ -1269,6 +1280,7 @@ static void build_playback_state_body(char *out, size_t outsz, u64 position_tick
              "}",
              item_id,
              media_source_id,
+             stream_fields,
              paused ? "true" : "false",
              muted ? "true" : "false",
              (unsigned long long)clamp_media_ticks(position_ticks),
@@ -1926,11 +1938,13 @@ static void build_fallback_stream_url(const MediaItem *item, char *out, size_t o
     char session[160];
     char media_q[224] = "";
     char session_q[192] = "";
+    char track_q[80];
     url_encode(item->id, id, sizeof(id));
     url_encode(g_cfg.token, token, sizeof(token));
     url_encode(g_cfg.device_id, dev, sizeof(dev));
     url_encode(g_play_media_source_id, media_source, sizeof(media_source));
     url_encode(g_play_session, session, sizeof(session));
+    tracks_stream_query(track_q, sizeof(track_q));
     if (media_source[0]) {
         snprintf(media_q, sizeof(media_q), "&MediaSourceId=%s", media_source);
     }
@@ -1938,8 +1952,8 @@ static void build_fallback_stream_url(const MediaItem *item, char *out, size_t o
         snprintf(session_q, sizeof(session_q), "&PlaySessionId=%s", session);
     }
     snprintf(out, outsz,
-             "%s/Videos/%s/stream?Container=ts&DeviceId=%s%s%s&VideoCodec=h264&AudioCodec=aac&VideoBitrate=%d&AudioBitrate=%d&MaxWidth=%d&MaxHeight=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&TranscodingMaxAudioChannels=2&RequireAvc=true&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&ApiKey=%s",
-             g_cfg.server, id, dev, media_q, session_q, q.video_bitrate, q.audio_bitrate, q.width, q.height, q.max_fps, token);
+             "%s/Videos/%s/stream?Container=ts&DeviceId=%s%s%s%s&VideoCodec=h264&AudioCodec=aac&VideoBitrate=%d&AudioBitrate=%d&MaxWidth=%d&MaxHeight=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&TranscodingMaxAudioChannels=2&RequireAvc=true&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&ApiKey=%s",
+             g_cfg.server, id, dev, media_q, session_q, track_q, q.video_bitrate, q.audio_bitrate, q.width, q.height, q.max_fps, token);
 }
 
 static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outsz, bool avi_container, u64 start_time_ticks)
@@ -1957,11 +1971,13 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
     char session_q[192] = "";
     char start_q[96] = "";
     char refresh_q[96] = "";
+    char track_q[80];
     url_encode(item->id, id, sizeof(id));
     url_encode(g_cfg.token, token, sizeof(token));
     url_encode(g_cfg.device_id, dev, sizeof(dev));
     url_encode(g_play_media_source_id, media_source, sizeof(media_source));
     url_encode(g_play_session, session, sizeof(session));
+    tracks_stream_query(track_q, sizeof(track_q));
     if (media_source[0]) {
         snprintf(media_q, sizeof(media_q), "&MediaSourceId=%s", media_source);
     }
@@ -1974,12 +1990,12 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
     snprintf(refresh_q, sizeof(refresh_q), "&3dJellyQuality=%d&3dJellySwitch=%lu", g_cfg.quality, (unsigned long)g_stream_switch_serial);
     if (avi_container) {
         snprintf(out, outsz,
-                 "%s/Videos/%s/stream?Container=avi&DeviceId=%s%s%s%s%s&VideoCodec=mjpeg&AudioCodec=pcm_s16le&VideoBitRate=%d&AudioBitRate=%d&AudioSampleRate=%d&AudioChannels=1&MaxAudioChannels=1&TranscodingMaxAudioChannels=1&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported&ApiKey=%s",
-                 g_cfg.server, id, dev, media_q, session_q, start_q, refresh_q, bitrate, audio_sample_rate * AUDIO_CHANNELS * 16, audio_sample_rate, q.width, q.height, q.width, q.height, fps, fps, token);
+                 "%s/Videos/%s/stream?Container=avi&DeviceId=%s%s%s%s%s%s&VideoCodec=mjpeg&AudioCodec=pcm_s16le&VideoBitRate=%d&AudioBitRate=%d&AudioSampleRate=%d&AudioChannels=1&MaxAudioChannels=1&TranscodingMaxAudioChannels=1&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported&ApiKey=%s",
+                 g_cfg.server, id, dev, media_q, session_q, start_q, refresh_q, track_q, bitrate, audio_sample_rate * AUDIO_CHANNELS * 16, audio_sample_rate, q.width, q.height, q.width, q.height, fps, fps, token);
     } else {
         snprintf(out, outsz,
-                 "%s/Videos/%s/stream?Container=mjpeg&DeviceId=%s%s%s%s%s&VideoCodec=mjpeg&VideoBitRate=%d&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported&ApiKey=%s",
-                 g_cfg.server, id, dev, media_q, session_q, start_q, refresh_q, bitrate, q.width, q.height, q.width, q.height, fps, fps, token);
+                 "%s/Videos/%s/stream?Container=mjpeg&DeviceId=%s%s%s%s%s%s&VideoCodec=mjpeg&VideoBitRate=%d&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported&ApiKey=%s",
+                 g_cfg.server, id, dev, media_q, session_q, start_q, refresh_q, track_q, bitrate, q.width, q.height, q.width, q.height, fps, fps, token);
     }
 }
 
@@ -2011,10 +2027,12 @@ static void build_mpeg1_stream_url(const MediaItem *item, char *out, size_t outs
         snprintf(start_q, sizeof(start_q), "&StartTimeTicks=%llu", (unsigned long long)start_time_ticks);
     }
     snprintf(refresh_q, sizeof(refresh_q), "&3dJellyQuality=%d&3dJellySwitch=%lu", g_cfg.quality, (unsigned long)g_stream_switch_serial);
+    char track_q[80];
+    tracks_stream_query(track_q, sizeof(track_q));
 
     snprintf(out, outsz,
-             "%s/Videos/%s/stream?Container=%s&DeviceId=%s%s%s%s%s&VideoCodec=mpeg1video&AudioCodec=mp2&VideoBitRate=%d&AudioBitRate=%d&AudioSampleRate=44100&AudioChannels=1&MaxAudioChannels=1&TranscodingMaxAudioChannels=1&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported&ApiKey=%s",
-             g_cfg.server, id, mpg_alias ? "mpg" : "mpeg", dev, media_q, session_q, start_q, refresh_q,
+             "%s/Videos/%s/stream?Container=%s&DeviceId=%s%s%s%s%s%s&VideoCodec=mpeg1video&AudioCodec=mp2&VideoBitRate=%d&AudioBitRate=%d&AudioSampleRate=44100&AudioChannels=1&MaxAudioChannels=1&TranscodingMaxAudioChannels=1&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported&ApiKey=%s",
+             g_cfg.server, id, mpg_alias ? "mpg" : "mpeg", dev, media_q, session_q, start_q, refresh_q, track_q,
              q.video_bitrate, q.audio_bitrate, q.width, q.height, q.width, q.height, fps, fps, token);
 }
 
@@ -2063,6 +2081,16 @@ static void normalize_transcode_url(char *url, size_t urlsz)
         snprintf(query, sizeof(query), "PlaySessionId=%s", enc);
         append_query(url, urlsz, query);
     }
+    int audio_index = tracks_request_audio_index();
+    if (audio_index >= 0 && !strstr(url, "AudioStreamIndex=") && !strstr(url, "audioStreamIndex=")) {
+        snprintf(query, sizeof(query), "AudioStreamIndex=%d", audio_index);
+        append_query(url, urlsz, query);
+    }
+    int burn_index = tracks_request_burn_in_index();
+    if (burn_index >= 0 && !strstr(url, "SubtitleStreamIndex=") && !strstr(url, "subtitleStreamIndex=")) {
+        snprintf(query, sizeof(query), "SubtitleStreamIndex=%d", burn_index);
+        append_query(url, urlsz, query);
+    }
 }
 
 static void build_playback_body(char *out, size_t outsz, u64 start_time_ticks)
@@ -2071,13 +2099,20 @@ static void build_playback_body(char *out, size_t outsz, u64 start_time_ticks)
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
     start_time_ticks = clamp_media_ticks(start_time_ticks);
+    /* Text subtitles are drawn by the 3DS, so only image subtitles are burned in. */
+    char audio_field[40] = "";
+    int audio_index = tracks_request_audio_index();
+    if (audio_index >= 0) {
+        snprintf(audio_field, sizeof(audio_field), "\"AudioStreamIndex\":%d,", audio_index);
+    }
     snprintf(out, outsz,
         "{"
         "\"UserId\":\"%s\","
         "\"StartTimeTicks\":%llu,"
         "\"MaxStreamingBitrate\":%d,"
         "\"MaxAudioChannels\":2,"
-        "\"SubtitleStreamIndex\":-1,"
+        "%s"
+        "\"SubtitleStreamIndex\":%d,"
         "\"EnableDirectPlay\":false,"
         "\"EnableDirectStream\":false,"
         "\"EnableTranscoding\":true,"
@@ -2117,7 +2152,8 @@ static void build_playback_body(char *out, size_t outsz, u64 start_time_ticks)
             "\"SubtitleProfiles\":[]"
         "}"
         "}",
-        g_cfg.user_id, (unsigned long long)start_time_ticks, q.video_bitrate + q.audio_bitrate, quality_label,
+        g_cfg.user_id, (unsigned long long)start_time_ticks, q.video_bitrate + q.audio_bitrate,
+        audio_field, tracks_request_burn_in_index(), quality_label,
         q.video_bitrate + q.audio_bitrate, q.video_bitrate + q.audio_bitrate,
         q.width, q.height, q.video_bitrate, q.max_fps, q.audio_bitrate);
 }
@@ -2179,6 +2215,7 @@ static bool request_playback_info(u64 start_time_ticks)
         json_get_string_range(src_start, src_end, "TranscodingContainer", g_play_method, sizeof(g_play_method));
         json_get_bool_range(src_start, src_end, "SupportsTranscoding", &supports_transcoding);
         json_get_bool_range(src_start, src_end, "SupportsDirectPlay", &supports_direct);
+        tracks_update_from_source(src_start, src_end);
     }
 
     if (!g_play_url[0]) {

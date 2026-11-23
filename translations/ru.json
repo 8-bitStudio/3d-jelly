@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Текущий: %s",
     "TR_SELECT": "Выбрать",
     "TR_BACK": "Назад",
-    "TR_CONFIRM": "Подтвердить"
+    "TR_CONFIRM": "Подтвердить",
+    "TR_BOTTOM_TRACKS": "X ZVUK/SUB",
+    "TR_TRACKS_AUDIO": "Звук",
+    "TR_TRACKS_SUBTITLES": "Субтитры",
+    "TR_TRACKS_OFF": "Выкл.",
+    "TR_TRACKS_NO_AUDIO": "Нет звуковых дорожек",
+    "TR_TRACKS_NO_OTHER_AUDIO": "Нет других языков озвучки",
+    "TR_TRACKS_NO_SUBTITLES": "Субтитры недоступны",
+    "TR_TRACKS_HINT": "Крестовина: выбор   A: ОК   B: закрыть",
+    "TR_TRACKS_LOADING": "Загрузка субтитров...",
+    "TR_TRACKS_LOAD_FAILED": "Не удалось загрузить субтитры",
+    "TR_TRACKS_BURNED_IN": "вшитые",
+    "TR_TRACKS_SWITCHING": "Смена дорожки...",
+    "TR_TRACKS_TRACK_FMT": "Дорожка %d"
   }
 }

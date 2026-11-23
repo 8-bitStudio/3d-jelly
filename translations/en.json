@@ -433,6 +433,19 @@
     "TR_CURRENT_FMT": "Current: %s",
     "TR_SELECT": "Select",
     "TR_BACK": "Back",
-    "TR_CONFIRM": "Confirm"
+    "TR_CONFIRM": "Confirm",
+    "TR_BOTTOM_TRACKS": "X AUDIO/SUB",
+    "TR_TRACKS_AUDIO": "Audio",
+    "TR_TRACKS_SUBTITLES": "Subtitles",
+    "TR_TRACKS_OFF": "Off",
+    "TR_TRACKS_NO_AUDIO": "No audio tracks",
+    "TR_TRACKS_NO_OTHER_AUDIO": "No other audio languages",
+    "TR_TRACKS_NO_SUBTITLES": "No subtitles available",
+    "TR_TRACKS_HINT": "D-Pad move   A select   B close",
+    "TR_TRACKS_LOADING": "Loading subtitles...",
+    "TR_TRACKS_LOAD_FAILED": "Couldn't load subtitles",
+    "TR_TRACKS_BURNED_IN": "burned in",
+    "TR_TRACKS_SWITCHING": "Switching tracks...",
+    "TR_TRACKS_TRACK_FMT": "Track %d"
   }
 }
