@@ -35,6 +35,10 @@ typedef struct {
     u32 wav_skip_remaining;
     u8 pcm_staging[AUDIO_PCM_BUFFER_BYTES];
     size_t pcm_staging_size;
+    /* Audio clock: samples handed to the DSP and the furthest point it has
+     * been observed to play. Video frames are presented against this. */
+    u64 samples_submitted;
+    u64 samples_played;
 } AudioPlayer;
 
 typedef struct {
@@ -69,6 +73,31 @@ typedef struct {
     bool avi_mode;
     bool avi_in_movi;
     bool paused;
+    /* AVI read-ahead: compressed frames wait here, stamped with their media
+     * time, while audio is queued further ahead to ride out hitches. */
+    u8 *packet_storage;
+    u32 packet_size[VIDEO_PACKET_COUNT];
+    u64 packet_pts_ns[VIDEO_PACKET_COUNT];
+    int packet_read;
+    int packet_count;
+    u64 video_index;
+    size_t avi_skip_bytes;
+    bool use_wall_clock;
+    u64 wall_media_ns;
+    u64 wall_last_ns;
+    bool buffering;
+    u64 buffering_started_ms;
+    bool audio_was_dry;
+    /* Stats written to PLAYBACK_STATS_PATH after playback. */
+    u32 rebuffer_count;
+    u64 rebuffer_total_ms;
+    u32 audio_dry_count;
+    u32 late_drop_count;
+    u64 decode_total_us;
+    u32 decode_max_us;
+    u32 decode_samples;
+    u64 play_started_ms;
+    int reader_min_chunks;
 } MjpegPlayer;
 
 typedef struct {
@@ -352,7 +381,6 @@ static bool audio_toggle_mute(AudioPlayer *audio)
     if (!audio->muted && audio->volume_percent <= 0) {
         audio->volume_percent = VOLUME_STEP_PERCENT;
     }
-    audio->pcm_staging_size = 0;
     audio_show_volume_osd(audio);
     audio_set_play_status(audio, audio->muted ? tr(TR_AUDIO_MUTED) : tr(TR_AUDIO_UNMUTED));
     return true;
@@ -2753,7 +2781,8 @@ static void mjpeg_set_paused(MjpegPlayer *player, bool paused)
     playback_bottom_dim_mark_activity();
     mjpeg_current_ticks(player);
     player->paused = paused;
-    audio_set_paused(player->audio, paused);
+    /* Stay silent if a rebuffer is still in progress; it resumes audio itself. */
+    audio_set_paused(player->audio, paused || player->buffering);
     if (paused) {
         set_play_status("%s", tr(TR_PAUSED));
     } else {
@@ -2930,7 +2959,7 @@ static int audio_queued_wavebufs(const AudioPlayer *audio)
 
 static bool audio_submit_staging(AudioPlayer *audio)
 {
-    if (!audio || !audio->ndsp_open || audio->muted || audio->pcm_staging_size < AUDIO_PCM_BUFFER_BYTES) {
+    if (!audio || !audio->ndsp_open || audio->pcm_staging_size < AUDIO_PCM_BUFFER_BYTES) {
         return false;
     }
 
@@ -2948,12 +2977,13 @@ static bool audio_submit_staging(AudioPlayer *audio)
     DSP_FlushDataCache(audio->pcm[index], AUDIO_PCM_BUFFER_BYTES);
     ndspChnWaveBufAdd(0, &audio->wavebufs[index]);
     audio->buffers_submitted++;
+    audio->samples_submitted += AUDIO_WAVEBUF_SAMPLES;
     return true;
 }
 
 static bool audio_submit_partial_staging(AudioPlayer *audio, size_t min_bytes)
 {
-    if (!audio || !audio->ndsp_open || audio->muted || audio->pcm_staging_size < min_bytes) {
+    if (!audio || !audio->ndsp_open || audio->pcm_staging_size < min_bytes) {
         return false;
     }
 
@@ -2974,6 +3004,7 @@ static bool audio_submit_partial_staging(AudioPlayer *audio, size_t min_bytes)
     DSP_FlushDataCache(audio->pcm[index], bytes);
     ndspChnWaveBufAdd(0, &audio->wavebufs[index]);
     audio->buffers_submitted++;
+    audio->samples_submitted += bytes / sizeof(s16);
     return true;
 }
 
@@ -3005,12 +3036,12 @@ static void audio_queue_pcm16_mono_raw(AudioPlayer *audio, const u8 *data, size_
 
 static void audio_queue_pcm16_mono_scaled(AudioPlayer *audio, const u8 *data, size_t size)
 {
-    if (!audio || !audio->ndsp_open || audio->failed || audio->muted || !data) {
+    if (!audio || !audio->ndsp_open || audio->failed || !data) {
         return;
     }
 
     size &= ~(size_t)1;
-    int volume = clamp_int(audio->volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
+    int volume = audio->muted ? 0 : clamp_int(audio->volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
     while (size > 0) {
         size_t space = AUDIO_PCM_BUFFER_BYTES - audio->pcm_staging_size;
         if (space < 2) {
@@ -3039,11 +3070,11 @@ static void audio_queue_pcm16_mono_scaled(AudioPlayer *audio, const u8 *data, si
 
 static void audio_queue_sample(AudioPlayer *audio, s16 sample)
 {
-    if (!audio || !audio->ndsp_open || audio->failed || audio->muted) {
+    if (!audio || !audio->ndsp_open || audio->failed) {
         return;
     }
 
-    int volume = clamp_int(audio->volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
+    int volume = audio->muted ? 0 : clamp_int(audio->volume_percent, VOLUME_MIN_PERCENT, VOLUME_MAX_PERCENT);
     int boosted = ((int)sample * volume) / 100;
     s16 out = volume > 100 ? audio_limit_sample(boosted) : clamp_s16(boosted);
 
@@ -3056,7 +3087,7 @@ static void audio_queue_sample(AudioPlayer *audio, s16 sample)
 
 static void audio_queue_pcm(AudioPlayer *audio, const u8 *data, size_t size)
 {
-    if (!audio || !audio->ndsp_open || audio->failed || audio->muted || !data || size == 0) {
+    if (!audio || !audio->ndsp_open || audio->failed || !data || size == 0) {
         return;
     }
 
@@ -3069,7 +3100,7 @@ static void audio_queue_pcm(AudioPlayer *audio, const u8 *data, size_t size)
     }
 
     if (bits == 16 && channels == 1) {
-        if (audio->volume_percent == 100) {
+        if (audio->volume_percent == 100 && !audio->muted) {
             audio_queue_pcm16_mono_raw(audio, data, size);
         } else {
             audio_queue_pcm16_mono_scaled(audio, data, size);
@@ -3301,6 +3332,18 @@ static void parse_avi_headers(MjpegPlayer *player, const u8 *buf, size_t len)
             continue;
         }
 
+        if (memcmp(chunk, "avih", 4) == 0) {
+            /* dwMicroSecPerFrame: the stream's real frame interval. */
+            if (chunk_size >= 4) {
+                u32 us = read_le32(buf + payload);
+                if (us >= 16000 && us <= 1000000) {
+                    player->frame_interval_ns = (u64)us * 1000ULL;
+                }
+            }
+            pos = next;
+            continue;
+        }
+
         if (memcmp(chunk, "strh", 4) == 0) {
             next_strf_is_audio = chunk_size >= 4 && memcmp(buf + payload, "auds", 4) == 0;
             pos = next;
@@ -3349,86 +3392,173 @@ static bool mjpeg_skip_late_frame(MjpegPlayer *player)
     return true;
 }
 
-static bool process_avi_video_chunk(MjpegPlayer *player, const u8 *data, size_t size)
+static bool decode_and_draw_mjpeg(MjpegPlayer *player, const u8 *jpeg, size_t len, bool pace)
 {
-    if (mjpeg_skip_late_frame(player)) {
+    int w = 0;
+    int h = 0;
+    unsigned status = 0;
+    u64 t0 = svcGetSystemTick();
+    bool ok = decode_jpeg_rgb565_scaled(jpeg, len, player->pixels, 400, 240, false, &w, &h, &status);
+    u32 us = (u32)((svcGetSystemTick() - t0) / (SYSCLOCK_ARM11 / 1000000ULL));
+    player->decode_total_us += us;
+    player->decode_samples++;
+    if (us > player->decode_max_us) {
+        player->decode_max_us = us;
+    }
+    if (!ok) {
+        player->last_jpeg_status = status;
+        player->decode_fail_count++;
+        if (player->frame_count == 0 && player->decode_fail_count >= 12) {
+            set_play_status(tr(TR_MJPEG_JPEG_DECODE_FAIL_FMT), status);
+            return false;
+        }
+        if ((player->decode_fail_count & 0x07) == 0) {
+            set_play_status(tr(TR_MJPEG_UNSUPPORTED_FRAME_FMT), status);
+        }
         return true;
     }
 
-    if (size >= 4 && data[0] == 0xFF && data[1] == 0xD8) {
-        return process_mjpeg_frame(player, data, size);
+    player->last_jpeg_status = 0;
+    player->decode_fail_count = 0;
+    player->last_width = w;
+    player->last_height = h;
+    if (pace) {
+        mjpeg_pace_frame(player);
     }
-
-    size_t soi = 0;
-    size_t eoi = 0;
-    if (find_bytes(data, size, 0, 0xFF, 0xD8, &soi) &&
-        find_bytes(data, size, soi + 2, 0xFF, 0xD9, &eoi)) {
-        return process_mjpeg_frame(player, data + soi, eoi + 2 - soi);
-    }
-
-    player->decode_fail_count++;
-    player->last_jpeg_status = PJPG_NOT_JPEG;
+    draw_rgb565_frame(player, player->pixels, w, h);
+    player->frame_count++;
     return true;
 }
 
-static size_t avi_prequeue_audio_after(MjpegPlayer *player, size_t pos)
+static bool process_mjpeg_frame(MjpegPlayer *player, const u8 *jpeg, size_t len)
 {
-    if (!player || !player->audio) {
-        return pos;
-    }
-
-    while (pos + 8 <= player->size) {
-        const u8 *chunk = player->buf + pos;
-        if (memcmp(chunk, "LIST", 4) == 0) {
-            if (pos + 12 > player->size) {
-                break;
-            }
-            if (memcmp(chunk + 8, "rec ", 4) == 0 || memcmp(chunk + 8, "movi", 4) == 0) {
-                pos += 12;
-                continue;
-            }
-            break;
-        }
-
-        if (!avi_stream_chunk(chunk, 'w', 'b')) {
-            break;
-        }
-
-        u32 chunk_size = read_le32(chunk + 4);
-        if (chunk_size > MJPEG_FRAME_CAP - 16) {
-            break;
-        }
-        size_t total = 8 + (size_t)chunk_size + (chunk_size & 1U);
-        if (total > player->size - pos) {
-            break;
-        }
-
-        audio_queue_pcm(player->audio, chunk + 8, chunk_size);
-        audio_refill(player->audio);
-        audio_protect_queue(player->audio);
-        pos += total;
-        if (audio_queued_wavebufs(player->audio) >= AUDIO_TARGET_QUEUED_WAVEBUFS) {
-            break;
-        }
-    }
-
-    return pos;
+    return decode_and_draw_mjpeg(player, jpeg, len, true);
 }
 
-static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t size)
+/* ---- AVI read-ahead pipeline ------------------------------------------
+ * The old loop decoded each frame the moment it was parsed and timed it with
+ * a wall clock, so audio could only be queued ~150 ms ahead and any hitch
+ * (slow frame, Wi-Fi gap, UI redraw) starved the DSP. Now the demuxer runs
+ * ahead: audio goes straight to the DSP (up to AUDIO_WAVEBUF_COUNT buffers),
+ * compressed video frames wait in a small queue, and each frame is shown when
+ * the audio clock reaches its timestamp. Late frames are dropped undecoded. */
+
+typedef enum {
+    AVI_DEMUX_NEED_DATA,
+    AVI_DEMUX_BLOCKED
+} AviDemuxState;
+
+static u64 audio_played_samples(AudioPlayer *audio)
+{
+    if (!audio_can_control(audio)) {
+        return 0;
+    }
+    u64 pending = 0;
+    bool playing = false;
+    for (int i = 0; i < AUDIO_WAVEBUF_COUNT; i++) {
+        u8 st = audio->wavebufs[i].status;
+        if (st == NDSP_WBUF_QUEUED || st == NDSP_WBUF_PLAYING) {
+            pending += audio->wavebufs[i].nsamples;
+            playing = playing || st == NDSP_WBUF_PLAYING;
+        }
+    }
+    if (playing) {
+        u32 pos = ndspChnGetSamplePos(0);
+        if (pos < pending) {
+            pending -= pos;
+        }
+    }
+    u64 played = audio->samples_submitted > pending ? audio->samples_submitted - pending : 0;
+    if (played > audio->samples_played) {
+        audio->samples_played = played;
+    }
+    return audio->samples_played;
+}
+
+static size_t audio_capacity_samples(const AudioPlayer *audio)
+{
+    int free_bufs = 0;
+    for (int i = 0; i < AUDIO_WAVEBUF_COUNT; i++) {
+        if (audio->wavebufs[i].status == NDSP_WBUF_FREE || audio->wavebufs[i].status == NDSP_WBUF_DONE) {
+            free_bufs++;
+        }
+    }
+    size_t space = (AUDIO_PCM_BUFFER_BYTES - audio->pcm_staging_size) / sizeof(s16);
+    return (space ? space - 1 : 0) + (size_t)free_bufs * AUDIO_WAVEBUF_SAMPLES;
+}
+
+static size_t audio_chunk_samples(const AudioPlayer *audio, size_t bytes)
+{
+    int channels = audio->channels >= 1 && audio->channels <= 2 ? audio->channels : 1;
+    int bytes_per_sample = audio->bits_per_sample == 8 ? 1 : 2;
+    return bytes / (size_t)(channels * bytes_per_sample);
+}
+
+static bool avi_audio_clock_usable(const MjpegPlayer *player)
+{
+    const AudioPlayer *audio = player->audio;
+    return !player->use_wall_clock && audio_can_control(audio) && audio->sample_rate > 0;
+}
+
+static u64 avi_media_clock_ns(MjpegPlayer *player)
+{
+    if (avi_audio_clock_usable(player)) {
+        return audio_played_samples(player->audio) * 1000000000ULL / player->audio->sample_rate;
+    }
+    u64 now = monotonic_ns();
+    if (player->wall_last_ns && !player->paused && !player->buffering && now > player->wall_last_ns) {
+        player->wall_media_ns += now - player->wall_last_ns;
+    }
+    player->wall_last_ns = now;
+    return player->wall_media_ns;
+}
+
+/* Falls back to the wall clock when audio cannot drive timing (no audio
+ * track, DSP failure, or the stream's audio has ended). */
+static void avi_switch_to_wall_clock(MjpegPlayer *player)
+{
+    if (player->use_wall_clock) {
+        return;
+    }
+    u64 media = avi_media_clock_ns(player);
+    player->use_wall_clock = true;
+    player->wall_media_ns = media;
+    player->wall_last_ns = monotonic_ns();
+}
+
+static void video_packet_pop(MjpegPlayer *player)
+{
+    if (player->packet_count > 0) {
+        player->packet_read = (player->packet_read + 1) % VIDEO_PACKET_COUNT;
+        player->packet_count--;
+    }
+}
+
+static void avi_append_bytes(MjpegPlayer *player, const u8 *data, size_t size)
 {
     player->byte_count += (u32)size;
-
+    if (player->avi_skip_bytes) {
+        size_t skip = size < player->avi_skip_bytes ? size : player->avi_skip_bytes;
+        player->avi_skip_bytes -= skip;
+        data += skip;
+        size -= skip;
+        if (!size) {
+            return;
+        }
+    }
     if (size > MJPEG_FRAME_CAP - player->size) {
         player->size = 0;
         player->avi_in_movi = false;
         set_play_status("%s", tr(TR_AVI_BUFFER_OVERFLOW));
-        return true;
+        return;
     }
-
     memcpy(player->buf + player->size, data, size);
     player->size += size;
+}
 
+static AviDemuxState avi_demux(MjpegPlayer *player)
+{
+    AudioPlayer *audio = player->audio;
     if (!player->avi_in_movi) {
         size_t movi = 0;
         bool found = false;
@@ -3445,7 +3575,7 @@ static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t siz
                 memmove(player->buf, player->buf + player->size - keep, keep);
             }
             player->size = keep;
-            return true;
+            return AVI_DEMUX_NEED_DATA;
         }
         parse_avi_headers(player, player->buf, movi);
         memmove(player->buf, player->buf + movi, player->size - movi);
@@ -3453,6 +3583,7 @@ static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t siz
         player->avi_in_movi = true;
     }
 
+    AviDemuxState state = AVI_DEMUX_NEED_DATA;
     size_t pos = 0;
     for (;;) {
         size_t remaining = player->size - pos;
@@ -3478,12 +3609,30 @@ static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t siz
             continue;
         }
 
+        /* The index ffmpeg writes at the end of the stream (idx1) is full of
+         * "00dc" tags; scanning into it byte by byte used to turn index
+         * entries into bogus video frames. Skip it (and padding) whole. */
+        if (memcmp(chunk, "idx1", 4) == 0 || memcmp(chunk, "JUNK", 4) == 0) {
+            u32 skip_size = read_le32(chunk + 4);
+            size_t total = 8 + (size_t)skip_size + (skip_size & 1U);
+            if (total > remaining) {
+                /* Drop what is buffered of it; keep the remaining byte count
+                 * so the rest is skipped as it arrives. */
+                player->avi_skip_bytes = total - remaining;
+                pos = player->size;
+                break;
+            }
+            pos += total;
+            continue;
+        }
+
         bool is_video = avi_stream_chunk(chunk, 'd', 'c') || avi_stream_chunk(chunk, 'd', 'b');
         bool is_audio = avi_stream_chunk(chunk, 'w', 'b');
         if (!is_video && !is_audio) {
             size_t next = pos + 1;
             while (next + 8 <= player->size &&
                    memcmp(player->buf + next, "LIST", 4) != 0 &&
+                   memcmp(player->buf + next, "idx1", 4) != 0 &&
                    !avi_stream_chunk(player->buf + next, 'd', 'c') &&
                    !avi_stream_chunk(player->buf + next, 'd', 'b') &&
                    !avi_stream_chunk(player->buf + next, 'w', 'b')) {
@@ -3504,7 +3653,7 @@ static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t siz
         if (chunk_size > MJPEG_FRAME_CAP - 16) {
             player->size = 0;
             set_play_status("%s", tr(TR_AVI_CHUNK_TOO_LARGE));
-            return true;
+            return AVI_DEMUX_NEED_DATA;
         }
         size_t total = 8 + (size_t)chunk_size + (chunk_size & 1U);
         if (total > remaining) {
@@ -3513,53 +3662,159 @@ static bool feed_avi_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t siz
 
         const u8 *payload = chunk + 8;
         if (is_video) {
-            size_t next_pos = avi_prequeue_audio_after(player, pos + total);
-            if (!process_avi_video_chunk(player, payload, chunk_size)) {
-                return false;
+            if (player->packet_count >= VIDEO_PACKET_COUNT) {
+                state = AVI_DEMUX_BLOCKED;
+                break;
             }
-            pos = next_pos;
-        } else {
-            audio_queue_pcm(player->audio, payload, chunk_size);
-            audio_refill(player->audio);
-            audio_protect_queue(player->audio);
-            pos += total;
+            int slot = (player->packet_read + player->packet_count) % VIDEO_PACKET_COUNT;
+            u32 stored = chunk_size <= VIDEO_PACKET_BYTES ? chunk_size : 0;
+            if (stored) {
+                memcpy(player->packet_storage + (size_t)slot * VIDEO_PACKET_BYTES, payload, stored);
+            }
+            player->packet_size[slot] = stored;
+            player->packet_pts_ns[slot] = player->video_index * player->frame_interval_ns;
+            player->video_index++;
+            player->packet_count++;
+        } else if (audio_can_control(audio)) {
+            /* Back-pressure instead of dropping: wait for the DSP to free a
+             * buffer rather than discard audio (which caused dropouts). */
+            bool dsp_idle = audio_queued_wavebufs(audio) == 0;
+            if (!dsp_idle && audio_chunk_samples(audio, chunk_size) > audio_capacity_samples(audio)) {
+                state = AVI_DEMUX_BLOCKED;
+                break;
+            }
+            audio_queue_pcm(audio, payload, chunk_size);
         }
+        pos += total;
     }
 
     if (pos > 0) {
         memmove(player->buf, player->buf + pos, player->size - pos);
         player->size -= pos;
     }
+    return state;
+}
+
+static bool avi_decode_packet(MjpegPlayer *player, const u8 *data, size_t size)
+{
+    if (size >= 4 && data[0] == 0xFF && data[1] == 0xD8) {
+        return decode_and_draw_mjpeg(player, data, size, false);
+    }
+    size_t soi = 0;
+    size_t eoi = 0;
+    if (size && find_bytes(data, size, 0, 0xFF, 0xD8, &soi) &&
+        find_bytes(data, size, soi + 2, 0xFF, 0xD9, &eoi)) {
+        return decode_and_draw_mjpeg(player, data + soi, eoi + 2 - soi, false);
+    }
+    player->decode_fail_count++;
+    player->last_jpeg_status = PJPG_NOT_JPEG;
     return true;
 }
 
-static bool process_mjpeg_frame(MjpegPlayer *player, const u8 *jpeg, size_t len)
+/* Shows the next queued frame once the media clock reaches it. Returns false
+ * only on a fatal decode failure. *presented reports whether a frame was drawn. */
+static bool avi_present_due_frame(MjpegPlayer *player, bool *presented)
 {
-    int w = 0;
-    int h = 0;
-    unsigned status = 0;
-    if (!decode_jpeg_rgb565_scaled(jpeg, len, player->pixels, 400, 240, false, &w, &h, &status)) {
-        player->last_jpeg_status = status;
-        player->decode_fail_count++;
-        if (player->frame_count == 0 && player->decode_fail_count >= 12) {
-            set_play_status(tr(TR_MJPEG_JPEG_DECODE_FAIL_FMT), status);
+    *presented = false;
+    while (player->packet_count > 0) {
+        int slot = player->packet_read;
+        u64 pts = player->packet_pts_ns[slot];
+        u64 clock = avi_media_clock_ns(player);
+        if (pts > clock + 4000000ULL) {
+            return true;
+        }
+        bool late = clock > pts + 2ULL * player->frame_interval_ns;
+        if (late && player->packet_count > 1) {
+            video_packet_pop(player);
+            player->late_drop_count++;
+            player->skipped_frame_count++;
+            continue;
+        }
+
+        const u8 *data = player->packet_storage + (size_t)slot * VIDEO_PACKET_BYTES;
+        bool ok = avi_decode_packet(player, data, player->packet_size[slot]);
+        video_packet_pop(player);
+        if (!ok) {
             return false;
         }
-        if ((player->decode_fail_count & 0x07) == 0) {
-            set_play_status(tr(TR_MJPEG_UNSUPPORTED_FRAME_FMT), status);
-        }
+        player->position_ticks = clamp_media_ticks(player->start_time_ticks + pts / 100ULL);
+        player->position_clock_ns = player->paused ? 0 : monotonic_ns();
+        *presented = true;
         return true;
     }
-
-    player->last_jpeg_status = 0;
-    player->decode_fail_count = 0;
-    player->last_width = w;
-    player->last_height = h;
-    mjpeg_pace_frame(player);
-    draw_rgb565_frame(player, player->pixels, w, h);
-    audio_refill(player->audio);
-    player->frame_count++;
     return true;
+}
+
+static void playback_write_stats(const MjpegPlayer *player, const AudioPlayer *audio, const char *outcome)
+{
+    FILE *f = fopen(PLAYBACK_STATS_PATH, "w");
+    if (!f) {
+        return;
+    }
+    u64 elapsed_ms = player->play_started_ms ? osGetTime() - player->play_started_ms : 0;
+    u32 fps_x100 = player->frame_interval_ns ? (u32)(100000000000ULL / player->frame_interval_ns) : 0;
+    u32 decode_avg_us = player->decode_samples ? (u32)(player->decode_total_us / player->decode_samples) : 0;
+    u64 kbps = elapsed_ms ? ((u64)player->byte_count * 8ULL) / elapsed_ms : 0;
+    fprintf(f, "3dJelly %s playback stats\n", APP_VERSION);
+    fprintf(f, "outcome=%s\n", outcome ? outcome : "");
+    fprintf(f, "new_3ds=%d\nquality=%d\n", g_is_new_3ds ? 1 : 0, g_cfg.quality);
+    fprintf(f, "container=%s\n", player->avi_mode ? "avi" : "mjpeg");
+    fprintf(f, "frame_size=%dx%d\n", player->last_width, player->last_height);
+    fprintf(f, "video_fps=%lu.%02lu\n", (unsigned long)(fps_x100 / 100), (unsigned long)(fps_x100 % 100));
+    fprintf(f, "audio_sample_rate=%lu\naudio_clock=%s\n",
+            (unsigned long)(audio ? audio->sample_rate : 0), player->use_wall_clock ? "wall" : "audio");
+    fprintf(f, "played_ms=%llu\nframes_shown=%lu\nframes_dropped_late=%lu\n",
+            (unsigned long long)elapsed_ms, (unsigned long)player->frame_count, (unsigned long)player->late_drop_count);
+    fprintf(f, "decode_avg_ms=%lu.%03lu\ndecode_max_ms=%lu.%03lu\n",
+            (unsigned long)(decode_avg_us / 1000), (unsigned long)(decode_avg_us % 1000),
+            (unsigned long)(player->decode_max_us / 1000), (unsigned long)(player->decode_max_us % 1000));
+    fprintf(f, "rebuffers=%lu\nrebuffer_ms=%llu\n",
+            (unsigned long)player->rebuffer_count, (unsigned long long)player->rebuffer_total_ms);
+    fprintf(f, "audio_ran_dry=%lu\naudio_overruns=%lu\n",
+            (unsigned long)player->audio_dry_count, (unsigned long)(audio ? audio->overruns : 0));
+    fprintf(f, "network_kbps_avg=%llu\nreader_min_chunks=%d\n",
+            (unsigned long long)kbps, player->reader_min_chunks);
+    fclose(f);
+}
+
+/* Decides what an ended or failed stream means. A stream that stops well
+ * before the runtime (server transcode died, Wi-Fi dropped) reconnects at the
+ * current position a bounded number of times instead of closing the episode. */
+static int g_stream_unexpected_restarts;
+static u32 g_mjpeg_last_frame_count;
+
+static MjpegPlayResult mjpeg_stream_finished(MjpegPlayer *player, Result ret)
+{
+    u64 position_ticks = mjpeg_current_ticks(player);
+    if (playback_position_near_end(position_ticks)) {
+        g_mjpeg_resume_ticks = g_current.runtime_ticks ? g_current.runtime_ticks : position_ticks;
+        g_playback_ended_naturally = true;
+        set_play_status("%s", tr(TR_MJPEG_REACHED_END));
+        return MJPEG_PLAY_ENDED;
+    }
+
+    bool runtime_known = g_current.runtime_ticks > 0;
+    bool unexpected = R_FAILED(ret) || runtime_known;
+    if (unexpected && player->frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES &&
+        g_stream_unexpected_restarts < AVI_RECONNECT_ATTEMPTS) {
+        g_stream_unexpected_restarts++;
+        g_mjpeg_resume_ticks = position_ticks;
+        g_stream_switch_serial++;
+        set_play_status("%s", tr(TR_MJPEG_INTERRUPTED));
+        mjpeg_redraw_last_frame(player);
+        mjpeg_console(player, g_play_status);
+        return MJPEG_PLAY_RESTART;
+    }
+
+    if (R_FAILED(ret)) {
+        g_mjpeg_resume_ticks = position_ticks;
+        set_play_status(tr(TR_MJPEG_READ_FAIL_FMT), (unsigned long)ret);
+        return MJPEG_PLAY_FAILED;
+    }
+    g_mjpeg_resume_ticks = runtime_known ? g_current.runtime_ticks : position_ticks;
+    g_playback_ended_naturally = true;
+    set_play_status("%s", tr(TR_MJPEG_REACHED_END));
+    return MJPEG_PLAY_ENDED;
 }
 
 static bool feed_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t size)
@@ -3607,6 +3862,10 @@ static bool feed_mjpeg_bytes(MjpegPlayer *player, const u8 *data, size_t size)
 
 static void mjpeg_free(MjpegPlayer *player)
 {
+    if (player->packet_storage) {
+        free(player->packet_storage);
+        player->packet_storage = NULL;
+    }
     if (player->buf) {
         free(player->buf);
     }
@@ -3852,6 +4111,17 @@ static int stream_reader_buffered_chunks(StreamReader *reader)
     int count = reader->count;
     LightLock_Unlock(&reader->lock);
     return count;
+}
+
+static bool stream_reader_finished(StreamReader *reader)
+{
+    if (!reader || !reader->started) {
+        return true;
+    }
+    LightLock_Lock(&reader->lock);
+    bool finished = reader->finished;
+    LightLock_Unlock(&reader->lock);
+    return finished;
 }
 
 static void stream_reader_prebuffer(StreamReader *reader)
@@ -4407,7 +4677,11 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     player.avi_mode = avi_container;
     player.buf = (u8 *)malloc(MJPEG_FRAME_CAP);
     player.pixels = (u16 *)linearMemAlign(JPEG_PIXELS_CAP * sizeof(u16), 0x40);
-    if (!player.buf || !player.pixels) {
+    player.reader_min_chunks = -1;
+    if (avi_container) {
+        player.packet_storage = (u8 *)malloc((size_t)VIDEO_PACKET_COUNT * VIDEO_PACKET_BYTES);
+    }
+    if (!player.buf || !player.pixels || (avi_container && !player.packet_storage)) {
         set_play_status("%s", tr(TR_MJPEG_NO_MEMORY));
         if (!app_system_closing()) {
             report_playback_stopped(player.position_ticks);
@@ -4478,7 +4752,11 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
         }
         set_play_status("%s", tr(TR_PLAYING));
         player.position_clock_ns = monotonic_ns();
+        player.play_started_ms = osGetTime();
         mjpeg_console(&player, g_play_status);
+        bool stream_done = false;
+        Result stream_ret = 0;
+        u64 stream_done_ms = 0;
         bool paused_osd_was_visible = false;
         bool seek_commit_pending = false;
         u64 seek_base_ticks = 0;
@@ -4648,23 +4926,132 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                     mjpeg_redraw_last_frame(&player);
                     paused_osd_was_visible = osd_visible;
                 }
+                player.wall_last_ns = monotonic_ns();
                 svcSleepThread(50000000ULL);
                 continue;
             }
 
-            audio_refill(player.audio);
+            if (avi_container) {
+                /* Rebuffering: audio and video pause together until the
+                 * network has caught up, then resume in sync. */
+                if (player.buffering) {
+                    int buffered = reader_active ? stream_reader_buffered_chunks(&reader) : STREAM_REBUFFER_CHUNKS;
+                    u64 waited = osGetTime() - player.buffering_started_ms;
+                    bool reader_done = !reader_active || stream_reader_finished(&reader);
+                    if (buffered < STREAM_REBUFFER_CHUNKS && !reader_done && waited < STREAM_REBUFFER_MAX_MS) {
+                        svcSleepThread(10000000ULL);
+                        continue;
+                    }
+                    player.buffering = false;
+                    player.rebuffer_total_ms += waited;
+                    player.wall_last_ns = monotonic_ns();
+                    player.position_clock_ns = monotonic_ns();
+                    audio_set_paused(&audio, player.paused);
+                    set_play_status("%s", tr(TR_PLAYING));
+                    mjpeg_console(&player, g_play_status);
+                }
+
+                bool got_data = false;
+                AviDemuxState demux_state = AVI_DEMUX_NEED_DATA;
+                for (int pulls = 0; pulls < 8; pulls++) {
+                    demux_state = avi_demux(&player);
+                    if (demux_state != AVI_DEMUX_NEED_DATA || stream_done) {
+                        break;
+                    }
+                    u32 read_size = 0;
+                    if (reader_active) {
+                        ret = stream_reader_pop(&reader, chunk, MJPEG_READ_SIZE, &read_size);
+                    } else {
+                        ret = stream_receive_chunk(&context, chunk, MJPEG_READ_SIZE, &read_size);
+                    }
+                    if (read_size) {
+                        avi_append_bytes(&player, chunk, read_size);
+                        got_data = true;
+                    }
+                    if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING || ret == (s32)HTTPC_RESULTCODE_TIMEDOUT) {
+                        if (!read_size) {
+                            break;
+                        }
+                        continue;
+                    }
+                    stream_done = true;
+                    stream_ret = ret;
+                    stream_done_ms = osGetTime();
+                    if (!read_size) {
+                        break;
+                    }
+                }
+
+                if (stream_done) {
+                    audio_submit_partial_staging(&audio, 2);
+                }
+                audio_protect_queue(&audio);
+                bool dsp_empty = audio_queued_wavebufs(&audio) == 0;
+                if (!player.use_wall_clock &&
+                    (!audio_can_control(&audio) ||
+                     (demux_state == AVI_DEMUX_BLOCKED && player.packet_count >= VIDEO_PACKET_COUNT && dsp_empty) ||
+                     (stream_done && dsp_empty))) {
+                    avi_switch_to_wall_clock(&player);
+                }
+
+                bool presented = false;
+                if (!avi_present_due_frame(&player, &presented)) {
+                    break;
+                }
+                if (player.frame_count == 300) {
+                    g_stream_unexpected_restarts = 0;
+                }
+
+                if (audio_can_control(&audio) && audio.samples_submitted > 0 && !stream_done) {
+                    if (dsp_empty && !player.audio_was_dry) {
+                        player.audio_dry_count++;
+                    }
+                    player.audio_was_dry = dsp_empty;
+                }
+                if (reader_active && player.frame_count > 0) {
+                    int buffered = stream_reader_buffered_chunks(&reader);
+                    if (player.reader_min_chunks < 0 || buffered < player.reader_min_chunks) {
+                        player.reader_min_chunks = buffered;
+                    }
+                }
+
+                bool audio_low = avi_audio_clock_usable(&player) ? audio_queued_wavebufs(&audio) <= 1
+                                                                 : player.packet_count == 0;
+                if (reader_active && !stream_done && demux_state == AVI_DEMUX_NEED_DATA &&
+                    player.frame_count > 0 && audio_low && stream_reader_buffered_chunks(&reader) == 0) {
+                    mjpeg_current_ticks(&player);
+                    player.position_clock_ns = 0;
+                    player.buffering = true;
+                    player.buffering_started_ms = osGetTime();
+                    player.rebuffer_count++;
+                    audio_set_paused(&audio, true);
+                    set_play_status("%s", tr(TR_BUFFERING_STREAM));
+                    mjpeg_console(&player, g_play_status);
+                    continue;
+                }
+
+                if (stream_done && player.packet_count == 0 && demux_state == AVI_DEMUX_NEED_DATA) {
+                    if (audio_can_control(&audio) && !dsp_empty && osGetTime() - stream_done_ms < 4000) {
+                        svcSleepThread(10000000ULL);
+                        continue;
+                    }
+                    result = mjpeg_stream_finished(&player, stream_ret);
+                    break;
+                }
+                if (!presented && !got_data) {
+                    svcSleepThread(2000000ULL);
+                }
+                continue;
+            }
+
             u32 read_size = 0;
             if (reader_active) {
                 ret = stream_reader_pop(&reader, chunk, MJPEG_READ_SIZE, &read_size);
             } else {
                 ret = stream_receive_chunk(&context, chunk, MJPEG_READ_SIZE, &read_size);
             }
-            if (read_size) {
-                bool fed = avi_container ? feed_avi_mjpeg_bytes(&player, chunk, read_size)
-                                         : feed_mjpeg_bytes(&player, chunk, read_size);
-                if (!fed) {
-                    break;
-                }
+            if (read_size && !feed_mjpeg_bytes(&player, chunk, read_size)) {
+                break;
             }
             if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING || ret == (s32)HTTPC_RESULTCODE_TIMEDOUT) {
                 if (!read_size && reader_active) {
@@ -4672,29 +5059,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
                 }
                 continue;
             }
-            if (R_FAILED(ret)) {
-                u64 position_ticks = mjpeg_current_ticks(&player);
-                if (playback_position_near_end(position_ticks)) {
-                    g_mjpeg_resume_ticks = g_current.runtime_ticks;
-                    g_playback_ended_naturally = true;
-                    set_play_status("%s", tr(TR_MJPEG_REACHED_END));
-                    result = MJPEG_PLAY_ENDED;
-                } else if (player.frame_count >= MJPEG_STREAM_READ_RECONNECT_FRAMES) {
-                    g_mjpeg_resume_ticks = position_ticks;
-                    g_stream_switch_serial++;
-                    set_play_status("%s", tr(TR_MJPEG_INTERRUPTED));
-                    mjpeg_redraw_last_frame(&player);
-                    mjpeg_console(&player, g_play_status);
-                    result = MJPEG_PLAY_RESTART;
-                } else {
-                    set_play_status(tr(TR_MJPEG_READ_FAIL_FMT), (unsigned long)ret);
-                }
-                break;
-            }
-            g_mjpeg_resume_ticks = g_current.runtime_ticks ? g_current.runtime_ticks : mjpeg_current_ticks(&player);
-            g_playback_ended_naturally = true;
-            set_play_status("%s", tr(TR_MJPEG_REACHED_END));
-            result = MJPEG_PLAY_ENDED;
+            result = mjpeg_stream_finished(&player, ret);
             break;
         }
         if (reader_active) {
@@ -4721,6 +5086,8 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     }
 
     if (!app_system_closing()) {
+        static const char *const outcome_names[] = {"failed", "stopped", "ended", "restart"};
+        playback_write_stats(&player, &audio, outcome_names[result <= MJPEG_PLAY_RESTART ? result : 0]);
         audio_stop(&audio);
         httpcCancelConnection(&context);
         httpcCloseContext(&context);
@@ -4740,6 +5107,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     if (!app_system_closing()) {
         mjpeg_free(&player);
     }
+    g_mjpeg_last_frame_count = player.frame_count;
     g_playback_restart_in_progress = result == MJPEG_PLAY_RESTART;
     playback_graphics_exit();
     return result;
@@ -4755,6 +5123,8 @@ static bool play_current_item_video(void)
     g_seek_osd_pending = false;
     g_quality_osd_pending = false;
     g_quality_osd_until_ms = 0;
+    g_stream_unexpected_restarts = 0;
+    bool avi_played = false;
 
     bool prefer_h264 = g_cfg.playback_mode == PLAYBACK_MODE_AUTO || g_cfg.playback_mode == PLAYBACK_MODE_H264;
     bool prefer_mpeg1 = false;
@@ -4813,6 +5183,7 @@ static bool play_current_item_video(void)
         copy_safe(g_play_url, sizeof(g_play_url), mjpeg_url);
         copy_safe(g_play_method, sizeof(g_play_method), g_is_new_3ds ? "avi-mjpeg-pcm-fallback" : "old3ds-avi-mjpeg-pcm");
         MjpegPlayResult result = play_mjpeg_stream_url(g_play_url, true, start_ticks);
+        avi_played = avi_played || g_mjpeg_last_frame_count > 0;
         if (result == MJPEG_PLAY_RESTART) {
             start_ticks = g_mjpeg_resume_ticks;
             if (!request_playback_info(start_ticks)) {
@@ -4830,6 +5201,13 @@ static bool play_current_item_video(void)
     }
     if (g_exit_requested) {
         return false;
+    }
+    /* The raw MJPEG fallback has no audio and only helps servers that cannot
+     * produce AVI at all. If AVI already played, a later failure is a network
+     * or server problem: stop here instead of switching to a black, silent
+     * stream that then closes. */
+    if (avi_played) {
+        return true;
     }
 
     for (;;) {
