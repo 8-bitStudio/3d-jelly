@@ -126,17 +126,15 @@ Makefile            devkitPro build file
 
 ## Known Issues
 
-- playback may hitch when audio is loud
-- some shows make you click B twice to get out of specials
-- some shows dont show season 2
+- Video can get laggy on 240p (old 3ds)
+- Music UI is difficult to scroll through
 
 ### Roadmap
 
 Planned and possible future features or changes:
 
-- Continue watching and up next
 - Better emulator compatibility
-- Improved UI with metadata, trailers, and better library views
+- trailers, and better library views
 - Offline downloads
 - Subtitle support
 - Intro skipper and plugin support
