@@ -13,8 +13,8 @@
 enum {
     SG_MOVIES, SG_SHOWS, SG_EPISODES, SG_ARTISTS, SG_ALBUMS, SG_SONGS, SG_COLLECTIONS, SG_VIDEOS, SG_COUNT
 };
-static const char *const SEARCH_GROUP_NAMES[SG_COUNT] = {
-    "Movies", "Shows", "Episodes", "Artists", "Albums", "Songs", "Collections", "Videos"
+static const StringId SEARCH_GROUP_NAMES[SG_COUNT] = {
+    TR_MOVIES, TR_SHOWS, TR_EPISODES, TR_ARTISTS, TR_ALBUMS, TR_SONGS, TR_COLLECTIONS, TR_VIDEOS
 };
 
 typedef struct {
@@ -67,15 +67,15 @@ static int search_group_for(const MediaItem *item)
 static const char *search_kind_label(const MediaItem *item)
 {
     const char *t = item->type;
-    if (!strcmp(t, "Movie")) return "Movie";
-    if (!strcmp(t, "Series")) return "Show";
-    if (!strcmp(t, "Episode")) return "Episode";
-    if (!strcmp(t, "MusicArtist")) return "Artist";
-    if (!strcmp(t, "MusicAlbum")) return "Album";
-    if (!strcmp(t, "Audio")) return "Song";
-    if (!strcmp(t, "BoxSet")) return "Collection";
-    if (!strcmp(t, "MusicVideo")) return "Music video";
-    return "Video";
+    if (!strcmp(t, "Movie")) return tr(TR_KIND_MOVIE);
+    if (!strcmp(t, "Series")) return tr(TR_KIND_SHOW);
+    if (!strcmp(t, "Episode")) return tr(TR_KIND_EPISODE);
+    if (!strcmp(t, "MusicArtist")) return tr(TR_KIND_ARTIST);
+    if (!strcmp(t, "MusicAlbum")) return tr(TR_KIND_ALBUM);
+    if (!strcmp(t, "Audio")) return tr(TR_SONG);
+    if (!strcmp(t, "BoxSet")) return tr(TR_KIND_COLLECTION);
+    if (!strcmp(t, "MusicVideo")) return tr(TR_KIND_MUSIC_VIDEO);
+    return tr(TR_KIND_VIDEO);
 }
 
 static BrowseArtKind search_group_art(int group)
@@ -272,9 +272,9 @@ static void search_tick(void)
     }
     search_pump();
     if (!search_running()) {
-        if (g_search_count) set_status("%d results for \"%s\"", g_search_count, g_search_query);
-        else if (g_search_jobs_failed) set_status("Search failed for \"%s\"", g_search_query);
-        else set_status("No results for \"%s\"", g_search_query);
+        if (g_search_count) set_status(tr(TR_STATUS_SEARCH_RESULTS_FMT), g_search_count, g_search_query);
+        else if (g_search_jobs_failed) set_status(tr(TR_SEARCH_FAILED_FOR_FMT), g_search_query);
+        else set_status(tr(TR_STATUS_SEARCH_EMPTY_FMT), g_search_query);
     }
 }
 
@@ -343,13 +343,13 @@ static void search_start(const char *query)
         search_add_job(-1, "Episode,Audio", SEARCH_PART_LIMIT, false);
     }
 
-    snprintf(g_screen_title, sizeof(g_screen_title), "Search: %s", g_search_query);
+    snprintf(g_screen_title, sizeof(g_screen_title), tr(TR_SEARCH_RESULTS_FMT), g_search_query);
     g_current_parent_id[0] = g_current_parent_type[0] = g_current_parent_series_id[0] = 0;
     g_stack_depth = 0;
     g_tab_focus = false;
     g_music_mode_focus = false;
     g_view = VIEW_SEARCH;
-    set_status("Searching for \"%s\"...", g_search_query);
+    set_status(tr(TR_SEARCHING_FOR_FMT), g_search_query);
     search_pump();
 }
 
@@ -357,7 +357,7 @@ static void search_start(const char *query)
 static void search_restore_view(void)
 {
     g_view = VIEW_SEARCH;
-    snprintf(g_screen_title, sizeof(g_screen_title), "Search: %s", g_search_query);
+    snprintf(g_screen_title, sizeof(g_screen_title), tr(TR_SEARCH_RESULTS_FMT), g_search_query);
     g_current_parent_id[0] = g_current_parent_type[0] = g_current_parent_series_id[0] = 0;
     g_tab_focus = false;
 }
@@ -581,11 +581,11 @@ static void search_draw_bar(void)
     char count[64];
     if (search_running()) {
         static const char *const dots[] = {"", ".", "..", "..."};
-        snprintf(count, sizeof(count), "Searching%s", dots[(osGetTime() / 300) % 4]);
-    } else snprintf(count, sizeof(count), "%d result%s", g_search_count, g_search_count == 1 ? "" : "s");
+        snprintf(count, sizeof(count), "%s%s", tr(TR_SEARCHING), dots[(osGetTime() / 300) % 4]);
+    } else snprintf(count, sizeof(count), g_search_count == 1 ? tr(TR_SEARCH_ONE_RESULT_FMT) : tr(TR_SEARCH_RESULT_COUNT_FMT), g_search_count);
     float cw = text_width_for_scale(count, 0.45f);
     draw_text(382 - cw, 9, 0.45f, COL_MUTED, "%s", count);
-    browse_label(18, 8, 354 - cw, 0.5f, COL_WHITE, g_search_query[0] ? g_search_query : "Search all libraries");
+    browse_label(18, 8, 354 - cw, 0.5f, COL_WHITE, g_search_query[0] ? g_search_query : tr(TR_SEARCH_ALL_LIBRARIES));
     C2D_DrawRectSolid(0, 35, 0, 400, 1, 0xFF404040);
     if (search_running() && g_search_job_count) {
         float done = (float)g_search_jobs_done / g_search_job_count;
@@ -607,7 +607,7 @@ static void search_draw_top(void)
         bool row_focus = g == g_search_focus;
         if (y >= BROWSE_CONTENT_TOP && y + 18 < BROWSE_CONTENT_BOTTOM) {
             if (row_focus) C2D_DrawRectSolid(10, y + 3, 0, 3, 12, COL_PRIMARY);
-            draw_text(row_focus ? 18 : 10, y, 0.55f, row_focus ? COL_WHITE : COL_MUTED, "%s", SEARCH_GROUP_NAMES[g]);
+            draw_text(row_focus ? 18 : 10, y, 0.55f, row_focus ? COL_WHITE : COL_MUTED, "%s", tr(SEARCH_GROUP_NAMES[g]));
             char counter[32];
             if (row_focus) snprintf(counter, sizeof(counter), "%d / %d", g_search_group_selected[g] + 1, count);
             else snprintf(counter, sizeof(counter), "%d", count);
@@ -627,11 +627,11 @@ static void search_draw_top(void)
     if (!g_search_count) {
         bool busy = search_running();
         draw_text_centered(200, 108, 0.6f, COL_WHITE, "%s",
-                           busy ? "Searching all libraries" : g_search_jobs_failed ? "Search failed" : "No results");
+                           busy ? tr(TR_SEARCHING_ALL_LIBRARIES) : g_search_jobs_failed ? tr(TR_PREFIX_SEARCH_FAILED) : tr(TR_NO_RESULTS));
         char line[160];
-        if (busy) snprintf(line, sizeof(line), "%d of %d searches done", g_search_jobs_done, g_search_job_count);
-        else if (g_search_jobs_failed) copy_safe(line, sizeof(line), "Check your connection. SELECT: retry   X: New search");
-        else snprintf(line, sizeof(line), "Nothing matched \"%s\". Press X to try again.", g_search_query);
+        if (busy) snprintf(line, sizeof(line), tr(TR_SEARCH_PROGRESS_FMT), g_search_jobs_done, g_search_job_count);
+        else if (g_search_jobs_failed) copy_safe(line, sizeof(line), tr(TR_SEARCH_FAILED_HINT));
+        else snprintf(line, sizeof(line), tr(TR_SEARCH_NOTHING_MATCHED_FMT), g_search_query);
         search_label_centered(200, 134, 370, 0.5f, COL_MUTED, line);
     }
 
@@ -651,8 +651,8 @@ static void search_draw_top(void)
     C2D_DrawRectSolid(0, 220, 0, 400, 20, COL_BG);
     C2D_DrawRectSolid(0, 220, 0, 400, 1, 0xFF383030);
     browse_label(10, 222, 380, 0.5f, COL_PRIMARY, g_search_focus < 0 ?
-                 "A: Edit search   Down: Results   B: Back" :
-                 "A: Open   X: New search   B: Back   L/R: Libraries");
+                 tr(TR_HINT_SEARCH_BAR) :
+                 tr(TR_HINT_SEARCH_RESULTS));
 }
 
 static void search_draw_bottom(void)
@@ -661,12 +661,12 @@ static void search_draw_bottom(void)
     C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_BG);
     if (!item) {
         search_draw_icon(160, 48, 44, COL_PRIMARY);
-        draw_text_centered(160, 86, 0.65f, COL_WHITE, "Search all libraries");
+        draw_text_centered(160, 86, 0.65f, COL_WHITE, "%s", tr(TR_SEARCH_ALL_LIBRARIES));
         draw_text_lines(24, 116, 0.5f, 272, COL_MUTED,
-                        "Movies, shows, episodes, albums, artists and songs from every library.", 3, 18);
+                        tr(TR_SEARCH_DESCRIPTION), 3, 18);
         C2D_DrawRectSolid(10, BROWSE_ACTION_TOP, 0, 300, 27, COL_PRIMARY_DARK);
         draw_text_centered(160, BROWSE_ACTION_TOP + 5, 0.5f, COL_WHITE, "%s",
-                           g_search_query[0] ? "Edit search  (X)" : "Type a search  (X)");
+                           g_search_query[0] ? tr(TR_EDIT_SEARCH_X) : tr(TR_TYPE_SEARCH_X));
         return;
     }
 
@@ -694,16 +694,17 @@ static void search_draw_bottom(void)
     else if (music_is_audio(item)) {
         char duration[32] = "";
         if (item->runtime_ticks) format_playback_time(item->runtime_ticks, duration, sizeof(duration));
-        snprintf(sub, sizeof(sub), "%s", item->artist[0] ? item->artist : "Unknown artist");
+        snprintf(sub, sizeof(sub), "%s", item->artist[0] ? item->artist : tr(TR_UNKNOWN_ARTIST));
         snprintf(meta, sizeof(meta), "%s%s%s", item->album[0] ? item->album : "", item->album[0] && duration[0] ? "  /  " : "", duration);
     } else if (!strcmp(item->type, "MusicAlbum")) {
-        copy_safe(sub, sizeof(sub), item->artist[0] ? item->artist : "Various artists");
+        copy_safe(sub, sizeof(sub), item->artist[0] ? item->artist : tr(TR_VARIOUS_ARTISTS));
         if (item->year > 0) snprintf(meta, sizeof(meta), "%d", item->year); else meta[0] = 0;
     } else if (!strcmp(item->type, "Series")) {
         if (item->year > 0) snprintf(sub, sizeof(sub), "%d", item->year);
         if (item->child_count > 0) {
-            char seasons[32];
-            snprintf(seasons, sizeof(seasons), "%s%d season%s", sub[0] ? "  /  " : "", item->child_count, item->child_count == 1 ? "" : "s");
+            char seasons[64];
+            int n = snprintf(seasons, sizeof(seasons), "%s", sub[0] ? "  /  " : "");
+            snprintf(seasons + n, sizeof(seasons) - n, item->child_count == 1 ? tr(TR_ONE_SEASON_FMT) : tr(TR_SEASON_COUNT_FMT), item->child_count);
             strncat(sub, seasons, sizeof(sub) - strlen(sub) - 1);
         }
         meta[0] = 0;
@@ -723,13 +724,13 @@ static void search_draw_bottom(void)
     if (resume && !music_is_audio(item)) {
         char at[32];
         format_playback_time(resume, at, sizeof(at));
-        draw_text(10, BROWSE_ACTION_TOP - 20, 0.5f, COL_PRIMARY, "Resume at %s", at);
+        draw_text(10, BROWSE_ACTION_TOP - 20, 0.5f, COL_PRIMARY, tr(TR_RESUME_AT_FMT), at);
     }
 
     C2D_DrawRectSolid(10, BROWSE_ACTION_TOP, 0, 145, 27, COL_PRIMARY_DARK);
     draw_text_centered(82, BROWSE_ACTION_TOP + 5, 0.5f, COL_WHITE, "%s",
-                       is_playable(item) ? (resume && !music_is_audio(item) ? "Resume" : "Play") : "Open");
+                       is_playable(item) ? (resume && !music_is_audio(item) ? tr(TR_RESUME) : tr(TR_PLAY)) : tr(TR_OPEN));
     C2D_DrawRectSolid(165, BROWSE_ACTION_TOP, 0, 145, 27, 0xFF30232D);
     draw_text_centered(237, BROWSE_ACTION_TOP + 5, 0.5f, item->is_favorite ? COL_SECONDARY : COL_WHITE,
-                       "%s", item->is_favorite ? "Unfavorite" : "Favorite");
+                       "%s", item->is_favorite ? tr(TR_UNFAVORITE) : tr(TR_FAVORITE));
 }

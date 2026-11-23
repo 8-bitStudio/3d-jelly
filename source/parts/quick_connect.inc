@@ -120,7 +120,7 @@ static bool quick_connect_request(QuickConnectState operation)
     g_qc_state = operation;
     return true;
 failure:
-    quick_connect_fail("Could not start Quick Connect. Check Wi-Fi and try again.");
+    quick_connect_fail(tr(TR_QC_START_FAILED));
     return false;
 }
 
@@ -129,7 +129,7 @@ static void quick_connect_start(void)
     quick_connect_cancel();
     copy_safe(g_qc_server, sizeof(g_qc_server), g_cfg.server);
     g_qc_retry_selected = false;
-    set_status("Checking Quick Connect on your server...");
+    set_status("%s", tr(TR_QC_CHECKING));
     quick_connect_request(QC_CHECK);
 }
 
@@ -143,24 +143,24 @@ static void quick_connect_complete(CURLcode result, long status)
         if ((operation == QC_POLL || operation == QC_AUTH) && ++g_qc_failures <= 3) {
             quick_connect_clear_response();
             g_qc_next_request = osGetTime() + 3000;
-            set_status("Connection interrupted. Retrying Quick Connect...");
-        } else quick_connect_fail("Quick Connect could not reach the server. Check Wi-Fi and retry.");
+            set_status("%s", tr(TR_QC_RETRYING));
+        } else quick_connect_fail(tr(TR_QC_UNREACHABLE));
         return;
     }
     if (status == 401 || status == 403) {
-        quick_connect_fail("Quick Connect is disabled or not allowed. Use User and Pass instead.");
+        quick_connect_fail(tr(TR_QC_NOT_ALLOWED));
         return;
     }
     if ((operation == QC_POLL || operation == QC_AUTH) && (status == 404 || status == 410)) {
-        quick_connect_fail("This code expired or is no longer valid. Choose Try Again for a new code.");
+        quick_connect_fail(tr(TR_QC_CODE_INVALID));
         return;
     }
     if (status == 404 || status == 405) {
-        quick_connect_fail("This server does not support Quick Connect. Use User and Pass instead.");
+        quick_connect_fail(tr(TR_QC_UNSUPPORTED));
         return;
     }
     if (status != 200 || !g_qc_response) {
-        quick_connect_fail("The server could not complete Quick Connect. Try again or sign in manually.");
+        quick_connect_fail(tr(TR_QC_SERVER_ERROR));
         return;
     }
     g_qc_failures = 0;
@@ -168,25 +168,25 @@ static void quick_connect_complete(CURLcode result, long status)
     if (operation == QC_CHECK) {
         const char *value = skip_ws(body, end);
         if (end - value >= 5 && !memcmp(value, "false", 5) && skip_ws(value + 5, end) == end) {
-            quick_connect_fail("Quick Connect is disabled on this server. Use User and Pass instead.");
+            quick_connect_fail(tr(TR_QC_DISABLED));
             return;
         }
         if (end - value < 4 || memcmp(value, "true", 4) || skip_ws(value + 4, end) != end) {
-            quick_connect_fail("The server returned an invalid Quick Connect response.");
+            quick_connect_fail(tr(TR_QC_INVALID_RESPONSE));
             return;
         }
         g_qc_deadline = osGetTime() + 10 * 60 * 1000;
-        set_status("Requesting a Quick Connect code...");
+        set_status("%s", tr(TR_QC_REQUESTING));
         quick_connect_request(QC_INITIATE);
         return;
     }
     if (operation == QC_AUTH) {
         if (!accept_authentication_response(body, g_qc_response_size, true)) {
-            quick_connect_fail("Sign-in response was incomplete. Please try Quick Connect again.");
+            quick_connect_fail(tr(TR_QC_INCOMPLETE));
             return;
         }
         quick_connect_cancel();
-        set_status("Signed in with Quick Connect. Opening your libraries...");
+        set_status("%s", tr(TR_QC_SIGNED_IN));
         load_libraries();
         return;
     }
@@ -194,7 +194,7 @@ static void quick_connect_complete(CURLcode result, long status)
     bool authenticated = false;
     if (!json_object_range_after(body, end, &root, &root_end) || skip_ws(root_end, end) != end ||
         !json_get_bool_range(root, root_end, "Authenticated", &authenticated)) {
-        quick_connect_fail("The server returned an invalid Quick Connect response.");
+        quick_connect_fail(tr(TR_QC_INVALID_RESPONSE));
         return;
     }
     if (operation == QC_INITIATE) {
@@ -204,19 +204,19 @@ static void quick_connect_complete(CURLcode result, long status)
             strlen(code) != 6 || strspn(code, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") != 6 ||
             !g_qc_secret[0] || strlen(g_qc_secret) >= sizeof(g_qc_secret) - 1 ||
             strspn(g_qc_secret, "0123456789abcdefABCDEF") != strlen(g_qc_secret)) {
-            quick_connect_fail("The server did not return a valid Quick Connect code. Try again.");
+            quick_connect_fail(tr(TR_QC_BAD_CODE));
             return;
         }
         copy_safe(g_qc_code, sizeof(g_qc_code), code);
     }
     quick_connect_clear_response();
     if (authenticated) {
-        set_status("Code approved. Signing in...");
+        set_status("%s", tr(TR_QC_APPROVED));
         quick_connect_request(QC_AUTH);
     } else {
         g_qc_state = QC_WAIT;
         g_qc_next_request = osGetTime() + 2000;
-        set_status("Waiting for approval from your signed-in Jellyfin device...");
+        set_status("%s", tr(TR_QC_WAITING));
     }
 }
 
@@ -225,7 +225,7 @@ static void quick_connect_tick(void)
     if (g_qc_state == QC_OFF || g_qc_state == QC_ERROR) return;
     if (strcmp(g_qc_server, g_cfg.server)) { quick_connect_cancel(); return; }
     if (g_qc_deadline && osGetTime() >= g_qc_deadline) {
-        quick_connect_fail("This code expired. Choose Try Again for a new Quick Connect code.");
+        quick_connect_fail(tr(TR_QC_EXPIRED));
         return;
     }
     if (!g_qc_http) {

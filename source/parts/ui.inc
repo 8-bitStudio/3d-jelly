@@ -1088,7 +1088,7 @@ static void settings_value(int row, char *out, size_t outsz)
     out[0] = 0;
     switch (row) {
     case SETTINGS_ROW_SETUP:
-        copy_safe(out, outsz, "Choose / sign in");
+        copy_safe(out, outsz, tr(TR_CHOOSE_SIGN_IN));
         break;
     case SETTINGS_ROW_QUALITY:
         format_quality_label(out, outsz, g_cfg.quality);
@@ -1103,7 +1103,7 @@ static void settings_value(int row, char *out, size_t outsz)
         format_audio_rate_label(out, outsz, g_cfg.audio_sample_rate);
         break;
     case SETTINGS_ROW_MUSIC:
-        snprintf(out, outsz, "%s / %s", g_cfg.music.sample_rate == 44100 ? "44.1 kHz" : g_cfg.music.sample_rate == 32000 ? "32 kHz" : "48 kHz", g_cfg.music.channels == 1 ? "Mono" : "Stereo");
+        snprintf(out, outsz, "%s / %s", g_cfg.music.sample_rate == 44100 ? "44.1 kHz" : g_cfg.music.sample_rate == 32000 ? "32 kHz" : "48 kHz", g_cfg.music.channels == 1 ? tr(TR_MONO) : tr(TR_STEREO));
         break;
     case SETTINGS_ROW_BOTTOM_DIM:
         format_bottom_dim_label(out, outsz, g_cfg.bottom_dim_seconds);
@@ -1136,7 +1136,7 @@ static const char *settings_label(int row)
 {
     switch (row) {
     case SETTINGS_ROW_SETUP:
-        return "Server setup";
+        return tr(TR_SERVER_SETUP);
     case SETTINGS_ROW_QUALITY:
         return tr(TR_DEFAULT_QUALITY);
     case SETTINGS_ROW_PLAYBACK:
@@ -1144,9 +1144,9 @@ static const char *settings_label(int row)
     case SETTINGS_ROW_BUFFER:
         return tr(TR_STREAM_BUFFER);
     case SETTINGS_ROW_AUDIO:
-        return "Video audio rate";
+        return tr(TR_VIDEO_AUDIO_RATE);
     case SETTINGS_ROW_MUSIC:
-        return "Music sound";
+        return tr(TR_MUSIC_SOUND);
     case SETTINGS_ROW_BOTTOM_DIM:
         return tr(TR_BOTTOM_DIM);
     case SETTINGS_ROW_SERVER:
@@ -1197,7 +1197,7 @@ static void draw_settings(void)
         browse_label(188, y + 2, 176, 0.45f, selected ? COL_WHITE : COL_MUTED, value);
     }
 
-    draw_text(28, 217, 0.45f, COL_WHITE, "A: Change   B: Back   D-pad: Move");
+    draw_text(28, 217, 0.45f, COL_WHITE, "%s", tr(TR_SETTINGS_FOOTER));
 
     draw_language_selector();
 }
@@ -1208,10 +1208,10 @@ static void draw_settings_bottom(void)
     draw_text_lines(12, 14, 0.5f, 296, COL_WHITE, tr(TR_SETTINGS_HELP_1), 2, 18);
     draw_text_lines(12, 58, 0.5f, 296, COL_MUTED, tr(TR_SETTINGS_HELP_2), 3, 18);
     const char *note = tr(TR_SETTINGS_HINT);
-    if (g_settings_row == SETTINGS_ROW_SETUP) note = "Find a server or open sign-in. Your current login stays saved.";
+    if (g_settings_row == SETTINGS_ROW_SETUP) note = tr(TR_SERVER_SETUP_NOTE);
     else if (g_settings_row == SETTINGS_ROW_BUFFER) note = tr(TR_BUFFER_NOTE);
     else if (g_settings_row == SETTINGS_ROW_AUDIO) note = tr(TR_AUDIO_240_NOTE);
-    else if (g_settings_row == SETTINGS_ROW_MUSIC) note = "Set music quality, stereo or mono, buffering and volume. Music starts at 48 kHz, 16-bit stereo.";
+    else if (g_settings_row == SETTINGS_ROW_MUSIC) note = tr(TR_MUSIC_SOUND_NOTE);
     else if (g_settings_row == SETTINGS_ROW_BOTTOM_DIM) note = tr(TR_BOTTOM_DIM_NOTE);
     else if (g_settings_row == SETTINGS_ROW_LANGUAGE) note = tr(TR_LANGUAGE_NOTE);
     draw_text_lines(12, 127, 0.5f, 296, COL_WHITE, note, 3, 18);
@@ -1872,7 +1872,7 @@ static void handle_input(u32 down, u32 held)
                     if (toggle_favorite(item) && removed && g_view == VIEW_ITEMS &&
                         !strcmp(g_current_parent_id, FAVORITES_PARENT_ID)) {
                         int selected = g_selected;
-                        load_items_for_parent(FAVORITES_PARENT_ID, "Favorites");
+                        load_items_for_parent(FAVORITES_PARENT_ID, tr(TR_FAVORITES));
                         g_selected = selected;
                     }
                     g_browse_notice_until = osGetTime() + 3500;

@@ -41,7 +41,7 @@ static void setup_socket_failure(const char *operation)
 {
     int error = errno;
     setup_log("Discovery %s failed: errno=%d", operation, error);
-    set_status("Search %s failed (%d). Press X to retry.", operation, error);
+    set_status(tr(TR_SETUP_DISCOVERY_FAILED_FMT), operation, error);
 }
 
 static void setup_stop_scan(void)
@@ -71,7 +71,7 @@ static void setup_start_scan(void)
     g_setup_server_count = g_setup_server_row = g_setup_server_scroll = 0;
     if (!curl_http_runtime_init()) {
         setup_log("Discovery runtime failed: result=%08lX", (unsigned long)g_curl_init_result);
-        set_status("Wi-Fi unavailable. You can still enter a server address.");
+        set_status("%s", tr(TR_SETUP_WIFI_UNAVAILABLE));
         return;
     }
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -117,7 +117,7 @@ static void setup_start_scan(void)
               (unsigned long)g_setup_probe_host, (unsigned long)g_setup_probe_end);
     g_setup_scan_until = osGetTime() + 5500;
     g_setup_probe_at = 0;
-    set_status("Searching for Jellyfin servers on your Wi-Fi...");
+    set_status("%s", tr(TR_SETUP_SEARCHING));
 }
 
 static void setup_poll_scan(void)
@@ -171,8 +171,8 @@ static void setup_poll_scan(void)
     if (g_setup_socket >= 0 && osGetTime() >= g_setup_scan_until) {
         setup_log("Discovery complete: servers=%d send_errors=%d", g_setup_server_count, g_setup_probe_errors);
         setup_stop_scan();
-        set_status(g_setup_server_count ? "Choose a server to sign in." :
-                   "No servers found. Press X to retry, or add a server manually.");
+        set_status(g_setup_server_count ? tr(TR_SETUP_CHOOSE_SERVER) :
+                   tr(TR_SETUP_NO_SERVERS));
     }
 }
 
@@ -195,8 +195,8 @@ static void draw_connecting(bool bottom)
     float center = bottom ? 160 : 200;
     C2D_DrawRectSolid(0, 0, 0, bottom ? 320 : 400, 240, 0xFF111111);
     if (bottom) {
-        draw_text_centered(center, 103, 0.52f, COL_MUTED, "Opening your server...");
-        draw_text_centered(center, 202, 0.42f, COL_MUTED, "B: Open sign-in");
+        draw_text_centered(center, 103, 0.52f, COL_MUTED, "%s", tr(TR_SETUP_OPENING_SERVER));
+        draw_text_centered(center, 202, 0.42f, COL_MUTED, "%s", tr(TR_SETUP_OPEN_SIGNIN_HINT));
     } else {
         draw_text_centered(center, 87, 1.05f, COL_WHITE, "3dJelly");
     }
@@ -206,33 +206,33 @@ static void draw_setup(void)
 {
     setup_background(false);
     if (g_qc_state != QC_OFF) {
-        draw_text_centered(200, 23, 0.9f, COL_WHITE, "Quick Connect");
+        draw_text_centered(200, 23, 0.9f, COL_WHITE, "%s", tr(TR_QUICK_CONNECT));
         if (g_qc_code[0]) {
             draw_text_centered(200, 69, 1.65f, COL_WHITE, "%s", g_qc_code);
-            draw_text_centered(200, 120, 0.45f, COL_WHITE, "Enter this code on your signed-in device.");
+            draw_text_centered(200, 120, 0.45f, COL_WHITE, "%s", tr(TR_QC_ENTER_CODE));
         } else draw_text_centered(200, 93, 0.55f, COL_WHITE,
-            g_qc_state == QC_ERROR ? "Unable to sign in" : "Connecting to your server...");
+            g_qc_state == QC_ERROR ? tr(TR_QC_UNABLE) : tr(TR_SETUP_CONNECTING));
         C2D_DrawRectSolid(12, 170, 0, 376, 60, 0xC0111111);
         draw_text_wrap(24, 178, 0.43f, 350, COL_WHITE, "%s", g_status);
         return;
     }
     draw_text_centered(200, 45, 1.05f, COL_WHITE, "3dJelly");
     draw_text_centered(200, 91, 0.65f, COL_WHITE,
-                       "%s", g_setup_choose_server ? "Select Server" : "Please sign in");
+                       "%s", g_setup_choose_server ? tr(TR_SETUP_SELECT_SERVER) : tr(TR_SETUP_PLEASE_SIGN_IN));
     char address[128];
     clipped_name(g_cfg.server, address, sizeof(address), 55);
     if (text_width_for_scale(address, 0.43f) > 370)
         trim_text_to_width(address, sizeof(address), 0.43f, 370, true);
     draw_text_centered(200, 126, 0.43f, COL_MUTED, "%s",
-                       g_setup_choose_server ? "Find Jellyfin on your Wi-Fi" : address);
+                       g_setup_choose_server ? tr(TR_SETUP_FIND_ON_WIFI) : address);
     C2D_DrawRectSolid(12, 172, 0, 376, 58, 0xC0111111);
     draw_text_wrap(24, 178, 0.43f, 350, COL_WHITE, "%s", g_status);
     if (!g_setup_choose_server && !g_setup_wallpaper_ready) {
         if (g_setup_pixels)
-            draw_text_centered(200, 150, 0.38f, COL_MUTED, "Loading wallpaper: %d%%",
+            draw_text_centered(200, 150, 0.38f, COL_MUTED, tr(TR_SETUP_LOADING_WALLPAPER_FMT),
                 g_setup_mcu * 100 / (g_setup_jpeg.m_MCUSPerRow * g_setup_jpeg.m_MCUSPerCol));
         else if (g_setup_http && !g_setup_check_server)
-            draw_text_centered(200, 150, 0.38f, COL_MUTED, "Downloading wallpaper...");
+            draw_text_centered(200, 150, 0.38f, COL_MUTED, "%s", tr(TR_SETUP_DOWNLOADING_WALLPAPER));
     }
 }
 
@@ -247,22 +247,22 @@ static void draw_setup_bottom(void)
 {
     setup_background(true);
     if (g_qc_state != QC_OFF) {
-        draw_text_centered(160, 8, 0.62f, COL_WHITE, "Use Quick Connect");
+        draw_text_centered(160, 8, 0.62f, COL_WHITE, "%s", tr(TR_USE_QUICK_CONNECT));
         draw_text_wrap(24, 42, 0.47f, 272, COL_WHITE, "%s", g_qc_state == QC_ERROR ?
-            "Choose Try Again to request a new code, or Cancel to return to User and Pass sign-in." :
-            "On a phone or computer signed in to this Jellyfin server, open Settings > Quick Connect and enter the code above.");
+            tr(TR_QC_ERROR_HELP) :
+            tr(TR_QC_HELP));
         u64 now = osGetTime();
         if (g_qc_code[0] && g_qc_deadline > now) {
             unsigned seconds = (unsigned)((g_qc_deadline - now) / 1000);
-            draw_text_centered(160, 145, 0.42f, COL_MUTED, "Code expires in %u:%02u", seconds / 60, seconds % 60);
+            draw_text_centered(160, 145, 0.42f, COL_MUTED, tr(TR_QC_EXPIRES_FMT), seconds / 60, seconds % 60);
         }
         if (g_qc_state == QC_ERROR)
-            setup_button(168, 29, g_qc_retry_selected, true, "Try Again  (X)");
-        setup_button(203, 29, !g_qc_retry_selected, false, "Cancel  (B)");
+            setup_button(168, 29, g_qc_retry_selected, true, tr(TR_QC_TRY_AGAIN));
+        setup_button(203, 29, !g_qc_retry_selected, false, tr(TR_CANCEL_B));
         return;
     }
     if (g_setup_choose_server) {
-        draw_text_centered(160, 6, 0.62f, COL_WHITE, "Select Server");
+        draw_text_centered(160, 6, 0.62f, COL_WHITE, "%s", tr(TR_SETUP_SELECT_SERVER));
         if (g_setup_server_row < g_setup_server_count) {
             if (g_setup_server_row < g_setup_server_scroll) g_setup_server_scroll = g_setup_server_row;
             if (g_setup_server_row >= g_setup_server_scroll + 3) g_setup_server_scroll = g_setup_server_row - 2;
@@ -281,12 +281,12 @@ static void draw_setup_bottom(void)
             draw_text(30, y + 22, 0.34f, COL_MUTED, "%s", text);
         }
         if (!g_setup_server_count) draw_text_wrap(30, 63, 0.46f, 260, COL_MUTED, "%s",
-            g_setup_socket >= 0 ? "Searching your Wi-Fi..." : "No servers found. Add a server below.");
-        setup_button(169, 30, g_setup_server_row == g_setup_server_count, true, "Add Server");
-        setup_button(204, 28, g_setup_server_row == g_setup_server_count + 1, false, "Search Again  (X)");
+            g_setup_socket >= 0 ? tr(TR_SETUP_SEARCHING_WIFI) : tr(TR_SETUP_NO_SERVERS_BELOW));
+        setup_button(169, 30, g_setup_server_row == g_setup_server_count, true, tr(TR_SETUP_ADD_SERVER));
+        setup_button(204, 28, g_setup_server_row == g_setup_server_count + 1, false, tr(TR_SETUP_SEARCH_AGAIN));
     } else {
-        draw_text_centered(160, 6, 0.62f, COL_WHITE, "Please sign in");
-        const char *labels[] = {"User", "Pass"};
+        draw_text_centered(160, 6, 0.62f, COL_WHITE, "%s", tr(TR_SETUP_PLEASE_SIGN_IN));
+        const char *labels[] = {tr(TR_SETUP_USER), tr(TR_SETUP_PASS)};
         for (int i = 0; i < 2; i++) {
             int y = 45 + i * 51;
             draw_text(20, y - 18, 0.47f, COL_WHITE, "%s", labels[i]);
@@ -297,9 +297,9 @@ static void draw_setup_bottom(void)
             if (text_width_for_scale(value, 0.52f) > 258) trim_text_to_width(value, sizeof(value), 0.52f, 258, true);
             draw_text(30, y + 6, 0.52f, COL_WHITE, "%s", value);
         }
-        setup_button(136, 30, g_setup_row == 2, true, "Sign In");
-        setup_button(170, 28, g_setup_row == 3, false, "Use Quick Connect");
-        setup_button(204, 28, g_setup_row == 4, false, "Change Server");
+        setup_button(136, 30, g_setup_row == 2, true, tr(TR_SETUP_SIGN_IN));
+        setup_button(170, 28, g_setup_row == 3, false, tr(TR_USE_QUICK_CONNECT));
+        setup_button(204, 28, g_setup_row == 4, false, tr(TR_SETUP_CHANGE_SERVER));
     }
 }
 
@@ -318,7 +318,7 @@ static void setup_select_server(const char *address)
     setup_stop_scan();
     g_setup_choose_server = false;
     g_setup_row = 0;
-    set_status("Enter your User and Pass, then Sign In.");
+    set_status("%s", tr(TR_SETUP_ENTER_LOGIN));
 }
 
 static void handle_setup(u32 down)
@@ -330,7 +330,7 @@ static void handle_setup(u32 down)
         if (log) { fputs("3dJelly setup: smooth wallpaper and outlined text\n", log); fclose(log); }
         if (!g_cfg.server[0]) setup_start_scan();
         else {
-            set_status("Connecting to your server...");
+            set_status("%s", tr(TR_SETUP_CONNECTING));
             if (!setup_begin_http(true)) {
                 g_setup_resume_session = false;
                 setup_start_scan();
@@ -344,7 +344,7 @@ static void handle_setup(u32 down)
             setup_cancel_http();
             g_setup_resume_session = false;
             g_view = VIEW_SETUP;
-            set_status("Enter your User and Pass, then Sign In.");
+            set_status("%s", tr(TR_SETUP_ENTER_LOGIN));
         }
         return;
     }
@@ -367,7 +367,7 @@ static void handle_setup(u32 down)
         if (cancel) {
             quick_connect_cancel();
             g_setup_row = 3;
-            set_status("Enter your User and Pass, or use Quick Connect.");
+            set_status("%s", tr(TR_SETUP_ENTER_LOGIN_OR_QC));
         } else if (retry) quick_connect_start();
         else quick_connect_tick();
         return;
@@ -398,7 +398,7 @@ static void handle_setup(u32 down)
             if (edit_text(tr(TR_SERVER_URL), address, sizeof(address), false)) {
                 normalize_server_url(address);
                 if (starts_with_http(address)) setup_select_server(address);
-                else set_status("Enter an http:// or https:// server address.");
+                else set_status("%s", tr(TR_SETUP_ENTER_HTTP_ADDRESS));
             }
         } else setup_start_scan();
         return;
@@ -419,7 +419,7 @@ static void handle_setup(u32 down)
     if (!activate) return;
     if (g_setup_row < 2) {
         bool password = g_setup_row == 1;
-        if (edit_text(password ? "Pass" : "User", password ? g_cfg.password : g_cfg.username, 96, password)) {
+        if (edit_text(password ? tr(TR_SETUP_PASS) : tr(TR_SETUP_USER), password ? g_cfg.password : g_cfg.username, 96, password)) {
             g_cfg.token[0] = g_cfg.user_id[0] = 0;
             save_config();
             g_setup_row++;

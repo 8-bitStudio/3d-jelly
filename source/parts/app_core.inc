@@ -218,7 +218,7 @@ static const char *playback_mode_label(int mode)
         return "MJPEG";
     case PLAYBACK_MODE_AUTO:
     default:
-        return "Auto";
+        return tr(TR_AUTO);
     }
 }
 

@@ -218,7 +218,7 @@ static void music_open(u64 ticks)
     char id[240], path[400];
     url_encode(g_current.id, id, sizeof(id));
     snprintf(path, sizeof(path), "/Items/%s/PlaybackInfo?UserId=%s", id, g_cfg.user_id);
-    if (!music_http_begin(path, true)) music_fail("Could not connect. Press A to retry.");
+    if (!music_http_begin(path, true)) music_fail(tr(TR_MUSIC_CONNECT_FAILED));
 }
 
 static bool music_start(const MediaItem *item)
@@ -314,12 +314,12 @@ static void music_tick(void)
         int running, remaining;
         CURLMcode result = curl_multi_perform(g_music.multi, &running);
         CURLMsg *message = curl_multi_info_read(g_music.multi, &remaining);
-        if (result != CURLM_OK) { music_fail("Connection interrupted. Press A to retry."); return; }
+        if (result != CURLM_OK) { music_fail(tr(TR_MUSIC_CONN_INTERRUPTED)); return; }
         if (!message || message->msg != CURLMSG_DONE) return;
         long status = 0;
         curl_easy_getinfo(g_music.http, CURLINFO_RESPONSE_CODE, &status);
         if (message->data.result != CURLE_OK || status != 200) {
-            music_fail("Could not prepare this song. Press A to retry."); return;
+            music_fail(tr(TR_MUSIC_PREPARE_FAILED)); return;
         }
         const char *body = g_music.info.data, *end = body ? body + g_music.info.size : NULL;
         const char *source = NULL, *source_end = NULL, *array = body ? find_key_range(body, end, "MediaSources") : NULL;
@@ -329,7 +329,7 @@ static void music_tick(void)
         bool allowed = true;
         if (source) json_get_bool_range(source, source_end, "SupportsTranscoding", &allowed);
         if (!source || !allowed || !g_play_session[0] || !g_play_media_source_id[0]) {
-            music_fail("This song cannot be streamed. Check audio transcoding permissions."); return;
+            music_fail(tr(TR_MUSIC_CANNOT_STREAM)); return;
         }
         music_detach_http();
         size_t capacity = (size_t)g_music.sound.buffer_kb * 1024;
@@ -339,10 +339,10 @@ static void music_tick(void)
             g_music.stream.capacity = capacity;
         }
         if (!g_music.stream.data) g_music.stream.data = malloc(capacity);
-        if (!g_music.stream.data) { music_fail("Not enough memory to play music."); return; }
+        if (!g_music.stream.data) { music_fail(tr(TR_MUSIC_NO_MEMORY)); return; }
         char path[1600]; music_build_stream_path(path, sizeof(path), &g_current, g_music.base_ticks, &g_music.sound);
         g_music.phase = MUSIC_STREAM;
-        if (!music_http_begin(path, false) || !music_workers_start()) music_fail("Could not start audio streaming. Press A to retry.");
+        if (!music_http_begin(path, false) || !music_workers_start()) music_fail(tr(TR_MUSIC_STREAM_START_FAILED));
         return;
     }
     MusicOutputState output;

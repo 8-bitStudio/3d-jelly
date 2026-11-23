@@ -22,21 +22,21 @@ static void music_network_worker(void *unused)
         bool stalled = !full && !g_music_io.paused && osGetTime() - g_music_io.last_data_ms > 20000;
         LightLock_Unlock(&g_music_io.lock);
         if (stop) break;
-        if (stalled) { music_io_fail("Connection stalled. Press A to retry."); break; }
+        if (stalled) { music_io_fail(tr(TR_MUSIC_CONN_STALLED)); break; }
         if (full) { LightEvent_WaitTimeout(&g_music_io.network_wake, 50000000LL); continue; }
         if (resume && curl_easy_pause(g_music.http, CURLPAUSE_CONT) != CURLE_OK) {
-            music_io_fail("Audio connection interrupted. Press A to retry."); break;
+            music_io_fail(tr(TR_MUSIC_AUDIO_INTERRUPTED)); break;
         }
         int running = 0, remaining = 0;
         if (curl_multi_perform(g_music.multi, &running) != CURLM_OK) {
-            music_io_fail("Audio connection interrupted. Press A to retry."); break;
+            music_io_fail(tr(TR_MUSIC_AUDIO_INTERRUPTED)); break;
         }
         CURLMsg *message = curl_multi_info_read(g_music.multi, &remaining);
         if (message && message->msg == CURLMSG_DONE) {
             long status = 0;
             curl_easy_getinfo(g_music.http, CURLINFO_RESPONSE_CODE, &status);
             if (message->data.result != CURLE_OK || status != 200) {
-                music_io_fail("Audio download interrupted. Press A to retry.");
+                music_io_fail(tr(TR_MUSIC_DOWNLOAD_INTERRUPTED));
             } else {
                 LightLock_Lock(&g_music_io.lock);
                 g_music_io.net_done = true;
@@ -47,7 +47,7 @@ static void music_network_worker(void *unused)
         }
         int descriptors = 0;
         if (curl_multi_wait(g_music.multi, NULL, 0, 15, &descriptors) != CURLM_OK) {
-            music_io_fail("Audio connection interrupted. Press A to retry."); break;
+            music_io_fail(tr(TR_MUSIC_AUDIO_INTERRUPTED)); break;
         }
         /* Some connection phases have no socket to wait on. Avoid a busy loop. */
         if (!descriptors) svcSleepThread(1000000LL);
@@ -77,10 +77,10 @@ static void music_output_worker(void *unused)
         bool invalid = g_music.stream.failed || (!ready && net_done && before == g_music.stream.used);
         LightLock_Unlock(&g_music_io.lock);
         if (stop) break;
-        if (invalid) { music_io_fail("The server did not return supported PCM audio."); break; }
+        if (invalid) { music_io_fail(tr(TR_MUSIC_BAD_PCM)); break; }
         if (!ready) { LightEvent_WaitTimeout(&g_music_io.output_wake, 10000000LL); continue; }
         if (!g_music.output_ready && !music_init_dsp()) {
-            music_io_fail("Audio initialization failed. Check that DSP firmware is installed."); break;
+            music_io_fail(tr(TR_MUSIC_DSP_FAILED)); break;
         }
         output.rate = g_music.stream.rate; output.channels = g_music.stream.channels;
         if (volume != last_volume) {
@@ -136,7 +136,7 @@ static void music_output_worker(void *unused)
         output.position = music_output_position();
         output.buffered_bytes = buffered_frames * g_music.stream.frame_bytes;
         if (!queued && net_done) {
-            if (truncated) music_io_fail("The audio stream ended early. Press A to retry.");
+            if (truncated) music_io_fail(tr(TR_MUSIC_ENDED_EARLY));
             else { output.finished = true; output.buffering = false; }
             music_output_publish(&output);
             break;

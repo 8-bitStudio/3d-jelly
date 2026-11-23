@@ -76,9 +76,9 @@ static bool toggle_favorite(MediaItem *item)
     if (ok) {
         item->is_favorite = favorite;
         apply_favorite_state(item->id, favorite);
-        set_status("%s", favorite ? "Added to Favorites" : "Removed from Favorites");
+        set_status("%s", favorite ? tr(TR_ADDED_TO_FAVORITES) : tr(TR_REMOVED_FROM_FAVORITES));
     } else {
-        set_http_failure("Could not update Favorites", &res, ret);
+        set_http_failure(tr(TR_PREFIX_FAVORITE_FAILED), &res, ret);
     }
     free_response(&res);
     return ok;

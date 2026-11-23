@@ -12,7 +12,7 @@ static bool music_track_list(void)
 
 static const char *music_mode_name(int mode)
 {
-    return mode == 1 ? "Artists" : mode == 2 ? "Songs" : "Albums";
+    return mode == 1 ? tr(TR_ARTISTS) : mode == 2 ? tr(TR_SONGS) : tr(TR_ALBUMS);
 }
 
 static void music_activate_mode(void)
@@ -41,7 +41,7 @@ static void draw_music_browse(void)
         browse_label(10, 40, 308, 0.55f, COL_WHITE, g_screen_title);
         draw_text(325, 41, 0.45f, COL_MUTED, "%d/%d", g_item_count ? g_selected + 1 : 0, g_item_count);
     }
-    if (!g_item_count) draw_text(14, 100, 0.55f, COL_MUTED, "No music here yet");
+    if (!g_item_count) draw_text(14, 100, 0.55f, COL_MUTED, "%s", tr(TR_NO_MUSIC_YET));
     if (music_track_list()) {
         int first = (int)(g_browse_scroll.value / 48);
         for (int i = first; i < g_item_count && i < first + 5; ++i) {
@@ -61,8 +61,8 @@ static void draw_music_browse(void)
                 browse_label(54, y + 3, 270, 0.5f, COL_WHITE, item->name);
             if (y + 25 >= browse_clip_top() && y + 40 <= BROWSE_CONTENT_BOTTOM) {
                 char detail[256];
-                if (item->parent_index_number > 1) snprintf(detail, sizeof(detail), "Disc %d  /  %s", item->parent_index_number, item->artist[0] ? item->artist : "Unknown artist");
-                else copy_safe(detail, sizeof(detail), item->artist[0] ? item->artist : "Unknown artist");
+                if (item->parent_index_number > 1) snprintf(detail, sizeof(detail), tr(TR_DISC_FMT), item->parent_index_number, item->artist[0] ? item->artist : tr(TR_UNKNOWN_ARTIST));
+                else copy_safe(detail, sizeof(detail), item->artist[0] ? item->artist : tr(TR_UNKNOWN_ARTIST));
                 browse_label(54, y + 25, 270, 0.5f, COL_MUTED, detail);
                 if (item->is_favorite) draw_text(364, y + 29, 0.5f, COL_SECONDARY, "\xE2\x99\xA5");
             }
@@ -93,26 +93,26 @@ static void draw_music_preview(const MediaItem *item)
     if (music_is_audio(item)) {
         char duration[32] = "";
         if (item->runtime_ticks) format_playback_time(item->runtime_ticks, duration, sizeof(duration));
-        snprintf(detail, sizeof(detail), "%s%s%s", item->album[0] ? item->album : "Song", duration[0] ? "  /  " : "", duration);
-    } else if (item->year > 0) snprintf(detail, sizeof(detail), "%d%s", item->year, item->child_count > 0 ? "  /  Open to browse songs" : "");
-    else copy_safe(detail, sizeof(detail), !strcmp(item->type, "MusicArtist") ? "Explore albums by this artist" : "Open to browse songs");
+        snprintf(detail, sizeof(detail), "%s%s%s", item->album[0] ? item->album : tr(TR_SONG), duration[0] ? "  /  " : "", duration);
+    } else if (item->year > 0) snprintf(detail, sizeof(detail), "%d%s%s", item->year, item->child_count > 0 ? "  /  " : "", item->child_count > 0 ? tr(TR_OPEN_TO_BROWSE_SONGS) : "");
+    else copy_safe(detail, sizeof(detail), !strcmp(item->type, "MusicArtist") ? tr(TR_EXPLORE_ARTIST_ALBUMS) : tr(TR_OPEN_TO_BROWSE_SONGS));
     draw_text_lines(12, 143, 0.5f, 296, COL_MUTED, detail, 2, 17);
 }
 
 static const char *music_status_label(void)
 {
-    return g_music.phase == MUSIC_ERROR ? "Couldn't play" : g_music.phase == MUSIC_ENDED ? "Queue finished" :
-        g_music.paused ? "Paused" : g_music.buffering ? "Buffering..." : "Now playing";
+    return g_music.phase == MUSIC_ERROR ? tr(TR_MUSIC_COULDNT_PLAY) : g_music.phase == MUSIC_ENDED ? tr(TR_MUSIC_QUEUE_FINISHED) :
+        g_music.paused ? tr(TR_MUSIC_PAUSED) : g_music.buffering ? tr(TR_MUSIC_BUFFERING) : tr(TR_MUSIC_NOW_PLAYING);
 }
 
 static void draw_music_top(void)
 {
     C2D_DrawRectSolid(0, 0, 0, 400, 240, COL_BG);
     C2D_DrawRectSolid(0, 0, 0, 400, 28, 0xFF241B22);
-    draw_text(12, 7, 0.5f, COL_SECONDARY, "MUSIC");
+    draw_text(12, 7, 0.5f, COL_SECONDARY, "%s", tr(TR_MUSIC_HEADER));
     int rate = g_music.audio_rate ? (int)g_music.audio_rate : g_music.sound.sample_rate;
     int channels = g_music.audio_channels ? g_music.audio_channels : g_music.sound.channels;
-    draw_text(88, 7, 0.45f, COL_MUTED, "%.3g kHz / %s", rate / 1000.0, channels == 1 ? "Mono" : "Stereo");
+    draw_text(88, 7, 0.45f, COL_MUTED, "%.3g kHz / %s", rate / 1000.0, channels == 1 ? tr(TR_MONO) : tr(TR_STEREO));
     draw_text(285, 7, 0.5f, COL_MUTED, "%d / %d", g_music.index + 1, g_music.count);
     C2D_DrawRectSolid(10, 34, 0, 188, 188, 0xFF47333D);
     browse_art(&g_current, BROWSE_ART_SQUARE, 12, 36, 184, 184, false);
@@ -121,10 +121,10 @@ static void draw_music_top(void)
     if (g_music.phase == MUSIC_ERROR) {
         draw_text_lines(210, 131, 0.5f, 178, COL_MUTED, g_music.error, 5, 18);
     } else {
-        draw_text_lines(210, 131, 0.55f, 178, COL_WHITE, g_current.artist[0] ? g_current.artist : "Unknown artist", 2, 18);
+        draw_text_lines(210, 131, 0.55f, 178, COL_WHITE, g_current.artist[0] ? g_current.artist : tr(TR_UNKNOWN_ARTIST), 2, 18);
         draw_text_lines(210, 177, 0.5f, 178, COL_MUTED, g_current.album, 2, 17);
         if (g_music.index + 1 < g_music.count && g_music.queue[g_music.index + 1] >= 0) {
-            char next[160]; snprintf(next, sizeof(next), "Next: %s", g_items[g_music.queue[g_music.index + 1]].name);
+            char next[160]; snprintf(next, sizeof(next), tr(TR_NEXT_FMT), g_items[g_music.queue[g_music.index + 1]].name);
             browse_label(12, 224, 376, 0.45f, COL_MUTED, next);
         }
     }
@@ -154,13 +154,13 @@ static void draw_music_lyrics_bottom(void)
             draw_text(160 - row->width / 2.0f, y, LYRICS_SCALE, (color & 0x00FFFFFF) | (alpha << 24), "%s", row_text);
         }
     } else {
-        const char *message = g_lyrics.state == LYRICS_NONE ? "No lyrics for this song" :
-            g_lyrics.state == LYRICS_READY ? "Preparing lyrics..." : "Loading lyrics...";
+        const char *message = g_lyrics.state == LYRICS_NONE ? tr(TR_NO_LYRICS) :
+            g_lyrics.state == LYRICS_READY ? tr(TR_PREPARING_LYRICS) : tr(TR_LOADING_LYRICS);
         draw_text_centered(160, 118, 0.55f, COL_MUTED, "%s", message);
     }
     C2D_DrawRectSolid(0, 0, 0, 320, 26, 0xFF241B22);
     browse_label(10, 5, 230, 0.5f, COL_WHITE, g_current.name);
-    draw_text(258, 5, 0.45f, COL_MUTED, "B: Back");
+    draw_text(258, 5, 0.45f, COL_MUTED, "%s", tr(TR_HINT_B_BACK));
     float ratio = g_current.runtime_ticks ? (double)music_position() / g_current.runtime_ticks : 0;
     if (ratio > 1) ratio = 1;
     C2D_DrawRectSolid(0, 26, 0, 320, 2, 0xFF403438);
@@ -184,26 +184,26 @@ static void draw_music_bottom(void)
     if (ratio > 1) ratio = 1;
     C2D_DrawRectSolid(20, 102, 0, 280 * ratio, 4, COL_PRIMARY);
     C2D_DrawCircleSolid(20 + 280 * ratio, 104, 0, 5, COL_PRIMARY);
-    draw_text_centered(160, 112, 0.45f, COL_MUTED, "Vol %d%%   SELECT: Sound", g_music.muted ? 0 : g_cfg.music.volume_percent);
+    draw_text_centered(160, 112, 0.45f, COL_MUTED, tr(TR_MUSIC_VOL_HINT_FMT), g_music.muted ? 0 : g_cfg.music.volume_percent);
     C2D_DrawRectSolid(10, 132, 0, 82, 44, COL_PAPER);
     C2D_DrawRectSolid(100, 132, 0, 120, 44, COL_PRIMARY_DARK);
     C2D_DrawRectSolid(228, 132, 0, 82, 44, COL_PAPER);
-    draw_text_centered(51, 145, 0.5f, COL_WHITE, "Previous");
-    draw_text_centered(160, 144, 0.6f, COL_WHITE, "%s", g_music.phase == MUSIC_ERROR ? "Retry" : g_music.phase == MUSIC_ENDED ? "Replay" : g_music.paused ? "Play" : "Pause");
-    draw_text_centered(269, 145, 0.5f, COL_WHITE, "Next");
+    draw_text_centered(51, 145, 0.5f, COL_WHITE, "%s", tr(TR_PREVIOUS));
+    draw_text_centered(160, 144, 0.6f, COL_WHITE, "%s", g_music.phase == MUSIC_ERROR ? tr(TR_RETRY) : g_music.phase == MUSIC_ENDED ? tr(TR_REPLAY) : g_music.paused ? tr(TR_PLAY) : tr(TR_PAUSE));
+    draw_text_centered(269, 145, 0.5f, COL_WHITE, "%s", tr(TR_NEXT));
     C2D_DrawRectSolid(10, 182, 0, 98, 27, 0xFF30232D);
     C2D_DrawRectSolid(113, 182, 0, 94, 27, COL_PAPER);
     C2D_DrawRectSolid(212, 182, 0, 98, 27, COL_PAPER);
-    draw_text_centered(59, 187, 0.45f, g_current.is_favorite ? COL_SECONDARY : COL_WHITE, "%s", g_current.is_favorite ? "Unfavorite" : "Favorite");
-    draw_text_centered(160, 187, 0.5f, COL_WHITE, "%s", g_music.muted ? "Unmute" : "Mute");
-    draw_text_centered(261, 187, 0.5f, g_lyrics.state == LYRICS_NONE ? 0xFF6A6A6A : COL_PRIMARY, "Lyrics");
+    draw_text_centered(59, 187, 0.45f, g_current.is_favorite ? COL_SECONDARY : COL_WHITE, "%s", g_current.is_favorite ? tr(TR_UNFAVORITE) : tr(TR_FAVORITE));
+    draw_text_centered(160, 187, 0.5f, COL_WHITE, "%s", g_music.muted ? tr(TR_UNMUTE) : tr(TR_MUTE));
+    draw_text_centered(261, 187, 0.5f, g_lyrics.state == LYRICS_NONE ? 0xFF6A6A6A : COL_PRIMARY, "%s", tr(TR_LYRICS));
     C2D_DrawRectSolid(10, 213, 0, 300, 26, COL_PAPER);
-    draw_text_centered(160, 217, 0.5f, COL_WHITE, "B: Stop and go back");
+    draw_text_centered(160, 217, 0.5f, COL_WHITE, "%s", tr(TR_MUSIC_STOP_HINT));
 }
 
 static const char *music_setting_label(int row)
 {
-    static const char *labels[] = {"Sample rate", "Channels", "Buffer", "Volume", "Restore defaults", "Save and return"};
+    const char *const labels[] = {tr(TR_MUSIC_SAMPLE_RATE), tr(TR_MUSIC_CHANNELS), tr(TR_MUSIC_BUFFER), tr(TR_MUSIC_VOLUME), tr(TR_MUSIC_RESTORE_DEFAULTS), tr(TR_MUSIC_SAVE_RETURN)};
     return labels[clamp_int(row, 0, 5)];
 }
 
@@ -212,23 +212,23 @@ static void draw_music_settings_top(void)
     const MusicSoundSettings *sound = &g_music_settings_draft;
     C2D_DrawRectSolid(0, 0, 0, 400, 240, COL_BG);
     C2D_DrawRectSolid(0, 0, 0, 400, 32, 0xFF241B22);
-    draw_text(16, 7, 0.6f, COL_WHITE, "Music sound");
+    draw_text(16, 7, 0.6f, COL_WHITE, "%s", tr(TR_MUSIC_SOUND));
     C2D_DrawRectSolid(18, 44, 0, 364, 83, COL_PAPER);
     C2D_DrawRectSolid(18, 44, 0, 3, 83, COL_PRIMARY);
     const char *rate = sound->sample_rate == 44100 ? "44.1 kHz" : sound->sample_rate == 32000 ? "32 kHz" : "48 kHz";
     draw_text(32, 49, 0.85f, COL_WHITE, "%s", rate);
-    draw_text(212, 57, 0.5f, COL_PRIMARY, "%s", sound->sample_rate == 48000 ? "Very high" : sound->sample_rate == 44100 ? "High" : "Data saver");
-    draw_text(32, 84, 0.5f, COL_WHITE, "16-bit PCM / %s", sound->channels == 1 ? "Mono" : "Stereo");
+    draw_text(212, 57, 0.5f, COL_PRIMARY, "%s", sound->sample_rate == 48000 ? tr(TR_QUALITY_VERY_HIGH) : sound->sample_rate == 44100 ? tr(TR_QUALITY_HIGH) : tr(TR_QUALITY_DATA_SAVER));
+    draw_text(32, 84, 0.5f, COL_WHITE, "16-bit PCM / %s", sound->channels == 1 ? tr(TR_MONO) : tr(TR_STEREO));
     double kbps = sound->sample_rate * sound->channels * 16 / 1000.0;
-    draw_text(32, 107, 0.45f, COL_MUTED, "%.1f kbps / %.1f MB per min", kbps, kbps * 60 / 8000);
+    draw_text(32, 107, 0.45f, COL_MUTED, tr(TR_MUSIC_BITRATE_FMT), kbps, kbps * 60 / 8000);
     draw_text(18, 141, 0.55f, COL_PRIMARY, "%s", music_setting_label(g_music_settings_row));
-    static const char *notes[] = {
-        "48 kHz is recommended for music. Lower rates use less bandwidth. The 3DS resamples for its output.",
-        "Stereo preserves left and right detail. Mono combines both channels and uses half the bandwidth.",
-        "1,024 KB is recommended. Going below this is not recommended, especially on Old 3DS.",
-        "Music volume is separate from video. 100% keeps the original level without extra amplification.",
-        "Restores 48 kHz, stereo, a 1,024 KB buffer and 100% volume. Choose Save to apply.",
-        "Saves for future songs. Quality changes briefly reload the current song at the same position."
+    const char *const notes[] = {
+        tr(TR_MUSIC_NOTE_RATE),
+        tr(TR_MUSIC_NOTE_CHANNELS),
+        tr(TR_MUSIC_NOTE_BUFFER),
+        tr(TR_MUSIC_NOTE_VOLUME),
+        tr(TR_MUSIC_NOTE_DEFAULTS),
+        tr(TR_MUSIC_NOTE_SAVE)
     };
     draw_text_lines(18, 166, 0.5f, 364, COL_MUTED, notes[clamp_int(g_music_settings_row, 0, 5)], 4, 17);
 }
@@ -237,7 +237,7 @@ static void draw_music_settings_bottom(void)
 {
     const MusicSoundSettings *sound = &g_music_settings_draft;
     C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_BG);
-    draw_text_centered(160, 8, 0.5f, COL_MUTED, "Left / Right: Adjust");
+    draw_text_centered(160, 8, 0.5f, COL_MUTED, "%s", tr(TR_MUSIC_ADJUST_HINT));
     for (int row = 0; row < 4; ++row) {
         float y = 34 + row * 32;
         bool selected = row == g_music_settings_row;
@@ -246,7 +246,7 @@ static void draw_music_settings_bottom(void)
         draw_text(22, y + 5, 0.5f, COL_WHITE, "%s", music_setting_label(row));
         char value[48];
         if (row == 0) snprintf(value, sizeof(value), "%s", sound->sample_rate == 44100 ? "44.1 kHz" : sound->sample_rate == 32000 ? "32 kHz" : "48 kHz");
-        else if (row == 1) snprintf(value, sizeof(value), "%s", sound->channels == 1 ? "Mono" : "Stereo");
+        else if (row == 1) snprintf(value, sizeof(value), "%s", sound->channels == 1 ? tr(TR_MONO) : tr(TR_STEREO));
         else if (row == 2) snprintf(value, sizeof(value), "%d KB", sound->buffer_kb);
         else snprintf(value, sizeof(value), "%d%%", sound->volume_percent);
         draw_text_centered(225, y + 5, 0.5f, selected ? COL_WHITE : COL_PRIMARY, "%s", value);
@@ -254,7 +254,7 @@ static void draw_music_settings_bottom(void)
     }
     C2D_DrawRectSolid(10, 174, 0, 145, 33, g_music_settings_row == 4 ? COL_PRIMARY_DARK : COL_PAPER);
     C2D_DrawRectSolid(165, 174, 0, 145, 33, g_music_settings_row == 5 ? COL_PRIMARY_DARK : 0xFF40302B);
-    draw_text_centered(82, 182, 0.5f, COL_WHITE, "Defaults");
-    draw_text_centered(237, 182, 0.5f, COL_WHITE, "Save");
-    draw_text_centered(160, 220, 0.5f, COL_MUTED, "B: Cancel   SELECT: Save");
+    draw_text_centered(82, 182, 0.5f, COL_WHITE, "%s", tr(TR_DEFAULTS));
+    draw_text_centered(237, 182, 0.5f, COL_WHITE, "%s", tr(TR_SAVE));
+    draw_text_centered(160, 220, 0.5f, COL_MUTED, "%s", tr(TR_MUSIC_SETTINGS_HINT));
 }

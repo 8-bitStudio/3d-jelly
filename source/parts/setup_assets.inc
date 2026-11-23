@@ -215,7 +215,7 @@ static void setup_decode_step(void)
         if (status) {
             setup_log("Wallpaper: JPEG block %d failed status=%u", g_setup_mcu, status);
             setup_cancel_http();
-            set_status("Wallpaper decode failed (%u). Sign-in is still available.", status);
+            set_status(tr(TR_SETUP_WALLPAPER_DECODE_FMT), status);
             return;
         }
         int ox = (g_setup_mcu % info->m_MCUSPerRow) * info->m_MCUWidth;
@@ -273,7 +273,7 @@ static void setup_decode_step(void)
         if (uploaded) {
             setup_write_cache(g_setup_pixels);
             setup_log("Wallpaper: decoded and uploaded successfully");
-        } else set_status("Wallpaper texture unavailable. Sign-in is still available.");
+        } else set_status("%s", tr(TR_SETUP_WALLPAPER_TEXTURE));
         setup_cancel_http();
         if (uploaded) g_setup_asset_attempts = 3;
     }
@@ -307,23 +307,23 @@ static void setup_tick_assets(void)
             if (!ok) {
                 g_setup_resume_session = false;
                 setup_start_scan();
-                set_status("Saved server unavailable. Searching your Wi-Fi...");
+                set_status("%s", tr(TR_SETUP_SAVED_SERVER_UNAVAILABLE));
                 return;
             }
             if (g_setup_resume_session) {
                 g_setup_resume_session = false;
                 if (load_libraries()) return;
                 g_view = VIEW_SETUP;
-            } else set_status("Enter your User and Pass, then Sign In.");
+            } else set_status("%s", tr(TR_SETUP_ENTER_LOGIN));
         } else {
             if (ok && setup_begin_decode()) return;
             setup_cancel_http();
             g_setup_retry_at = osGetTime() + 5000;
             if (!g_setup_wallpaper_ready) {
                 if (!status)
-                    set_status("Cannot reach server (%d). Choose Change Server to search Wi-Fi.", (int)code);
-                else if (ok) set_status("Wallpaper image could not be decoded. Sign-in is still available.");
-                else set_status("Sign-in is ready. Server wallpaper unavailable (HTTP %ld).", status);
+                    set_status(tr(TR_SETUP_CANNOT_REACH_FMT), (int)code);
+                else if (ok) set_status("%s", tr(TR_SETUP_WALLPAPER_BAD_IMAGE));
+                else set_status(tr(TR_SETUP_WALLPAPER_HTTP_FMT), status);
             }
         }
     }

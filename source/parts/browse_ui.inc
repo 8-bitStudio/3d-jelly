@@ -500,7 +500,7 @@ static void browse_art(const MediaItem *item, BrowseArtKind kind, float x, float
         }
     } else if (y + h / 2 - 8 >= top && y + h / 2 + 8 <= bottom) {
         browse_label(x + 5, y + h / 2 - 8, w - 10, 0.5f, COL_MUTED,
-                     entry && entry->failed ? "No image" : display_item_kind(item));
+                     entry && entry->failed ? tr(TR_NO_IMAGE) : display_item_kind(item));
     }
 }
 
@@ -529,8 +529,11 @@ static void browse_card(MediaItem *item, bool poster, float x, float y, bool foc
 static void browse_episode_meta(const MediaItem *item, char *out, size_t size)
 {
     browse_format_meta(item, out, size);
-    const char *state = item->played ? "  /  Watched" : media_resume_position(item) ? "  /  In progress" : "";
-    if (size) strncat(out, state, size - strlen(out) - 1);
+    const char *state = item->played ? tr(TR_WATCHED) : media_resume_position(item) ? tr(TR_IN_PROGRESS) : NULL;
+    if (state && size) {
+        strncat(out, "  /  ", size - strlen(out) - 1);
+        strncat(out, state, size - strlen(out) - 1);
+    }
 }
 
 static void draw_episode_row(MediaItem *item, float y, bool focused)
@@ -555,7 +558,7 @@ static void draw_episode_row(MediaItem *item, float y, bool focused)
         browse_label(136, y + 39, 246, 0.5f, focused ? COL_PRIMARY : COL_MUTED, meta);
     if (y + 55 >= browse_clip_top() && y + 70 <= BROWSE_CONTENT_BOTTOM)
         browse_label(136, y + 55, 246, 0.5f, COL_MUTED,
-                     item->overview[0] ? item->overview : "No summary available");
+                     item->overview[0] ? item->overview : tr(TR_NO_SUMMARY));
 }
 
 static void draw_episode_preview(const MediaItem *item)
@@ -571,17 +574,17 @@ static void draw_episode_preview(const MediaItem *item)
     if (resume) {
         char at[32];
         format_playback_time(resume, at, sizeof(at));
-        snprintf(state, sizeof(state), "Resume %s", at);
-    } else copy_safe(state, sizeof(state), item->played ? "Watched" : "Not watched");
+        snprintf(state, sizeof(state), tr(TR_RESUME_FMT), at);
+    } else copy_safe(state, sizeof(state), item->played ? tr(TR_WATCHED) : tr(TR_NOT_WATCHED));
     browse_label(164, 70, 146, 0.5f, COL_PRIMARY, state);
     draw_text_lines(10, 98, 0.6f, 300, COL_WHITE, item->name, 2, 20);
     draw_text_lines(10, 141, 0.5f, 300, COL_MUTED,
-                    item->overview[0] ? item->overview : "No summary available for this episode.", 2, 17);
+                    item->overview[0] ? item->overview : tr(TR_NO_EPISODE_SUMMARY), 2, 17);
 }
 
 static const char *browse_tab_name(int tab)
 {
-    return tab == 0 ? "Home" : tab == 1 ? "Favorites" : g_libraries[tab - 2].name;
+    return tab == 0 ? tr(TR_HOME) : tab == 1 ? tr(TR_FAVORITES) : g_libraries[tab - 2].name;
 }
 
 static float browse_tab_width(int tab)
@@ -617,10 +620,10 @@ static void draw_browse_tabs(void)
 
 static void home_row_title(int row, char *out, size_t size)
 {
-    if (!row) copy_safe(out, size, "My Media");
-    else if (row == 1) copy_safe(out, size, "Continue Watching");
-    else if (row == 2) copy_safe(out, size, "Next Up");
-    else snprintf(out, size, "Recently Added in %s", g_libraries[row - 3].name);
+    if (!row) copy_safe(out, size, tr(TR_MY_MEDIA));
+    else if (row == 1) copy_safe(out, size, tr(TR_CONTINUE_WATCHING));
+    else if (row == 2) copy_safe(out, size, tr(TR_NEXT_UP));
+    else snprintf(out, size, tr(TR_RECENTLY_ADDED_FMT), g_libraries[row - 3].name);
 }
 
 static void draw_browse_scroll_hint(void)
@@ -641,22 +644,22 @@ static void draw_browse_scroll_hint(void)
         C2D_DrawRectSolid(396, top + position * (visible - thumb), 0, 3, thumb, COL_PRIMARY);
     }
     char hint[256];
-    if (g_music_mode_focus && music_browse_view()) copy_safe(hint, sizeof(hint), "Left/Right: Choose   A: Open   Down: Browse");
-    else if (g_tab_focus) copy_safe(hint, sizeof(hint), "Down: Browse   L/R: Libraries");
+    if (g_music_mode_focus && music_browse_view()) copy_safe(hint, sizeof(hint), tr(TR_HINT_MUSIC_MODES));
+    else if (g_tab_focus) copy_safe(hint, sizeof(hint), tr(TR_HINT_TABS));
     else if (g_view == VIEW_LIBRARIES) {
         if (g_home_row < g_library_count + 2) {
             char next[192];
             home_row_title(g_home_row + 1, next, sizeof(next));
-            snprintf(hint, sizeof(hint), "Down: %s", next);
-        } else copy_safe(hint, sizeof(hint), "Up: Previous rows");
+            snprintf(hint, sizeof(hint), tr(TR_HINT_DOWN_FMT), next);
+        } else copy_safe(hint, sizeof(hint), tr(TR_HINT_PREVIOUS_ROWS));
     } else if (music_browse_view()) {
-        copy_safe(hint, sizeof(hint), music_track_list() ? "A: Play   Up/Down: Songs   B: Back" : "A: Open   Up: Music views   B: Back");
+        copy_safe(hint, sizeof(hint), music_track_list() ? tr(TR_HINT_SONGS) : tr(TR_HINT_MUSIC_GRID));
     } else if (browse_is_episode_list()) {
-        copy_safe(hint, sizeof(hint), !g_item_count ? "B: Back   L/R: Libraries" :
-                  g_selected + 1 < g_item_count ? "Down: More episodes   B: Back" : "Up: Episodes   B: Back");
-    } else if (g_scroll + GRID_COLUMNS < g_item_count) copy_safe(hint, sizeof(hint), "Down: More titles   B: Back");
-    else if (g_scroll) copy_safe(hint, sizeof(hint), "Up: Previous titles   B: Back");
-    else copy_safe(hint, sizeof(hint), "A: Open   B: Back   L/R: Libraries");
+        copy_safe(hint, sizeof(hint), !g_item_count ? tr(TR_HINT_EMPTY) :
+                  g_selected + 1 < g_item_count ? tr(TR_HINT_MORE_EPISODES) : tr(TR_HINT_EPISODES_UP));
+    } else if (g_scroll + GRID_COLUMNS < g_item_count) copy_safe(hint, sizeof(hint), tr(TR_HINT_MORE_TITLES));
+    else if (g_scroll) copy_safe(hint, sizeof(hint), tr(TR_HINT_PREVIOUS_TITLES));
+    else copy_safe(hint, sizeof(hint), tr(TR_HINT_GRID));
     C2D_DrawRectSolid(0, 220, 0, 400, 20, COL_BG);
     C2D_DrawRectSolid(0, 220, 0, 400, 1, 0xFF383030);
     browse_label(10, 222, 380, 0.5f, COL_PRIMARY, hint);
@@ -677,9 +680,9 @@ static void draw_browse_top(void)
             int count, *selected, *first;
             MediaItem *items = home_items(r, &count, &selected, &first);
             if (!count && y + 24 >= BROWSE_CONTENT_TOP && y + 40 < BROWSE_CONTENT_BOTTOM) {
-                const char *empty = r == 1 ? "No unfinished videos" : r == 2 ? "No next episodes yet" : "No items yet";
-                if (r && !g_home_rows[r - 1].loaded) empty = "Loading...";
-                if (r && g_home_rows[r - 1].failed) empty = "Could not load. SELECT: retry";
+                const char *empty = r == 1 ? tr(TR_NO_UNFINISHED) : r == 2 ? tr(TR_NO_NEXT_EPISODES) : tr(TR_NO_ITEMS_YET);
+                if (r && !g_home_rows[r - 1].loaded) empty = tr(TR_LOADING);
+                if (r && g_home_rows[r - 1].failed) empty = tr(TR_ROW_LOAD_FAILED);
                 browse_label(14, y + 24, 370, 0.5f, COL_MUTED, empty);
             }
             bool poster = r >= 3;
@@ -698,7 +701,7 @@ static void draw_browse_top(void)
     } else {
         browse_label(10, 40, 308, 0.55f, COL_WHITE, g_screen_title);
         draw_text(325, 41, 0.45f, COL_MUTED, "%d/%d", g_item_count ? g_selected + 1 : 0, g_item_count);
-        if (!g_item_count) draw_text(14, 86, 0.55f, COL_MUTED, "No items found");
+        if (!g_item_count) draw_text(14, 86, 0.55f, COL_MUTED, "%s", tr(TR_NO_ITEMS_FOUND));
         if (browse_is_episode_list()) {
             int first = (int)(g_browse_scroll.value / EPISODE_ROW_HEIGHT);
             for (int i = first; i < g_item_count && i < first + 4; ++i) {
@@ -726,7 +729,7 @@ static void draw_browse_menu(void)
         C2D_DrawRectSolid(0, 154, 0, 320, 27, COL_PAPER);
         browse_label(10, 161, 300, 0.5f, COL_WHITE, g_status);
     }
-    static const char *const labels[3] = {"Search", "Server", "Settings"};
+    const char *const labels[3] = {tr(TR_SEARCH), tr(TR_SERVER), tr(TR_SETTINGS)};
     for (int i = 0; i < 3; ++i) {
         float x = 10 + i * 103;
         bool search = i == 0;
@@ -757,7 +760,7 @@ static void draw_browse_bottom(void)
             draw_text_lines(tx, ty, 0.6f, tw, COL_WHITE, title, 2, 20);
             char meta[256];
             browse_format_meta(item, meta, sizeof(meta));
-            if (library) copy_safe(meta, sizeof(meta), "Library");
+            if (library) copy_safe(meta, sizeof(meta), tr(TR_LIBRARY));
             else if (item->series_name[0]) snprintf(meta, sizeof(meta), "S%d:E%d - %s", item->parent_index_number, item->index_number, item->name);
             browse_label(tx, ty + 42, tw, 0.5f, COL_MUTED, meta);
             if (poster && item->overview[0]) draw_text_lines(tx, ty + 63, 0.5f, tw, COL_MUTED, item->overview, 5, 17);
@@ -766,24 +769,24 @@ static void draw_browse_bottom(void)
         if (resume && !episode && !music_is_item(item)) {
             char at[32];
             format_playback_time(resume, at, sizeof(at));
-            draw_text(12, 162, 0.5f, COL_PRIMARY, "Resume at %s", at);
+            draw_text(12, 162, 0.5f, COL_PRIMARY, tr(TR_RESUME_AT_FMT), at);
         }
         C2D_DrawRectSolid(10, BROWSE_ACTION_TOP, 0, library ? 300 : 145, 27, COL_PRIMARY_DARK);
         draw_text_centered(library ? 160 : 82, BROWSE_ACTION_TOP + 5, 0.5f, COL_WHITE,
-                           "%s", library ? "Open library" : is_playable(item) ? (resume && !music_is_audio(item) ? "Resume" : "Play") : "Open");
+                           "%s", library ? tr(TR_OPEN_LIBRARY) : is_playable(item) ? (resume && !music_is_audio(item) ? tr(TR_RESUME) : tr(TR_PLAY)) : tr(TR_OPEN));
         if (!library) {
             C2D_DrawRectSolid(165, BROWSE_ACTION_TOP, 0, 145, 27, 0xFF30232D);
             draw_text_centered(237, BROWSE_ACTION_TOP + 5, 0.5f, item->is_favorite ? COL_SECONDARY : COL_WHITE,
-                               "%s", item->is_favorite ? "Unfavorite" : "Favorite");
+                               "%s", item->is_favorite ? tr(TR_UNFAVORITE) : tr(TR_FAVORITE));
         }
     } else {
-        const char *title = g_music_mode_focus ? music_mode_name(g_music_nav_mode) : g_tab_focus ? browse_tab_name(g_nav_tab) : "Your Jellyfin library";
+        const char *title = g_music_mode_focus ? music_mode_name(g_music_nav_mode) : g_tab_focus ? browse_tab_name(g_nav_tab) : tr(TR_YOUR_LIBRARY);
         draw_text_centered(160, 54, 0.65f, COL_WHITE, "%s", title);
         draw_text_lines(20, 93, 0.5f, 280, COL_MUTED,
-                        (g_tab_focus || g_music_mode_focus) ? "Press A or tap Open." : "Choose a library or title on the top screen.", 2, 18);
+                        (g_tab_focus || g_music_mode_focus) ? tr(TR_PRESS_A_OR_TAP_OPEN) : tr(TR_CHOOSE_ON_TOP), 2, 18);
         if (g_tab_focus || g_music_mode_focus) {
             C2D_DrawRectSolid(10, BROWSE_ACTION_TOP, 0, 300, 27, COL_PRIMARY_DARK);
-            draw_text_centered(160, BROWSE_ACTION_TOP + 5, 0.5f, COL_WHITE, "Open");
+            draw_text_centered(160, BROWSE_ACTION_TOP + 5, 0.5f, COL_WHITE, "%s", tr(TR_OPEN));
         }
     }
     draw_browse_menu();
@@ -799,9 +802,9 @@ static void browse_activate_tab(void)
         g_view = VIEW_LIBRARIES;
         g_stack_depth = 0;
         g_current_parent_id[0] = g_current_parent_type[0] = g_current_parent_series_id[0] = 0;
-        copy_safe(g_screen_title, sizeof(g_screen_title), "Home");
+        copy_safe(g_screen_title, sizeof(g_screen_title), tr(TR_HOME));
     } else {
-        if (target == 1) ok = load_items_for_parent(FAVORITES_PARENT_ID, "Favorites");
+        if (target == 1) ok = load_items_for_parent(FAVORITES_PARENT_ID, tr(TR_FAVORITES));
         else ok = load_items_for_media_item(&g_libraries[target - 2]);
         if (ok) g_stack_depth = 0;
     }
