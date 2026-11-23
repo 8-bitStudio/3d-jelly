@@ -88,25 +88,33 @@ static bool browse_is_episode_list(void)
     return g_view == VIEW_ITEMS && !strcmp(g_current_parent_type, "Season");
 }
 
+/* The multi handle owns libcurl's connection cache, so it is kept between
+ * requests: artwork and row requests reuse one keep-alive (and, for HTTPS,
+ * already-handshaken) connection instead of reconnecting for every poster. */
 static void browse_cancel_request(void)
 {
     if (g_browse_http) {
-        curl_multi_remove_handle(g_browse_multi, g_browse_http);
+        if (g_browse_multi) curl_multi_remove_handle(g_browse_multi, g_browse_http);
         curl_easy_cleanup(g_browse_http);
     }
-    if (g_browse_multi) curl_multi_cleanup(g_browse_multi);
     curl_slist_free_all(g_browse_headers);
     free(g_browse_response.data);
     memset(&g_browse_response, 0, sizeof(g_browse_response));
     g_browse_http = NULL;
-    g_browse_multi = NULL;
     g_browse_headers = NULL;
     g_browse_request_row = g_browse_request_image = -1;
 }
 
-static void browse_shutdown(void)
+static void browse_release_connections(void)
 {
     browse_cancel_request();
+    if (g_browse_multi) curl_multi_cleanup(g_browse_multi);
+    g_browse_multi = NULL;
+}
+
+static void browse_shutdown(void)
+{
+    browse_release_connections();
     for (int i = 0; i < BROWSE_CACHE_COUNT; ++i) {
         if (g_browse_images[i].ready) C3D_TexDelete(&g_browse_images[i].tex);
     }
@@ -116,7 +124,7 @@ static void browse_shutdown(void)
 static bool browse_begin_request(const char *path)
 {
     if (!curl_http_runtime_init()) return false;
-    g_browse_multi = curl_multi_init();
+    if (!g_browse_multi) g_browse_multi = curl_multi_init();
     g_browse_http = curl_easy_init();
     if (!g_browse_multi || !g_browse_http) { browse_cancel_request(); return false; }
     char url[1024], auth[384], header[448];
@@ -304,7 +312,8 @@ static bool browse_upload_image(BrowseImage *entry)
     int iw = 0, ih = 0;
     unsigned status = 0;
     bool ok = decoded && pixels && tiled &&
-        decode_jpeg_rgb565((const u8 *)g_browse_response.data, g_browse_response.size, decoded, &iw, &ih, &status) &&
+        decode_jpeg_rgb565_scaled((const u8 *)g_browse_response.data, g_browse_response.size, decoded,
+                                  w, h, true, &iw, &ih, &status) &&
         browse_scale_into_art_texture(pixels, decoded, iw, ih, w, h, true) &&
         C3D_TexInit(&entry->tex, 256, 256, GPU_RGB565);
     if (ok) {

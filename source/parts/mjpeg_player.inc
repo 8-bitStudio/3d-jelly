@@ -62,6 +62,9 @@ typedef struct {
     int scale_dst_h;
     u16 scale_x[400];
     u16 scale_y[240];
+    /* Source pixel offset for each framebuffer row, bottom screen row first so
+     * a framebuffer column (contiguous in memory) is written front to back. */
+    u32 col_src_off[240];
     unsigned last_jpeg_status;
     bool avi_mode;
     bool avi_in_movi;
@@ -389,7 +392,139 @@ static u16 rgb565_from_rgb(u8 r, u8 g, u8 b)
     return (u16)(g_rgb565_r[r] | g_rgb565_g[g] | g_rgb565_b[b]);
 }
 
-static bool decode_jpeg_rgb565(const u8 *jpeg, size_t size, u16 *pixels, int *out_w, int *out_h, unsigned *status_out)
+/* libjpeg-turbo decoder shared by video frames and browse artwork. Both run
+ * on the main thread, so one decompressor is created once and reused; that
+ * avoids per-frame setup/allocation. picojpeg stays as a fallback only. */
+typedef struct {
+    struct jpeg_error_mgr pub;
+    jmp_buf jump;
+} JellyJpegError;
+
+static struct jpeg_decompress_struct g_jpeg;
+static JellyJpegError g_jpeg_err;
+static bool g_jpeg_ready;
+
+static void jelly_jpeg_error_exit(j_common_ptr cinfo)
+{
+    JellyJpegError *err = (JellyJpegError *)cinfo->err;
+    longjmp(err->jump, 1);
+}
+
+static void jelly_jpeg_output_message(j_common_ptr cinfo)
+{
+    (void)cinfo;
+}
+
+static bool jelly_jpeg_init(void)
+{
+    if (g_jpeg_ready) {
+        return true;
+    }
+    memset(&g_jpeg, 0, sizeof(g_jpeg));
+    g_jpeg.err = jpeg_std_error(&g_jpeg_err.pub);
+    g_jpeg_err.pub.error_exit = jelly_jpeg_error_exit;
+    g_jpeg_err.pub.output_message = jelly_jpeg_output_message;
+    if (setjmp(g_jpeg_err.jump)) {
+        jpeg_destroy_decompress(&g_jpeg);
+        return false;
+    }
+    jpeg_create_decompress(&g_jpeg);
+    g_jpeg_ready = true;
+    return true;
+}
+
+static bool decode_jpeg_rgb565_pico(const u8 *jpeg, size_t size, u16 *pixels, int *out_w, int *out_h, unsigned *status_out);
+
+/* Decodes straight to RGB565. When box_w/box_h are set, libjpeg's DCT scaling
+ * picks the smallest M/8 output that still covers what will be shown (cover:
+ * fills the box; otherwise: the aspect-fit size inside it), so oversized
+ * frames cost a fraction of the IDCT and colour-conversion work. */
+static bool decode_jpeg_rgb565_scaled(const u8 *jpeg, size_t size, u16 *pixels, int box_w, int box_h, bool cover,
+                                      int *out_w, int *out_h, unsigned *status_out)
+{
+    if (!jpeg || size < 4 || !pixels || !jelly_jpeg_init()) {
+        if (status_out) {
+            *status_out = PJPG_NOT_JPEG;
+        }
+        return false;
+    }
+
+    if (setjmp(g_jpeg_err.jump)) {
+        jpeg_abort_decompress(&g_jpeg);
+        return decode_jpeg_rgb565_pico(jpeg, size, pixels, out_w, out_h, status_out);
+    }
+
+    jpeg_mem_src(&g_jpeg, jpeg, (unsigned long)size);
+    if (jpeg_read_header(&g_jpeg, TRUE) != JPEG_HEADER_OK) {
+        jpeg_abort_decompress(&g_jpeg);
+        if (status_out) {
+            *status_out = PJPG_NOT_JPEG;
+        }
+        return false;
+    }
+
+    g_jpeg.out_color_space = JCS_RGB565;
+    g_jpeg.dct_method = JDCT_IFAST;
+    g_jpeg.do_fancy_upsampling = FALSE;
+    g_jpeg.do_block_smoothing = FALSE;
+    g_jpeg.dither_mode = JDITHER_NONE;
+    g_jpeg.quantize_colors = FALSE;
+    g_jpeg.scale_num = 8;
+    g_jpeg.scale_denom = 8;
+
+    long iw = (long)g_jpeg.image_width;
+    long ih = (long)g_jpeg.image_height;
+    if (box_w > 0 && box_h > 0 && iw > 0 && ih > 0) {
+        long need_w = box_w;
+        long need_h = box_h;
+        if (!cover) {
+            need_h = (ih * box_w) / iw;
+            if (need_h > box_h) {
+                need_h = box_h;
+                need_w = (iw * box_h) / ih;
+            }
+        }
+        for (int m = 1; m <= 8; m++) {
+            if ((iw * m + 7) / 8 >= need_w && (ih * m + 7) / 8 >= need_h) {
+                g_jpeg.scale_num = (unsigned)m;
+                break;
+            }
+        }
+    }
+
+    jpeg_calc_output_dimensions(&g_jpeg);
+    int w = (int)g_jpeg.output_width;
+    int h = (int)g_jpeg.output_height;
+    if (w <= 0 || h <= 0 || w * h > JPEG_PIXELS_CAP) {
+        jpeg_abort_decompress(&g_jpeg);
+        if (status_out) {
+            *status_out = PJPG_BAD_WIDTH;
+        }
+        return false;
+    }
+
+    jpeg_start_decompress(&g_jpeg);
+    while (g_jpeg.output_scanline < g_jpeg.output_height) {
+        JSAMPROW rows[4];
+        int count = 0;
+        for (; count < 4 && (int)g_jpeg.output_scanline + count < h; count++) {
+            rows[count] = (JSAMPROW)(pixels + (size_t)(g_jpeg.output_scanline + count) * (size_t)w);
+        }
+        if (jpeg_read_scanlines(&g_jpeg, rows, (JDIMENSION)count) == 0) {
+            break;
+        }
+    }
+    jpeg_finish_decompress(&g_jpeg);
+
+    *out_w = w;
+    *out_h = h;
+    if (status_out) {
+        *status_out = 0;
+    }
+    return true;
+}
+
+static bool decode_jpeg_rgb565_pico(const u8 *jpeg, size_t size, u16 *pixels, int *out_w, int *out_h, unsigned *status_out)
 {
     JpegMemorySource src = {jpeg, size, 0};
     pjpeg_image_info_t info;
@@ -485,21 +620,6 @@ static bool decode_jpeg_rgb565(const u8 *jpeg, size_t size, u16 *pixels, int *ou
     return true;
 }
 
-static void clear_top_rgb565(u16 color)
-{
-    u16 *fb = (u16 *)gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
-    if (!fb) {
-        return;
-    }
-    if (color == 0) {
-        memset(fb, 0, 400 * 240 * sizeof(u16));
-        return;
-    }
-    for (int i = 0; i < 400 * 240; i++) {
-        fb[i] = color;
-    }
-}
-
 static u16 rgb565_blend(u16 dst, u16 src, int alpha)
 {
     alpha = clamp_int(alpha, 0, 255);
@@ -566,13 +686,57 @@ static void fb_stroke_rect(u16 *fb, int x, int y, int w, int h, u16 color)
     fb_fill_rect(fb, x + w - 1, y, 1, h, color);
 }
 
+/* A swap requested with gfxSwapBuffersGpu lands on the next VBlank. Waiting for
+ * that VBlank after every frame used to stall decoding for up to ~16 ms per
+ * frame. Instead, only wait before touching the back buffer when the previous
+ * swap may not have landed yet (i.e. it was requested less than a frame ago). */
+static u64 g_top_swap_tick;
+#define TOP_SWAP_SETTLE_TICKS (SYSCLOCK_ARM11 / 59)
+
+static void top_wait_for_back_buffer(void)
+{
+    if (g_top_swap_tick && svcGetSystemTick() - g_top_swap_tick < TOP_SWAP_SETTLE_TICKS) {
+        gspWaitForVBlank();
+    }
+}
+
 static void flush_top_video_frame(u16 *fb)
 {
     if (fb) {
         GSPGPU_FlushDataCache(fb, 400 * 240 * sizeof(u16));
     }
     gfxSwapBuffersGpu();
-    gspWaitForVBlank();
+    g_top_swap_tick = svcGetSystemTick();
+}
+
+/* Clears only the letterbox/pillarbox area around a dst_w x dst_h picture. */
+static void clear_top_bars(u16 *fb, int x0, int y0, int dst_w, int dst_h)
+{
+    if (!fb) {
+        return;
+    }
+    if (x0 > 0) {
+        memset(fb, 0, (size_t)x0 * 240 * sizeof(u16));
+    }
+    int right = x0 + dst_w;
+    if (right < 400) {
+        memset(fb + (size_t)right * 240, 0, (size_t)(400 - right) * 240 * sizeof(u16));
+    }
+    int top_rows = y0;
+    int bottom_rows = 240 - (y0 + dst_h);
+    if (top_rows <= 0 && bottom_rows <= 0) {
+        return;
+    }
+    for (int x = x0 < 0 ? 0 : x0; x < right && x < 400; x++) {
+        u16 *col = fb + (size_t)x * 240;
+        /* Framebuffer row index r maps to screen y = 239 - r. */
+        if (bottom_rows > 0) {
+            memset(col, 0, (size_t)bottom_rows * sizeof(u16));
+        }
+        if (top_rows > 0) {
+            memset(col + 240 - top_rows, 0, (size_t)top_rows * sizeof(u16));
+        }
+    }
 }
 
 static void draw_quality_osd(const MjpegPlayer *player, u16 *fb);
@@ -639,14 +803,44 @@ static void mjpeg_prepare_scale_maps(MjpegPlayer *player, int img_w, int img_h, 
     for (int y = 0; y < dst_h && y < 240; y++) {
         player->scale_y[y] = (u16)((y * img_h) / dst_h);
     }
+    for (int k = 0; k < dst_h && k < 240; k++) {
+        player->col_src_off[k] = (u32)player->scale_y[dst_h - 1 - k] * (u32)img_w;
+    }
+}
+
+/* The top framebuffer is stored rotated: each screen column x is 240
+ * contiguous u16s, bottom row first. Walking it column by column keeps the
+ * writes sequential, and the ~240 source cache lines touched per column are
+ * reused by the next 15 columns, so the copy stays inside the L1 cache. */
+static void blit_rgb565_columns(u16 *fb, const MjpegPlayer *player, const u16 *pixels,
+                                int x0, int y0, int dst_w, int dst_h)
+{
+    const u16 *x_map = player->scale_x;
+    const u32 *off = player->col_src_off;
+    int first_row = 240 - (y0 + dst_h);
+    for (int x = 0; x < dst_w; x++) {
+        const u16 *src = pixels + x_map[x];
+        u16 *d = fb + (size_t)(x0 + x) * 240 + first_row;
+        int k = 0;
+        for (; k + 4 <= dst_h; k += 4) {
+            d[k] = src[off[k]];
+            d[k + 1] = src[off[k + 1]];
+            d[k + 2] = src[off[k + 2]];
+            d[k + 3] = src[off[k + 3]];
+        }
+        for (; k < dst_h; k++) {
+            d[k] = src[off[k]];
+        }
+    }
 }
 
 static void draw_rgb565_frame(MjpegPlayer *player, const u16 *pixels, int img_w, int img_h)
 {
-    if (!pixels || img_w <= 0 || img_h <= 0) {
+    if (!player || !pixels || img_w <= 0 || img_h <= 0) {
         return;
     }
 
+    top_wait_for_back_buffer();
     u16 *fb = (u16 *)gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
     if (!fb) {
         return;
@@ -665,55 +859,17 @@ static void draw_rgb565_frame(MjpegPlayer *player, const u16 *pixels, int img_w,
         dst_h = 1;
     }
 
+    if (dst_w > 400) {
+        dst_w = 400;
+    }
     int x0 = (400 - dst_w) / 2;
     int y0 = (240 - dst_h) / 2;
     if (dst_w < 400 || dst_h < 240) {
-        clear_top_rgb565(0);
-    }
-
-    if (dst_w == img_w && dst_h == img_h) {
-        if (dst_w == 400 && dst_h == 240) {
-            for (int x = 0; x < 400; x++) {
-                u16 *dst = fb + x * 240;
-                const u16 *src = pixels + x;
-                for (int y = 0; y < 240; y++) {
-                    dst[239 - y] = src[y * img_w];
-                }
-            }
-        } else {
-            for (int y = 0; y < img_h; y++) {
-                int screen_y = y0 + y;
-                const u16 *src = pixels + y * img_w;
-                for (int x = 0; x < img_w; x++) {
-                    int screen_x = x0 + x;
-                    fb[screen_x * 240 + (239 - screen_y)] = src[x];
-                }
-            }
-        }
-
-        draw_volume_osd(player, fb);
-        draw_quality_osd(player, fb);
-        draw_seek_osd(fb);
-        draw_remote_message_osd(fb);
-        draw_next_episode_osd(player, fb);
-        flush_top_video_frame(fb);
-        return;
+        clear_top_bars(fb, x0, y0, dst_w, dst_h);
     }
 
     mjpeg_prepare_scale_maps(player, img_w, img_h, dst_w, dst_h);
-    const u16 *x_map = player ? player->scale_x : NULL;
-    const u16 *y_map = player ? player->scale_y : NULL;
-
-    for (int y = 0; y < dst_h; y++) {
-        int sy = y_map ? y_map[y] : (y * img_h) / dst_h;
-        int screen_y = y0 + y;
-        const u16 *src_row = pixels + sy * img_w;
-        for (int x = 0; x < dst_w; x++) {
-            int sx = x_map ? x_map[x] : (x * img_w) / dst_w;
-            int screen_x = x0 + x;
-            fb[screen_x * 240 + (239 - screen_y)] = src_row[sx];
-        }
-    }
+    blit_rgb565_columns(fb, player, pixels, x0, y0, dst_w, dst_h);
 
     draw_volume_osd(player, fb);
     draw_quality_osd(player, fb);
@@ -2523,12 +2679,28 @@ static const char *playback_state_label(const MjpegPlayer *player, const char *l
     return tr(TR_STATE_PLAYING);
 }
 
+static void draw_playback_bottom_ui_to(u8 *fb, const MjpegPlayer *player, const char *line);
+
+/* During playback the bottom screen is single-buffered (see
+ * playback_graphics_enter), so it is composed off-screen and copied in one go:
+ * no flicker, no VBlank waits, and no extra top-screen swaps. */
 static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
 {
     u8 *fb = (u8 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
     if (!fb) {
         return;
     }
+    if (g_playback_bottom_shadow) {
+        draw_playback_bottom_ui_to(g_playback_bottom_shadow, player, line);
+        memcpy(fb, g_playback_bottom_shadow, PLAYBACK_BOTTOM_FB_BYTES);
+    } else {
+        draw_playback_bottom_ui_to(fb, player, line);
+    }
+    GSPGPU_FlushDataCache(fb, PLAYBACK_BOTTOM_FB_BYTES);
+}
+
+static void draw_playback_bottom_ui_to(u8 *fb, const MjpegPlayer *player, const char *line)
+{
 
     char quality_label[16];
     const char *state = playback_state_label(player, line);
@@ -2569,12 +2741,7 @@ static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
 
 static void mjpeg_console(const MjpegPlayer *player, const char *line)
 {
-    for (int pass = 0; pass < 2; pass++) {
-        draw_playback_bottom_ui(player, line);
-        gfxFlushBuffers();
-        gfxSwapBuffersGpu();
-        gspWaitForVBlank();
-    }
+    draw_playback_bottom_ui(player, line);
 }
 
 static void mjpeg_set_paused(MjpegPlayer *player, bool paused)
@@ -3371,7 +3538,7 @@ static bool process_mjpeg_frame(MjpegPlayer *player, const u8 *jpeg, size_t len)
     int w = 0;
     int h = 0;
     unsigned status = 0;
-    if (!decode_jpeg_rgb565(jpeg, len, player->pixels, &w, &h, &status)) {
+    if (!decode_jpeg_rgb565_scaled(jpeg, len, player->pixels, 400, 240, false, &w, &h, &status)) {
         player->last_jpeg_status = status;
         player->decode_fail_count++;
         if (player->frame_count == 0 && player->decode_fail_count >= 12) {
@@ -3747,6 +3914,7 @@ static void draw_mpeg1_frame_rgb565(MjpegPlayer *player, const plm_frame_t *fram
         return;
     }
 
+    top_wait_for_back_buffer();
     u16 *fb = (u16 *)gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
     if (!fb) {
         return;
@@ -3770,7 +3938,7 @@ static void draw_mpeg1_frame_rgb565(MjpegPlayer *player, const plm_frame_t *fram
     int x0 = (400 - dst_w) / 2;
     int y0 = (240 - dst_h) / 2;
     if (dst_w < 400 || dst_h < 240) {
-        clear_top_rgb565(0);
+        clear_top_bars(fb, x0, y0, dst_w, dst_h);
     }
 
     mjpeg_prepare_scale_maps(player, img_w, img_h, dst_w, dst_h);
@@ -3910,16 +4078,8 @@ static MjpegPlayResult play_mpeg1_stream_url(const char *url, u64 start_time_tic
         return MJPEG_PLAY_FAILED;
     }
 
-    bool reuse_graphics = g_playback_restart_in_progress;
-    if (reuse_graphics) {
-        g_playback_restart_in_progress = false;
-    } else {
-        ui_graphics_exit();
-        gfxInit(GSP_RGB565_OES, GSP_BGR8_OES, false);
-        clear_top_rgb565(0);
-        gfxFlushBuffers();
-        gfxSwapBuffersGpu();
-    }
+    g_playback_restart_in_progress = false;
+    playback_graphics_enter();
 
     MjpegPlayer player;
     memset(&player, 0, sizeof(player));
@@ -4234,16 +4394,8 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
         return MJPEG_PLAY_FAILED;
     }
 
-    bool reuse_graphics = g_playback_restart_in_progress;
-    if (reuse_graphics) {
-        g_playback_restart_in_progress = false;
-    } else {
-        ui_graphics_exit();
-        gfxInit(GSP_RGB565_OES, GSP_BGR8_OES, false);
-        clear_top_rgb565(0);
-        gfxFlushBuffers();
-        gfxSwapBuffersGpu();
-    }
+    g_playback_restart_in_progress = false;
+    playback_graphics_enter();
 
     MjpegPlayer player;
     memset(&player, 0, sizeof(player));

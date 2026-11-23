@@ -531,8 +531,7 @@ static bool play_stream_url(const char *url)
         return false;
     }
 
-    ui_graphics_exit();
-    gfxInit(GSP_RGB565_OES, GSP_BGR8_OES, false);
+    playback_graphics_enter();
     consoleInit(GFX_BOTTOM, NULL);
 
     StreamPlayer player;

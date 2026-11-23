@@ -3,6 +3,9 @@
 #include <curl/curl.h>
 #include "picojpeg.h"
 #include "pl_mpeg.h"
+#include <setjmp.h>
+#include <stdio.h>
+#include <jpeglib.h>
 
 #include <mbedtls/aes.h>
 #include <mbedtls/sha256.h>
@@ -51,8 +54,8 @@
 #define SETTINGS_BUFFER_KB_MIN 1024
 #define SETTINGS_BUFFER_KB_MAX 4096
 #define SETTINGS_BUFFER_KB_STEP 1024
-#define STREAM_READER_PREBUFFER_CHUNKS 64
-#define STREAM_READER_PREBUFFER_MS 3000
+#define STREAM_READER_PREBUFFER_CHUNKS 32
+#define STREAM_READER_PREBUFFER_MS 2000
 #define STREAM_READER_STACK_SIZE (16 * 1024)
 #define STREAM_READER_CPU_TIME_LIMIT 30
 #define MPEG1_STREAM_BUFFER_CAP (384 * 1024)
@@ -487,7 +490,7 @@ int main(void)
         setup_stop_scan();
         quick_connect_cancel();
         setup_cancel_http();
-        browse_cancel_request();
+        browse_release_connections();
         curl_http_shutdown();
     }
     if (g_http_ready && !system_closing) {

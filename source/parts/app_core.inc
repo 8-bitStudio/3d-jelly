@@ -47,12 +47,74 @@ static bool app_wait_or_exit(u64 ns)
     return app_should_exit();
 }
 
+/* Playback draws straight into the framebuffers (RGB565 top, BGR8 bottom).
+ * This used to tear down citro2d/citro3d, the system fonts and every cached
+ * artwork texture on each video open, then rebuild (and re-download) all of
+ * it on close. Now the UI context stays alive and only the screen formats
+ * and buffering are switched, which is near-instant in both directions. */
+#define PLAYBACK_BOTTOM_FB_BYTES (320 * 240 * 3)
+static bool g_playback_gfx_active;
+static u8 *g_playback_bottom_shadow;
+
+static void playback_clear_screen(gfxScreen_t screen, size_t bytes)
+{
+    u8 *fb = (u8 *)gfxGetFramebuffer(screen, GFX_LEFT, NULL, NULL);
+    if (fb) {
+        memset(fb, 0, bytes);
+        GSPGPU_FlushDataCache(fb, bytes);
+    }
+}
+
+static void playback_graphics_enter(void)
+{
+    if (g_playback_gfx_active) {
+        return;
+    }
+    if (!g_ui_ready) {
+        gfxInitDefault();
+    } else {
+        /* Let citro3d's last display transfer and buffer swap land before the
+         * framebuffer format changes underneath it. */
+        gspWaitForVBlank();
+        gspWaitForVBlank();
+    }
+
+    gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);
+    gfxSetScreenFormat(GFX_BOTTOM, GSP_BGR8_OES);
+    gfxSetDoubleBuffering(GFX_TOP, true);
+    gfxSetDoubleBuffering(GFX_BOTTOM, false);
+    for (int pass = 0; pass < 2; pass++) {
+        playback_clear_screen(GFX_TOP, 400 * 240 * sizeof(u16));
+        if (pass == 0) {
+            playback_clear_screen(GFX_BOTTOM, PLAYBACK_BOTTOM_FB_BYTES);
+        }
+        gfxSwapBuffersGpu();
+        gspWaitForVBlank();
+    }
+    if (!g_playback_bottom_shadow) {
+        g_playback_bottom_shadow = (u8 *)malloc(PLAYBACK_BOTTOM_FB_BYTES);
+    }
+    g_playback_gfx_active = true;
+}
+
 static void playback_graphics_exit(void)
 {
-    if (!app_system_closing() && !g_playback_restart_in_progress) {
-        gfxExit();
+    if (app_system_closing() || g_playback_restart_in_progress || !g_playback_gfx_active) {
+        return;
     }
-    if (!g_exit_requested && !app_system_closing() && !g_playback_restart_in_progress) {
+
+    free(g_playback_bottom_shadow);
+    g_playback_bottom_shadow = NULL;
+    /* Make sure the final video swap has landed, then hand the screens back to
+     * citro2d in the format its render targets transfer into. */
+    gspWaitForVBlank();
+    gfxSetScreenFormat(GFX_TOP, GSP_BGR8_OES);
+    gfxSetScreenFormat(GFX_BOTTOM, GSP_BGR8_OES);
+    gfxSetDoubleBuffering(GFX_TOP, true);
+    gfxSetDoubleBuffering(GFX_BOTTOM, true);
+    g_playback_gfx_active = false;
+    if (!g_ui_ready && !g_exit_requested) {
+        gfxExit();
         ui_graphics_init();
     }
 }

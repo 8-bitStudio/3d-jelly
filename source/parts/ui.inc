@@ -105,12 +105,45 @@ static bool ui_text_has_kana(const char *text)
     return false;
 }
 
+/* The Korean and Chinese system fonts are several MB each and slow to load
+ * from NAND. They used to be loaded at startup (and again after every video);
+ * now each is loaded the first time a string actually needs it. */
+static bool g_font_kor_tried;
+static bool g_font_chn_tried;
+static bool g_font_twn_tried;
+
+static C2D_Font ui_font_kor(void)
+{
+    if (!g_font_kor && !g_font_kor_tried && g_cfgu_ready) {
+        g_font_kor_tried = true;
+        g_font_kor = C2D_FontLoadSystem(CFG_REGION_KOR);
+    }
+    return g_font_kor;
+}
+
+static C2D_Font ui_font_chinese(bool traditional)
+{
+    if (traditional && !g_font_twn && !g_font_twn_tried && g_cfgu_ready) {
+        g_font_twn_tried = true;
+        g_font_twn = C2D_FontLoadSystem(CFG_REGION_TWN);
+    }
+    if ((!traditional || !g_font_twn) && !g_font_chn && !g_font_chn_tried && g_cfgu_ready) {
+        g_font_chn_tried = true;
+        g_font_chn = C2D_FontLoadSystem(CFG_REGION_CHN);
+    }
+    if (traditional && g_font_twn) {
+        return g_font_twn;
+    }
+    return g_font_chn ? g_font_chn : g_font_twn;
+}
+
 static void ui_text_parse_buffer(C2D_Text *text, C2D_TextBuf buffer, const char *src)
 {
     const char *safe = src ? src : "";
-    if (g_font_kor && ui_text_has_hangul(safe)) {
-        C2D_TextFontParse(text, g_font_kor, buffer, safe);
-    } else if ((g_font_chn || g_font_twn) &&
+    C2D_Font kor = ui_text_has_hangul(safe) ? ui_font_kor() : NULL;
+    if (kor) {
+        C2D_TextFontParse(text, kor, buffer, safe);
+    } else if (g_cfgu_ready &&
                (language_normalized(g_cfg.language) == LANG_ZH_HANS ||
                 language_normalized(g_cfg.language) == LANG_ZH_HANT ||
                 strcmp(safe, language_label(LANG_ZH_HANS)) == 0 ||
@@ -119,11 +152,12 @@ static void ui_text_parse_buffer(C2D_Text *text, C2D_TextBuf buffer, const char 
                ui_text_has_cjk_ideograph(safe) && !ui_text_has_kana(safe)) {
         bool hant_text = language_normalized(g_cfg.language) == LANG_ZH_HANT ||
                          strcmp(safe, language_label(LANG_ZH_HANT)) == 0;
-        C2D_Font font = hant_text && g_font_twn ? g_font_twn : g_font_chn;
-        if (!font) {
-            font = g_font_twn;
+        C2D_Font font = ui_font_chinese(hant_text);
+        if (font) {
+            C2D_TextFontParse(text, font, buffer, safe);
+        } else {
+            C2D_TextParse(text, buffer, safe);
         }
-        C2D_TextFontParse(text, font, buffer, safe);
     } else {
         C2D_TextParse(text, buffer, safe);
     }
@@ -1311,11 +1345,7 @@ static void ui_graphics_init(void)
     g_bottom = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
     g_text = C2D_TextBufNew(8192);
     g_measure_text = C2D_TextBufNew(1024);
-    if (g_cfgu_ready) {
-        g_font_kor = C2D_FontLoadSystem(CFG_REGION_KOR);
-        g_font_chn = C2D_FontLoadSystem(CFG_REGION_CHN);
-        g_font_twn = C2D_FontLoadSystem(CFG_REGION_TWN);
-    }
+    g_font_kor_tried = g_font_chn_tried = g_font_twn_tried = false;
     g_ui_ready = true;
 }
 
