@@ -191,6 +191,7 @@ static bool music_http_begin(const char *path, bool info)
     curl_easy_setopt(g_music.http, CURLOPT_MAXREDIRS, 3L);
     curl_easy_setopt(g_music.http, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(g_music.http, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_apply_security(g_music.http);
     if (info) {
         curl_easy_setopt(g_music.http, CURLOPT_POSTFIELDS, g_music.body);
         curl_easy_setopt(g_music.http, CURLOPT_WRITEFUNCTION, curl_write_response);

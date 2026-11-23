@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Otworzono konfigurację.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "Usługa HTTP nie działa: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Nie udało się odszyfrować zapisanych danych. Wpisz hasło ponownie.",
+    "TR_TLS_CERT_CHANGED": "Certyfikat bezpieczeństwa serwera się zmienił. Wybierz serwer ponownie tylko, jeśli ufasz tej zmianie.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Najpierw ustaw serwer i nazwę użytkownika.",
     "TR_STATUS_LOGGING_IN": "Logowanie...",
     "TR_STATUS_LOGIN_MISSING": "Odpowiedź logowania nie zawiera tokenu lub ID użytkownika.",

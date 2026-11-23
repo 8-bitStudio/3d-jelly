@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Configuración abierta.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "Fallo del servicio HTTP: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "No se pudieron descifrar las credenciales guardadas. Vuelve a introducir la contraseña.",
+    "TR_TLS_CERT_CHANGED": "El certificado de seguridad del servidor cambió. Vuelve a seleccionar el servidor solo si confías en este cambio.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Configura servidor y usuario primero.",
     "TR_STATUS_LOGGING_IN": "Iniciando sesión...",
     "TR_STATUS_LOGIN_MISSING": "La respuesta no incluyó token/id de usuario.",

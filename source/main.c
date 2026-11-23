@@ -9,6 +9,8 @@
 
 #include <mbedtls/aes.h>
 #include <mbedtls/sha256.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/x509_crt.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -239,6 +241,8 @@ typedef struct {
     MusicSoundSettings music;
     int bottom_dim_seconds;
     int language;
+    char tls_pin_host[256]; /* hostname the pinned certificate belongs to */
+    char tls_pin[65];       /* SHA-256 (hex) of that server's TLS certificate */
 } Config;
 
 typedef struct {
@@ -370,6 +374,9 @@ static volatile bool g_exit_requested;
 static volatile bool g_system_close_requested;
 static bool g_is_new_3ds;
 static bool g_http_ready;
+static LightLock g_tls_pin_lock;
+static volatile bool g_tls_pin_dirty;
+static volatile bool g_tls_pin_mismatch;
 static bool g_curl_soc_ready;
 static bool g_curl_global_ready;
 static u32 *g_curl_soc_buffer;
@@ -455,6 +462,7 @@ int main(void)
         set_status(tr(TR_STATUS_HTTP_INIT_FAIL_FMT), (unsigned long)http_ret);
     }
 
+    LightLock_Init(&g_tls_pin_lock);
     load_config();
     apply_hardware_defaults();
     g_setup_resume_session = g_cfg.server[0] && g_cfg.token[0] && g_cfg.user_id[0];
@@ -474,6 +482,11 @@ int main(void)
             break;
         }
         g_frame_counter++;
+        if (g_tls_pin_dirty) {
+            /* Persist a newly trusted certificate from the UI thread only. */
+            g_tls_pin_dirty = false;
+            save_config();
+        }
         music_tick();
         /* Static album art and a progress bar do not need 60 full redraws/sec.
          * Buttons redraw immediately; audio workers run independently. */

@@ -157,6 +157,7 @@ static bool browse_begin_request(const char *path)
     /* Match the app's existing support for self-signed Jellyfin servers. */
     curl_easy_setopt(g_browse_http, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(g_browse_http, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_apply_security(g_browse_http);
     if (curl_multi_add_handle(g_browse_multi, g_browse_http) != CURLM_OK) {
         browse_cancel_request();
         return false;

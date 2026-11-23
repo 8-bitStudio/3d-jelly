@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Einrichtung geöffnet.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "HTTP-Dienst fehlgeschlagen: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Gespeicherte Zugangsdaten konnten nicht entschlüsselt werden. Passwort erneut eingeben.",
+    "TR_TLS_CERT_CHANGED": "Das Sicherheitszertifikat des Servers hat sich geändert. Wähle den Server nur erneut aus, wenn du der Änderung vertraust.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Zuerst Server und Benutzername setzen.",
     "TR_STATUS_LOGGING_IN": "Anmeldung läuft...",
     "TR_STATUS_LOGIN_MISSING": "Login-Antwort enthielt kein Token/keine Benutzer-ID.",

@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Setup opened.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "HTTP service failed: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Saved credentials could not be decrypted. Re-enter password.",
+    "TR_TLS_CERT_CHANGED": "The server's security certificate changed. Select the server again only if you trust this change.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Set server and username first.",
     "TR_STATUS_LOGGING_IN": "Logging in...",
     "TR_STATUS_LOGIN_MISSING": "Login response was missing token/user id.",

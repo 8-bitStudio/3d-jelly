@@ -716,6 +716,8 @@ static void save_config(void)
     fprintf(f, "music_volume_percent=%d\n", g_cfg.music.volume_percent);
     fprintf(f, "bottom_dim_seconds=%d\n", g_cfg.bottom_dim_seconds);
     fprintf(f, "language=%d\n", g_cfg.language);
+    fprintf(f, "tls_pin_host=%s\n", g_cfg.tls_pin_host);
+    fprintf(f, "tls_pin=%s\n", g_cfg.tls_pin);
     fclose(f);
 }
 
@@ -786,6 +788,10 @@ static void load_config(void)
             g_cfg.bottom_dim_seconds = atoi(eq);
         } else if (strcmp(line, "language") == 0) {
             g_cfg.language = atoi(eq);
+        } else if (strcmp(line, "tls_pin_host") == 0) {
+            copy_safe(g_cfg.tls_pin_host, sizeof(g_cfg.tls_pin_host), eq);
+        } else if (strcmp(line, "tls_pin") == 0) {
+            copy_safe(g_cfg.tls_pin, sizeof(g_cfg.tls_pin), eq);
         }
     }
     fclose(f);

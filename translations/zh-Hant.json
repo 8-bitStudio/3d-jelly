@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "已開啟連線設定。",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "HTTP 服務初始化失敗: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "無法解密儲存的憑證。請重新輸入密碼。",
+    "TR_TLS_CERT_CHANGED": "伺服器的安全憑證已變更。僅在信任此變更時才重新選擇該伺服器。",
     "TR_STATUS_SET_SERVER_USER_FIRST": "請先設定伺服器和使用者名稱。",
     "TR_STATUS_LOGGING_IN": "正在登入...",
     "TR_STATUS_LOGIN_MISSING": "登入回應缺少權杖/使用者 ID。",

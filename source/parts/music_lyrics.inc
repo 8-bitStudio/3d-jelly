@@ -118,6 +118,7 @@ static bool lyrics_begin(void)
     curl_easy_setopt(g_lyrics.http, CURLOPT_MAXREDIRS, 3L);
     curl_easy_setopt(g_lyrics.http, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(g_lyrics.http, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_apply_security(g_lyrics.http);
     curl_easy_setopt(g_lyrics.http, CURLOPT_WRITEFUNCTION, curl_write_response);
     curl_easy_setopt(g_lyrics.http, CURLOPT_WRITEDATA, &g_lyrics.response);
     g_lyrics.http_added = curl_multi_add_handle(g_lyrics.multi, g_lyrics.http) == CURLM_OK;

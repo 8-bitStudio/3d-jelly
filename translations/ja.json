@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "接続設定を開きました。",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "HTTPサービス失敗: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "保存済み認証情報を復号できません。パスワードを再入力してください。",
+    "TR_TLS_CERT_CHANGED": "サーバーのセキュリティ証明書が変更されました。この変更を信頼できる場合のみ、サーバーを再度選択してください。",
     "TR_STATUS_SET_SERVER_USER_FIRST": "先にサーバーとユーザー名を設定してください。",
     "TR_STATUS_LOGGING_IN": "ログイン中...",
     "TR_STATUS_LOGIN_MISSING": "ログイン応答にトークン/ユーザーIDがありません。",

@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "已打开连接设置。",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "HTTP 服务失败: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "无法解密保存的凭据。请重新输入密码。",
+    "TR_TLS_CERT_CHANGED": "服务器的安全证书已更改。仅在信任此更改时才重新选择该服务器。",
     "TR_STATUS_SET_SERVER_USER_FIRST": "请先设置服务器和用户名。",
     "TR_STATUS_LOGGING_IN": "正在登录...",
     "TR_STATUS_LOGIN_MISSING": "登录响应缺少令牌/用户 ID。",

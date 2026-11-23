@@ -107,6 +107,7 @@ static bool quick_connect_request(QuickConnectState operation)
     /* Match the application's existing TLS policy. */
     curl_easy_setopt(g_qc_http, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(g_qc_http, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_apply_security(g_qc_http);
     curl_easy_setopt(g_qc_http, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(g_qc_http, CURLOPT_WRITEFUNCTION, quick_connect_receive);
     if (operation == QC_INITIATE || operation == QC_AUTH) {

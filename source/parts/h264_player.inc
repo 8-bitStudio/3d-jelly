@@ -60,6 +60,10 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
     if (!g_http_ready) {
         return (Result)0xD9000003;
     }
+    if (!url_same_host_as_server(url)) {
+        /* Stream requests carry the access token: configured server only. */
+        return -1;
+    }
 
     char *active_url = strdup(url);
     char *redirect_url = NULL;
@@ -131,7 +135,7 @@ static Result open_stream_context(httpcContext *context, const char *url, u32 *s
 
             char full[STREAM_URL_CAP];
             resolve_redirect_url(full, sizeof(full), active_url, redirect_url);
-            if (!full[0]) {
+            if (!full[0] || !url_same_host_as_server(full)) {
                 ret = -1;
                 break;
             }

@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Configurazione aperta.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "Errore del servizio HTTP: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Impossibile decifrare le credenziali salvate. Reinserisci la password.",
+    "TR_TLS_CERT_CHANGED": "Il certificato di sicurezza del server è cambiato. Seleziona di nuovo il server solo se ti fidi di questa modifica.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Imposta prima server e nome utente.",
     "TR_STATUS_LOGGING_IN": "Accesso in corso...",
     "TR_STATUS_LOGIN_MISSING": "La risposta di accesso non conteneva token/id utente.",

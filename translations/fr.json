@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Configuration ouverte.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "Échec du service HTTP : 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Impossible de déchiffrer les identifiants enregistrés. Entrez de nouveau le mot de passe.",
+    "TR_TLS_CERT_CHANGED": "Le certificat de sécurité du serveur a changé. Sélectionnez à nouveau le serveur uniquement si vous faites confiance à ce changement.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Définissez d'abord le serveur et l'utilisateur.",
     "TR_STATUS_LOGGING_IN": "Connexion...",
     "TR_STATUS_LOGIN_MISSING": "La réponse de connexion ne contenait pas le jeton ou l'identifiant utilisateur.",

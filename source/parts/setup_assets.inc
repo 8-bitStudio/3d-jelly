@@ -132,6 +132,7 @@ static size_t setup_receive(void *data, size_t size, size_t count, void *unused)
 static bool setup_begin_http(bool check_server)
 {
     setup_cancel_http();
+    g_tls_pin_mismatch = false;
     g_setup_check_server = check_server;
     if (!g_cfg.server[0] || !curl_http_runtime_init()) return false;
     g_setup_multi = curl_multi_init();
@@ -153,6 +154,7 @@ static bool setup_begin_http(bool check_server)
     /* Match the existing application's TLS policy. */
     curl_easy_setopt(g_setup_http, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(g_setup_http, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_apply_security(g_setup_http);
     curl_easy_setopt(g_setup_http, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(g_setup_http, CURLOPT_WRITEFUNCTION, setup_receive);
     if (curl_multi_add_handle(g_setup_multi, g_setup_http) != CURLM_OK) {
@@ -307,7 +309,8 @@ static void setup_tick_assets(void)
             if (!ok) {
                 g_setup_resume_session = false;
                 setup_start_scan();
-                set_status("%s", tr(TR_SETUP_SAVED_SERVER_UNAVAILABLE));
+                set_status("%s", g_tls_pin_mismatch ? tr(TR_TLS_CERT_CHANGED) :
+                           tr(TR_SETUP_SAVED_SERVER_UNAVAILABLE));
                 return;
             }
             if (g_setup_resume_session) {

@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Opstelling oopgemaak.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "HTTP-diens het misluk: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Gestoorde aanmelddata kon nie ontsyfer word nie. Voer wagwoord weer in.",
+    "TR_TLS_CERT_CHANGED": "Die bediener se sekuriteitsertifikaat het verander. Kies die bediener weer net as jy die verandering vertrou.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Stel eers bediener en gebruikersnaam.",
     "TR_STATUS_LOGGING_IN": "Meld aan...",
     "TR_STATUS_LOGIN_MISSING": "Die aanmeldantwoord het geen token/gebruiker-ID bevat nie.",

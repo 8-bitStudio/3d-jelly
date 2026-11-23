@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Konfiguration öppnad.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "HTTP-tjänsten misslyckades: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Sparade inloggningsuppgifter kunde inte dekrypteras. Ange lösenordet igen.",
+    "TR_TLS_CERT_CHANGED": "Serverns säkerhetscertifikat har ändrats. Välj servern igen bara om du litar på ändringen.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Ange server och användarnamn först.",
     "TR_STATUS_LOGGING_IN": "Loggar in...",
     "TR_STATUS_LOGIN_MISSING": "Inloggningssvaret saknade token/användar-ID.",

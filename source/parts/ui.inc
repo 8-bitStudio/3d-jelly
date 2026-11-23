@@ -1578,6 +1578,7 @@ static bool handle_language_selector(u32 down)
 
 static void settings_clear_saved_login(void)
 {
+    tls_pin_forget();
     g_cfg.password[0] = 0;
     g_cfg.token[0] = 0;
     g_cfg.user_id[0] = 0;
@@ -1590,6 +1591,7 @@ static void settings_clear_saved_login(void)
 
 static void settings_reset_server_user(void)
 {
+    tls_pin_forget();
     g_cfg.server[0] = 0;
     g_cfg.username[0] = 0;
     g_cfg.password[0] = 0;
@@ -1696,6 +1698,7 @@ static void handle_settings(u32 down)
         if (edit_text(tr(TR_SERVER_URL), g_cfg.server, sizeof(g_cfg.server), false)) {
             normalize_server_url(g_cfg.server);
             if (strcmp(old_server, g_cfg.server) != 0) {
+                tls_pin_forget();
                 g_cfg.token[0] = 0;
                 g_cfg.user_id[0] = 0;
             }

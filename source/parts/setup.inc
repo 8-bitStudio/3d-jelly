@@ -308,6 +308,10 @@ static void setup_select_server(const char *address)
     quick_connect_cancel();
     setup_cancel_http();
     g_setup_resume_session = false;
+    /* Choosing a server is an explicit act of trust: re-pin its certificate
+     * on the next connection (also how a renewed certificate is accepted). */
+    tls_pin_forget();
+    g_tls_pin_dirty = true;
     if (strcmp(address, g_cfg.server)) {
         remote_control_stop();
         g_cfg.token[0] = g_cfg.user_id[0] = g_cfg.password[0] = 0;

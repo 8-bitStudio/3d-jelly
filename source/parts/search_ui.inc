@@ -226,6 +226,7 @@ static bool search_job_begin(SearchJob *job)
     curl_easy_setopt(job->http, CURLOPT_MAXREDIRS, 3L);
     curl_easy_setopt(job->http, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(job->http, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_apply_security(job->http);
     return curl_multi_add_handle(g_search_multi, job->http) == CURLM_OK;
 }
 

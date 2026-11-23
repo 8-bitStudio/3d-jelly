@@ -381,6 +381,166 @@ static bool synthesize_https_redirect_url(char *out, size_t outsz, const char *b
     return out[0] != 0;
 }
 
+/* Lower-case hostname of an http(s) URL, without userinfo or port. */
+static bool url_host_of(const char *url, char *out, size_t outsz)
+{
+    if (!url || !out || outsz == 0 || !starts_with_http(url)) {
+        return false;
+    }
+    const char *p = strstr(url, "://");
+    if (!p) {
+        return false;
+    }
+    p += 3;
+    const char *end = p + strcspn(p, "/?#");
+    for (const char *q = p; q < end; q++) {
+        if (*q == '@') {
+            p = q + 1;
+        }
+    }
+    const char *host_end = end;
+    if (p < end && *p == '[') {
+        const char *rb = memchr(p, ']', (size_t)(end - p));
+        if (!rb) {
+            return false;
+        }
+        host_end = rb + 1;
+    } else {
+        const char *colon = memchr(p, ':', (size_t)(end - p));
+        if (colon) {
+            host_end = colon;
+        }
+    }
+    size_t len = (size_t)(host_end - p);
+    if (len == 0 || len >= outsz) {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        out[i] = (char)tolower((unsigned char)p[i]);
+    }
+    out[len] = 0;
+    return true;
+}
+
+/* Credentials may only ever be sent to the server the user configured.
+ * Scheme and port may differ (e.g. an http -> https upgrade), the host may not. */
+static bool url_same_host_as_server(const char *url)
+{
+    char a[256];
+    char b[256];
+    return url_host_of(url, a, sizeof(a)) && url_host_of(g_cfg.server, b, sizeof(b)) && strcmp(a, b) == 0;
+}
+
+static void tls_pin_forget(void)
+{
+    LightLock_Lock(&g_tls_pin_lock);
+    g_cfg.tls_pin_host[0] = 0;
+    g_cfg.tls_pin[0] = 0;
+    g_tls_pin_mismatch = false;
+    LightLock_Unlock(&g_tls_pin_lock);
+}
+
+/* Trust-on-first-use certificate pinning. Home Jellyfin servers commonly use
+ * self-signed certificates and the 3DS has no usable CA store, so the first
+ * certificate seen for the configured host is remembered and every later
+ * connection must present the same one. */
+static int tls_pin_verify(void *unused, mbedtls_x509_crt *crt, int depth, uint32_t *flags)
+{
+    (void)unused;
+    if (depth != 0) {
+        *flags = 0;
+        return 0;
+    }
+    if (!crt || !crt->raw.p || crt->raw.len == 0) {
+        return MBEDTLS_ERR_X509_FATAL_ERROR;
+    }
+
+    unsigned char digest[32];
+    if (mbedtls_sha256_ret(crt->raw.p, crt->raw.len, digest, 0) != 0) {
+        return MBEDTLS_ERR_X509_FATAL_ERROR;
+    }
+    static const char hex[] = "0123456789abcdef";
+    char pin[65];
+    for (int i = 0; i < 32; i++) {
+        pin[i * 2] = hex[digest[i] >> 4];
+        pin[i * 2 + 1] = hex[digest[i] & 15];
+    }
+    pin[64] = 0;
+
+    char host[256];
+    if (!url_host_of(g_cfg.server, host, sizeof(host))) {
+        return MBEDTLS_ERR_X509_FATAL_ERROR;
+    }
+
+    int rc = 0;
+    LightLock_Lock(&g_tls_pin_lock);
+    if (!g_cfg.tls_pin[0] || strcmp(g_cfg.tls_pin_host, host) != 0) {
+        copy_safe(g_cfg.tls_pin_host, sizeof(g_cfg.tls_pin_host), host);
+        copy_safe(g_cfg.tls_pin, sizeof(g_cfg.tls_pin), pin);
+        g_tls_pin_dirty = true;
+    } else if (strcmp(g_cfg.tls_pin, pin) != 0) {
+        g_tls_pin_mismatch = true;
+        rc = MBEDTLS_ERR_X509_FATAL_ERROR;
+    }
+    LightLock_Unlock(&g_tls_pin_lock);
+
+    *flags = 0;
+    return rc;
+}
+
+static CURLcode curl_tls_ctx_setup(CURL *curl, void *ssl_ctx, void *userptr)
+{
+    (void)userptr;
+    char *url = NULL;
+    if (curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &url) != CURLE_OK || !url ||
+        !starts_with_https(url) || !url_same_host_as_server(url)) {
+        return CURLE_ABORTED_BY_CALLBACK;
+    }
+    mbedtls_ssl_config *conf = (mbedtls_ssl_config *)ssl_ctx;
+    mbedtls_ssl_conf_authmode(conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+    mbedtls_ssl_conf_verify(conf, tls_pin_verify, NULL);
+    return CURLE_OK;
+}
+
+/* Runs before every request, including each redirect hop: refuse to send
+ * headers (token, password body) to any host other than the configured one. */
+static int curl_prereq_same_host(void *clientp, char *conn_primary_ip, char *conn_local_ip,
+                                 int conn_primary_port, int conn_local_port)
+{
+    (void)conn_primary_ip;
+    (void)conn_local_ip;
+    (void)conn_primary_port;
+    (void)conn_local_port;
+    char *url = NULL;
+    if (curl_easy_getinfo((CURL *)clientp, CURLINFO_EFFECTIVE_URL, &url) != CURLE_OK || !url ||
+        !url_same_host_as_server(url)) {
+        return CURL_PREREQFUNC_ABORT;
+    }
+    return CURL_PREREQFUNC_OK;
+}
+
+/* Apply to every curl handle after its other options are set. */
+static void curl_apply_security(CURL *curl)
+{
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+    /* Chain/hostname checks are replaced by the certificate pin above. */
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(curl, CURLOPT_PREREQDATA, curl);
+    bool guarded = curl_easy_setopt(curl, CURLOPT_PREREQFUNCTION, curl_prereq_same_host) == CURLE_OK;
+    bool pinned = curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_tls_ctx_setup) == CURLE_OK;
+    if (!guarded) {
+        /* Without the per-hop host check, never follow redirects. */
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+    }
+    if (!pinned) {
+        /* Fail closed: no HTTPS without certificate pinning. */
+        curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http");
+        curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http");
+    }
+}
+
 typedef struct {
     char *data;
     size_t size;
@@ -486,6 +646,11 @@ static void maybe_update_server_after_redirect(const char *original_url, const c
         !starts_with_https(effective_url)) {
         return;
     }
+    /* Only remember an https upgrade of the same host; never let a redirect
+     * point the saved server at a different machine. */
+    if (!url_same_host_as_server(effective_url)) {
+        return;
+    }
 
     size_t server_len = strlen(g_cfg.server);
     if (strncmp(original_url, g_cfg.server, server_len) != 0) {
@@ -574,6 +739,7 @@ static Result curl_request_full(HTTPC_RequestMethod method, const char *url, con
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_response);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_apply_security(curl);
 
     if (method == HTTPC_METHOD_POST) {
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -585,6 +751,7 @@ static Result curl_request_full(HTTPC_RequestMethod method, const char *url, con
         curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     }
 
+    g_tls_pin_mismatch = false;
     CURLcode code = curl_easy_perform(curl);
 
     long response_code = 0;
@@ -629,6 +796,10 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
     out->status = 0;
     out->result = 0;
     copy_safe(out->url, sizeof(out->url), url);
+    if (!url_same_host_as_server(url)) {
+        out->result = -1;
+        return out->result;
+    }
     if (!g_http_ready) {
         out->result = (Result)0xD9000003;
         return out->result;
@@ -750,7 +921,8 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
             }
             char full[STREAM_URL_CAP];
             resolve_redirect_url(full, sizeof(full), active_url, redirect_url);
-            if (!full[0]) {
+            if (!full[0] || !url_same_host_as_server(full)) {
+                /* Refuse to carry the token or POST body to another host. */
                 ret = -1;
                 break;
             }
@@ -942,6 +1114,7 @@ static bool send_playback_report(const char *path, const char *body)
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_apply_security(curl);
     CURLcode result = curl_easy_perform(curl);
     long status = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
@@ -1234,7 +1407,9 @@ static void stop_active_encoding(void)
 
 static void set_http_failure(const char *prefix, const HttpResponse *res, Result ret)
 {
-    if (res->status == HTTP_STATUS_NONE) {
+    if (g_tls_pin_mismatch) {
+        set_status("%s", tr(TR_TLS_CERT_CHANGED));
+    } else if (res->status == HTTP_STATUS_NONE) {
         set_status(tr(TR_HTTP_NO_RESPONSE_FMT), prefix, res->url);
     } else if (ret == (Result)HTTPC_RESULTCODE_TIMEDOUT) {
         set_status(tr(TR_HTTP_TIMEOUT_FMT), prefix);
@@ -1247,7 +1422,9 @@ static void set_http_failure(const char *prefix, const HttpResponse *res, Result
 
 static void format_http_failure(char *out, size_t outsz, const char *prefix, const HttpResponse *res, Result ret)
 {
-    if (res->status == HTTP_STATUS_NONE) {
+    if (g_tls_pin_mismatch) {
+        snprintf(out, outsz, "%s", tr(TR_TLS_CERT_CHANGED));
+    } else if (res->status == HTTP_STATUS_NONE) {
         snprintf(out, outsz, tr(TR_HTTP_NO_RESPONSE_SHORT_FMT), prefix);
     } else if (ret == (Result)HTTPC_RESULTCODE_TIMEDOUT) {
         snprintf(out, outsz, tr(TR_HTTP_TIMEOUT_FMT), prefix);

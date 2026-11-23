@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Konfigurasi dibuka.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "Layanan HTTP gagal: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Kredensial tersimpan tidak dapat didekripsi. Masukkan ulang kata sandi.",
+    "TR_TLS_CERT_CHANGED": "Sertifikat keamanan server berubah. Pilih server lagi hanya jika Anda memercayai perubahan ini.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Atur server dan nama pengguna dulu.",
     "TR_STATUS_LOGGING_IN": "Masuk...",
     "TR_STATUS_LOGIN_MISSING": "Respons login tidak berisi token/ID pengguna.",

@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Kurulum açıldı.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "HTTP hizmeti başarısız: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Kayıtlı kimlik bilgileri çözülemedi. Parolayı tekrar girin.",
+    "TR_TLS_CERT_CHANGED": "Sunucunun güvenlik sertifikası değişti. Sunucuyu yalnızca bu değişikliğe güveniyorsanız yeniden seçin.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Önce sunucuyu ve kullanıcı adını ayarlayın.",
     "TR_STATUS_LOGGING_IN": "Oturum açılıyor...",
     "TR_STATUS_LOGIN_MISSING": "Oturum yanıtında token/kullanıcı ID yok.",

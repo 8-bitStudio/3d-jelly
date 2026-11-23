@@ -116,6 +116,7 @@
     "TR_SETUP_OPENED": "Instellen geopend.",
     "TR_STATUS_HTTP_INIT_FAIL_FMT": "HTTP-service mislukt: 0x%08lX",
     "TR_STATUS_CREDENTIAL_DECRYPT_FAIL": "Opgeslagen gegevens konden niet worden ontsleuteld. Voer het wachtwoord opnieuw in.",
+    "TR_TLS_CERT_CHANGED": "Het beveiligingscertificaat van de server is gewijzigd. Selecteer de server alleen opnieuw als je deze wijziging vertrouwt.",
     "TR_STATUS_SET_SERVER_USER_FIRST": "Stel eerst server en gebruikersnaam in.",
     "TR_STATUS_LOGGING_IN": "Bezig met inloggen...",
     "TR_STATUS_LOGIN_MISSING": "Loginantwoord mist token/gebruikers-id.",
