@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "kvalitet/läge/buffert",
     "TR_BUFFER_NOTE": "Inställningen sparades. Uppspelning använder stabila 2048 KB i denna version.",
     "TR_AUDIO_40000_NOTE": "40000 Hz låter renare men kan orsaka små mikrohack. 32000 Hz är säkrare.",
-    "TR_AUDIO_240_NOTE": "Gäller 240p och 240HQ. 144p stannar på 22050 Hz.",
+    "TR_AUDIO_240_NOTE": "Gäller 240p. 144p stannar på 22050 Hz.",
     "TR_BOTTOM_DIM_NOTE": "Dimmar nedre skärmen under video efter en stund utan knapptryckningar. Pausad uppspelning är fortsatt ljus.",
     "TR_BOTTOM_DIM_NEVER": "Aldrig",
     "TR_TIME_SECONDS_FMT": "%d s",

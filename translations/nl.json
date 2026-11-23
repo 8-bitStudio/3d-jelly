@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "kwaliteit/modus/buffer",
     "TR_BUFFER_NOTE": "Voorkeur opgeslagen. Afspelen gebruikt in deze build stabiel 2048 KB.",
     "TR_AUDIO_40000_NOTE": "40000 Hz klinkt schoner maar kan kleine microhaperingen veroorzaken. 32000 Hz is veiliger.",
-    "TR_AUDIO_240_NOTE": "Geldt voor 240p en 240HQ. 144p blijft op 22050 Hz.",
+    "TR_AUDIO_240_NOTE": "Geldt voor 240p. 144p blijft op 22050 Hz.",
     "TR_BOTTOM_DIM_NOTE": "Dimt het onderste scherm tijdens video na geen bediening. Bij pauze blijft het helder.",
     "TR_BOTTOM_DIM_NEVER": "Nooit",
     "TR_TIME_SECONDS_FMT": "%d s",

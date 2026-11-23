@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "jakość/tryb/bufor",
     "TR_BUFFER_NOTE": "Preferencja zapisana. W tej wersji odtwarzanie używa stabilnych 2048 KB.",
     "TR_AUDIO_40000_NOTE": "40000 Hz brzmi czyściej, ale może powodować drobne mikroprzycięcia. 32000 Hz jest bezpieczniejsze.",
-    "TR_AUDIO_240_NOTE": "Dotyczy 240p i 240HQ. 144p zostaje przy 22050 Hz.",
+    "TR_AUDIO_240_NOTE": "Dotyczy 240p. 144p zostaje przy 22050 Hz.",
     "TR_BOTTOM_DIM_NOTE": "Przyciemnia dolny ekran podczas wideo po chwili bezczynności. Podczas pauzy pozostaje jasny.",
     "TR_BOTTOM_DIM_NEVER": "Nigdy",
     "TR_TIME_SECONDS_FMT": "%d s",

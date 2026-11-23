@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "qualidade/modo/buffer",
     "TR_BUFFER_NOTE": "Preferência salva. Nesta versão, a reprodução usa um buffer estável de 2048 KB.",
     "TR_AUDIO_40000_NOTE": "40000 Hz soa mais limpo, mas pode causar pequenas microtravadas. 32000 Hz é mais seguro.",
-    "TR_AUDIO_240_NOTE": "Aplica-se a 240p e 240HQ. 144p continua em 22050 Hz.",
+    "TR_AUDIO_240_NOTE": "Aplica-se a 240p. 144p continua em 22050 Hz.",
     "TR_BOTTOM_DIM_NOTE": "Escurece a tela inferior durante o vídeo após um período sem controles. Em pausa ela fica clara.",
     "TR_BOTTOM_DIM_NEVER": "Nunca",
     "TR_TIME_SECONDS_FMT": "%d s",

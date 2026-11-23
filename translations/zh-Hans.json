@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "画质/模式/缓冲",
     "TR_BUFFER_NOTE": "已保存的偏好。此版本播放使用稳定的 2048 KB。",
     "TR_AUDIO_40000_NOTE": "40000 Hz 声音更清晰，但可能产生轻微卡顿。32000 Hz 更安全。",
-    "TR_AUDIO_240_NOTE": "适用于 240p 和 240HQ。144p 保持 22050 Hz。",
+    "TR_AUDIO_240_NOTE": "适用于 240p。144p 保持 22050 Hz。",
     "TR_BOTTOM_DIM_NOTE": "视频播放时一段时间无操作后调暗下屏。暂停时保持明亮。",
     "TR_BOTTOM_DIM_NEVER": "永不",
     "TR_TIME_SECONDS_FMT": "%d 秒",

@@ -2237,7 +2237,7 @@ static void draw_quality_osd(const MjpegPlayer *player, u16 *fb)
     int shown_w = player && player->last_width > 0 ? player->last_width : q.width;
     int shown_h = player && player->last_height > 0 ? player->last_height : q.height;
     snprintf(label, sizeof(label), "%dP", quality_display_height(g_cfg.quality));
-    snprintf(req_dims, sizeof(req_dims), "%s %dX%d", g_cfg.quality == 241 ? "HQ" : "REQ", q.width, q.height);
+    snprintf(req_dims, sizeof(req_dims), "REQ %dX%d", q.width, q.height);
     snprintf(actual_dims, sizeof(actual_dims), "ACT %dX%d", shown_w, shown_h);
 
     int label_w = fb_quality_label_width(label);

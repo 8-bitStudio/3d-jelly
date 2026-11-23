@@ -408,7 +408,12 @@ static void handle_music_settings(u32 down)
     if (down & KEY_SELECT) { music_save_settings(); return; }
     if (down & KEY_UP) g_music_settings_row = (g_music_settings_row + 5) % 6;
     if (down & KEY_DOWN) g_music_settings_row = (g_music_settings_row + 1) % 6;
-    if (down & KEY_LEFT) music_change_setting(-1);
+    if (g_music_settings_row >= 4) {
+        /* Defaults / Save buttons: Left/Right move between them, A presses. */
+        if (down & KEY_LEFT) g_music_settings_row = 4;
+        else if (down & KEY_RIGHT) g_music_settings_row = 5;
+        else if (down & KEY_A) music_change_setting(1);
+    } else if (down & KEY_LEFT) music_change_setting(-1);
     else if (down & (KEY_RIGHT | KEY_A)) music_change_setting(1);
     if (down & KEY_TOUCH) {
         touchPosition p; hidTouchRead(&p);

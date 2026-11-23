@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "Qualität/Modus/Puffer",
     "TR_BUFFER_NOTE": "Einstellung gespeichert. Wiedergabe nutzt in diesem Build stabile 2048 KB.",
     "TR_AUDIO_40000_NOTE": "40000 Hz klingt sauberer, kann aber kleine Mikroruckler verursachen. 32000 Hz ist sicherer.",
-    "TR_AUDIO_240_NOTE": "Gilt für 240p und 240HQ. 144p bleibt bei 22050 Hz.",
+    "TR_AUDIO_240_NOTE": "Gilt für 240p. 144p bleibt bei 22050 Hz.",
     "TR_BOTTOM_DIM_NOTE": "Dimmt den unteren Bildschirm beim Video nach einer Zeit ohne Eingaben. Bei Pause bleibt er hell.",
     "TR_BOTTOM_DIM_NEVER": "Nie",
     "TR_TIME_SECONDS_FMT": "%d s",

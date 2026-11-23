@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "畫質/模式/緩衝",
     "TR_BUFFER_NOTE": "偏好設定已儲存。本版本播放仍使用穩定的 2048 KB 緩衝。",
     "TR_AUDIO_40000_NOTE": "40000 Hz 聲音更清晰，但可能產生輕微卡頓。32000 Hz 更安全。",
-    "TR_AUDIO_240_NOTE": "適用於 240p 和 240HQ。144p 保持 22050 Hz。",
+    "TR_AUDIO_240_NOTE": "適用於 240p。144p 保持 22050 Hz。",
     "TR_BOTTOM_DIM_NOTE": "影片播放時一段時間無操作後調暗下方螢幕。暫停時保持明亮。",
     "TR_BOTTOM_DIM_NEVER": "永不",
     "TR_TIME_SECONDS_FMT": "%d 秒",

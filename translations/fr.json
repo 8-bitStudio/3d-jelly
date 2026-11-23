@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "qualité/mode/tampon",
     "TR_BUFFER_NOTE": "Préférence enregistrée. La lecture utilise 2048 Ko stables dans cette version.",
     "TR_AUDIO_40000_NOTE": "40000 Hz sonne plus propre mais peut causer de petites micro-saccades. 32000 Hz est plus sûr.",
-    "TR_AUDIO_240_NOTE": "S'applique à 240p et 240HQ. 144p reste à 22050 Hz.",
+    "TR_AUDIO_240_NOTE": "S'applique à 240p. 144p reste à 22050 Hz.",
     "TR_BOTTOM_DIM_NOTE": "Atténue l'écran du bas pendant la vidéo après une période sans commandes. La pause reste claire.",
     "TR_BOTTOM_DIM_NEVER": "Jamais",
     "TR_TIME_SECONDS_FMT": "%d s",

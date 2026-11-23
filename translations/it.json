@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "qualità/modo/buffer",
     "TR_BUFFER_NOTE": "Preferenza salvata. La riproduzione usa 2048 KB stabili in questa build.",
     "TR_AUDIO_40000_NOTE": "40000 Hz suona più pulito ma può causare piccoli micro scatti. 32000 Hz è più sicuro.",
-    "TR_AUDIO_240_NOTE": "Si applica a 240p e 240HQ. 144p resta a 22050 Hz.",
+    "TR_AUDIO_240_NOTE": "Si applica a 240p. 144p resta a 22050 Hz.",
     "TR_BOTTOM_DIM_NOTE": "Oscura lo schermo inferiore durante il video dopo un periodo senza comandi. In pausa resta chiaro.",
     "TR_BOTTOM_DIM_NEVER": "Mai",
     "TR_TIME_SECONDS_FMT": "%d s",

@@ -245,7 +245,7 @@ static int default_quality(void)
 
 static int quality_display_height(int quality)
 {
-    return quality == 241 ? 240 : quality;
+    return quality;
 }
 
 static void format_quality_label(char *out, size_t outsz, int quality)
@@ -253,11 +253,7 @@ static void format_quality_label(char *out, size_t outsz, int quality)
     if (!out || outsz == 0) {
         return;
     }
-    if (quality == 241) {
-        snprintf(out, outsz, "240HQ");
-    } else {
-        snprintf(out, outsz, "%dP", quality);
-    }
+    snprintf(out, outsz, "%dP", quality);
 }
 
 static QualityProfile quality_profile(void)
@@ -273,10 +269,6 @@ static QualityProfile quality_profile(void)
     }
     case 480: {
         QualityProfile q = {854, 480, 1200000, 128000, 24};
-        return q;
-    }
-    case 241: {
-        QualityProfile q = {400, 240, 1100000, 64000, 24};
         return q;
     }
     case 240:
@@ -303,8 +295,6 @@ static int mjpeg_target_fps(void)
         }
     }
     switch (g_cfg.quality) {
-    case 241:
-        return 10;
     case 360:
         return 8;
     case 480:
@@ -334,8 +324,6 @@ static int mjpeg_target_bitrate(void)
     switch (g_cfg.quality) {
     case 144:
         return 420000;
-    case 241:
-        return 1100000;
     case 360:
         return 850000;
     case 480:
@@ -348,7 +336,7 @@ static int mjpeg_target_bitrate(void)
 
 static int mjpeg_target_audio_sample_rate(void)
 {
-    return (g_cfg.quality == 240 || g_cfg.quality == 241) ?
+    return g_cfg.quality == 240 ?
         settings_audio_sample_rate_normalized(g_cfg.audio_sample_rate) : AUDIO_SAMPLE_RATE;
 }
 
@@ -376,9 +364,11 @@ static void enable_playback_performance_mode(void)
 static void apply_hardware_defaults(void)
 {
     bool changed = false;
-    /* Old 3DS: 240HQ (and 360/480) are more than its Wi-Fi and CPU can
-     * stream smoothly, so saved settings step down to plain 240p. */
-    if (!g_is_new_3ds && (g_cfg.quality == 241 || g_cfg.quality == 360 || g_cfg.quality == 480)) {
+    /* Old 3DS: 360/480 are more than its Wi-Fi and CPU can stream
+     * smoothly, so saved settings step down to plain 240p. The
+     * legacy quality value 241 also maps to 240p on every system. */
+    if (g_cfg.quality == 241 ||
+        (!g_is_new_3ds && (g_cfg.quality == 360 || g_cfg.quality == 480))) {
         g_cfg.quality = 240;
         changed = true;
     }

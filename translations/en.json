@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "quality/mode/buffer",
     "TR_BUFFER_NOTE": "Saved preference. Playback uses stable 2048 KB in this build.",
     "TR_AUDIO_40000_NOTE": "40000 Hz sounds cleaner but may cause tiny micro hitches. 32000 Hz is safer.",
-    "TR_AUDIO_240_NOTE": "Applies to 240p and 240HQ. 144p stays at 22050 Hz.",
+    "TR_AUDIO_240_NOTE": "Applies to 240p. 144p stays at 22050 Hz.",
     "TR_BOTTOM_DIM_NOTE": "Dims the bottom screen during video after no controls. Paused playback stays bright.",
     "TR_BOTTOM_DIM_NEVER": "Never",
     "TR_TIME_SECONDS_FMT": "%ds",

@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "kualitas/mode/buffer",
     "TR_BUFFER_NOTE": "Preferensi tersimpan. Versi ini memakai 2048 KB agar pemutaran stabil.",
     "TR_AUDIO_40000_NOTE": "40000 Hz terdengar lebih bersih, tetapi bisa menyebabkan sendatan mikro. 32000 Hz lebih aman.",
-    "TR_AUDIO_240_NOTE": "Berlaku untuk 240p dan 240HQ. 144p tetap di 22050 Hz.",
+    "TR_AUDIO_240_NOTE": "Berlaku untuk 240p. 144p tetap di 22050 Hz.",
     "TR_BOTTOM_DIM_NOTE": "Meredupkan layar bawah saat video setelah beberapa saat tanpa input. Saat jeda tetap terang.",
     "TR_BOTTOM_DIM_NEVER": "Tidak pernah",
     "TR_TIME_SECONDS_FMT": "%d dtk",

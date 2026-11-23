@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "kalite/mod/arabellek",
     "TR_BUFFER_NOTE": "Tercih kaydedildi. Bu sürüm kararlı oynatma için 2048 KB kullanır.",
     "TR_AUDIO_40000_NOTE": "40000 Hz daha temiz duyulur ama küçük mikro takılmalara neden olabilir. 32000 Hz daha güvenlidir.",
-    "TR_AUDIO_240_NOTE": "240p ve 240HQ için geçerlidir. 144p, 22050 Hz olarak kalır.",
+    "TR_AUDIO_240_NOTE": "240p için geçerlidir. 144p, 22050 Hz olarak kalır.",
     "TR_BOTTOM_DIM_NOTE": "Video sırasında bir süre giriş olmazsa alt ekranı karartır. Duraklatmada parlak kalır.",
     "TR_BOTTOM_DIM_NEVER": "Asla",
     "TR_TIME_SECONDS_FMT": "%d sn",

@@ -50,7 +50,7 @@
     "TR_QUALITY_MODE_BUFFER": "画質/方式/バッファ",
     "TR_BUFFER_NOTE": "保存設定です。再生は安定用2048 KBを使用します。",
     "TR_AUDIO_40000_NOTE": "40000 Hzは音がきれいですが、小さな途切れが出る場合があります。32000 Hzが安全です。",
-    "TR_AUDIO_240_NOTE": "240pと240HQに適用。144pは22050 Hzのままです。",
+    "TR_AUDIO_240_NOTE": "240pに適用。144pは22050 Hzのままです。",
     "TR_BOTTOM_DIM_NOTE": "動画中に操作がないと下画面を暗くします。一時停止中は明るいままです。",
     "TR_BOTTOM_DIM_NEVER": "しない",
     "TR_TIME_SECONDS_FMT": "%d秒",
