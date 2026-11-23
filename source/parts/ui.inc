@@ -396,26 +396,6 @@ static void draw_text_centered(float center_x, float y, float scale, u32 color, 
     ui_draw_readable_text(&t, C2D_WithColor, center_x - width * 0.5f, y, scale, color, 0);
 }
 
-static void draw_text_plain_z(float x, float y, float z, float scale, u32 color, const char *text)
-{
-    C2D_Text t;
-    ui_text_parse(&t, text ? text : "");
-    C2D_TextOptimize(&t);
-    C2D_DrawText(&t, C2D_WithColor, x, y, z, scale, scale, color);
-}
-
-static void draw_text_centered_plain_z(float center_x, float y, float z, float scale, u32 color, const char *text)
-{
-    C2D_Text t;
-    ui_text_parse(&t, text ? text : "");
-    C2D_TextOptimize(&t);
-    float width = 0.0f;
-    float height = 0.0f;
-    C2D_TextGetDimensions(&t, scale, scale, &width, &height);
-    (void)height;
-    C2D_DrawText(&t, C2D_WithColor, center_x - width * 0.5f, y, z, scale, scale, color);
-}
-
 static void draw_header(const char *title)
 {
     C2D_DrawRectSolid(0, 0, 0, 400, 34, COL_PAPER);
@@ -444,119 +424,6 @@ static bool settings_popup_visible(void)
 static bool language_select_visible(void)
 {
     return g_view == VIEW_SETTINGS && g_language_select_open;
-}
-
-#define LANGUAGE_SELECTOR_VISIBLE_ROWS 3
-
-static void draw_settings_bottom_popup(void)
-{
-    C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_PAPER);
-    C2D_DrawRectSolid(0, 0, 0, 320, 4, COL_PRIMARY);
-    C2D_DrawRectSolid(18, 42, 0, 284, 122, 0xFF101010);
-    C2D_DrawRectSolid(18, 42, 0, 284, 4, COL_SECONDARY);
-    C2D_DrawRectSolid(18, 160, 0, 284, 4, COL_PRIMARY);
-    draw_text_wrap(36, 64, 0.44f, 248, COL_WHITE, "%s", g_settings_popup);
-    draw_text_wrap(36, 181, 0.35f, 248, COL_MUTED, "%s", tr(TR_POPUP_RESET_HELP));
-}
-
-static void draw_language_selector(void)
-{
-    if (!language_select_visible()) {
-        return;
-    }
-
-    if (g_language_select_row < 0) {
-        g_language_select_row = 0;
-    }
-    if (g_language_select_row >= LANG_COUNT) {
-        g_language_select_row = LANG_COUNT - 1;
-    }
-    if (g_language_select_row < g_language_select_scroll) {
-        g_language_select_scroll = g_language_select_row;
-    }
-    int visible_rows = LANG_COUNT < LANGUAGE_SELECTOR_VISIBLE_ROWS ? LANG_COUNT : LANGUAGE_SELECTOR_VISIBLE_ROWS;
-    if (visible_rows < 1) {
-        visible_rows = 1;
-    }
-    if (g_language_select_row >= g_language_select_scroll + visible_rows) {
-        g_language_select_scroll = g_language_select_row - visible_rows + 1;
-    }
-    int max_scroll = LANG_COUNT - visible_rows;
-    if (max_scroll < 0) {
-        max_scroll = 0;
-    }
-    if (g_language_select_scroll > max_scroll) {
-        g_language_select_scroll = max_scroll;
-    }
-
-    const float x = 38.0f;
-    const float y = 35.0f;
-    const float w = 324.0f;
-    const float h = 178.0f;
-    const float row_x = x + 30.0f;
-    const float row_y0 = y + 58.0f;
-    const float row_w = 244.0f;
-    const float row_h = 25.0f;
-    const float row_gap = 7.0f;
-    const float rail_x = x + w - 28.0f;
-    const float rail_y = row_y0 - 1.0f;
-    const float rail_h = visible_rows * row_h + (visible_rows - 1) * row_gap + 2.0f;
-    const float panel_z = 0.70f;
-    const float text_z = 0.86f;
-    C2D_DrawRectSolid(0, 35, panel_z, 400, 205, 0xAA090B0F);
-    C2D_DrawRectSolid(x + 5.0f, y + 6.0f, panel_z + 0.01f, w, h, 0x99000000);
-    C2D_DrawRectSolid(x, y, panel_z + 0.02f, w, h, 0xFF171A20);
-    C2D_DrawRectSolid(x, y, panel_z + 0.03f, w, 1, 0xFF4E5663);
-    C2D_DrawRectSolid(x, y + h - 1.0f, panel_z + 0.03f, w, 1, 0xFF07080B);
-    C2D_DrawRectSolid(x, y, panel_z + 0.03f, 1, h, 0xFF4E5663);
-    C2D_DrawRectSolid(x + w - 1.0f, y, panel_z + 0.03f, 1, h, 0xFF07080B);
-    C2D_DrawRectSolid(x, y, panel_z + 0.04f, w, 4, COL_SECONDARY);
-    C2D_DrawRectSolid(x, y + 4.0f, panel_z + 0.04f, w, 2, COL_PRIMARY);
-    C2D_DrawRectSolid(x + 18.0f, y + 48.0f, panel_z + 0.04f, w - 36.0f, 1, 0xFF3B4450);
-
-    draw_text_plain_z(x + 22.0f, y + 13.0f, text_z, 0.56f, COL_WHITE, tr(TR_LANGUAGE_SELECT_TITLE));
-    char counter[16];
-    snprintf(counter, sizeof(counter), "%d/%d", g_language_select_row + 1, LANG_COUNT);
-    draw_text_plain_z(x + w - 60.0f, y + 17.0f, text_z, 0.42f, COL_MUTED, counter);
-
-    C2D_DrawRectSolid(rail_x, rail_y, panel_z + 0.04f, 4, rail_h, 0xFF303742);
-    float thumb_h = ((float)visible_rows / (float)LANG_COUNT) * rail_h;
-    if (thumb_h < 17.0f) {
-        thumb_h = 17.0f;
-    }
-    if (thumb_h > rail_h) {
-        thumb_h = rail_h;
-    }
-    float thumb_y = rail_y;
-    if (max_scroll > 0) {
-        thumb_y += ((rail_h - thumb_h) * (float)g_language_select_scroll) / (float)max_scroll;
-    }
-    C2D_DrawRectSolid(rail_x, thumb_y, panel_z + 0.05f, 4, thumb_h, COL_PRIMARY);
-    if (g_language_select_scroll > 0) {
-        draw_text_centered_plain_z(rail_x + 2.0f, rail_y - 12.0f, text_z, 0.25f, COL_SECONDARY, "^");
-    }
-    if (g_language_select_scroll < max_scroll) {
-        draw_text_centered_plain_z(rail_x + 2.0f, rail_y + rail_h - 9.0f, text_z, 0.25f, COL_SECONDARY, "v");
-    }
-
-    for (int row = 0; row < visible_rows && g_language_select_scroll + row < LANG_COUNT; row++) {
-        int idx = g_language_select_scroll + row;
-        bool selected = idx == g_language_select_row;
-        bool current = idx == language_normalized(g_cfg.language);
-        float row_y = row_y0 + row * (row_h + row_gap);
-        u32 fill = selected ? COL_PRIMARY_DARK : (current ? 0xFF22313A : ((idx & 1) ? 0xFF1C2E35 : 0xFF18252C));
-        C2D_DrawRectSolid(row_x + 2.0f, row_y + 2.0f, panel_z + 0.03f, row_w, row_h, 0x66000000);
-        C2D_DrawRectSolid(row_x, row_y, panel_z + 0.04f, row_w, row_h, fill);
-        C2D_DrawRectSolid(row_x, row_y, panel_z + 0.05f, 4, row_h, selected ? COL_SECONDARY : (current ? COL_PRIMARY : 0xFF48515D));
-        C2D_DrawRectSolid(row_x, row_y, panel_z + 0.05f, row_w, 1, selected ? 0xFF63DFF0 : 0xFF34404A);
-        C2D_DrawRectSolid(row_x, row_y + row_h - 1.0f, panel_z + 0.05f, row_w, 1, selected ? COL_SECONDARY : 0xFF0C1015);
-        draw_text_plain_z(row_x + 16.0f, row_y + 5.0f, text_z, 0.40f, selected ? COL_WHITE : COL_MUTED, language_label(idx));
-        if (current) {
-            C2D_DrawRectSolid(row_x + row_w - 19.0f, row_y + 8.0f, panel_z + 0.06f, 8, 8, COL_SECONDARY);
-            C2D_DrawRectSolid(row_x + row_w - 17.0f, row_y + 10.0f, panel_z + 0.07f, 4, 4, COL_WHITE);
-        }
-    }
-
 }
 
 static const char *display_item_kind(const MediaItem *item)
@@ -1048,22 +915,117 @@ static void open_server_setup(void)
     setup_start_scan();
 }
 
+/* Settings: a sectioned list on the top screen styled like the browse UI
+ * (tabs, focus bar, hint bar), with the focused setting described on the
+ * touch screen alongside large touch buttons. */
 enum {
-    SETTINGS_ROW_SETUP,
     SETTINGS_ROW_QUALITY,
     SETTINGS_ROW_PLAYBACK,
     SETTINGS_ROW_BUFFER,
     SETTINGS_ROW_AUDIO,
     SETTINGS_ROW_MUSIC,
-    SETTINGS_ROW_BOTTOM_DIM,
+    SETTINGS_ROW_SETUP,
     SETTINGS_ROW_SERVER,
     SETTINGS_ROW_USERNAME,
     SETTINGS_ROW_CLEAR_LOGIN,
     SETTINGS_ROW_RESET_SERVER_USER,
-    SETTINGS_ROW_RESET_DEFAULTS,
     SETTINGS_ROW_LANGUAGE,
+    SETTINGS_ROW_BOTTOM_DIM,
+    SETTINGS_ROW_RESET_DEFAULTS,
     SETTINGS_ROW_COUNT
 };
+
+enum {
+    SETTINGS_SECTION_PLAYBACK,
+    SETTINGS_SECTION_ACCOUNT,
+    SETTINGS_SECTION_GENERAL,
+    SETTINGS_SECTION_COUNT
+};
+
+enum {
+    SETTINGS_KIND_CYCLE,
+    SETTINGS_KIND_OPEN,
+    SETTINGS_KIND_DANGER
+};
+
+#define SETTINGS_LIST_TOP 40
+#define SETTINGS_LIST_BOTTOM 218
+#define SETTINGS_HEAD_H 24
+#define SETTINGS_ROW_H 28
+#define SETTINGS_ROW_STEP 31
+#define SETTINGS_SECTION_GAP 8
+#define SETTINGS_ACTION_TOP 182
+#define SETTINGS_ACTION_BOTTOM 209
+#define SETTINGS_MENU_TOP 213
+#define SETTINGS_CONFIRM_MS 5000
+#define SETTINGS_LANG_COLUMNS 3
+
+static const u32 COL_ROW = 0xFF201D1D;
+static const u32 COL_ROW_FOCUS = 0xFF302B23;
+static const u32 COL_BUTTON_ALT = 0xFF30232D;
+static const u32 COL_DANGER = 0xFF4A4AE0;
+static const u32 COL_DANGER_DARK = 0xFF2C2CA0;
+static const u32 COL_DANGER_TEXT = 0xFF8C8CFF;
+
+static const int SETTINGS_SECTION_FIRST[SETTINGS_SECTION_COUNT + 1] = {
+    SETTINGS_ROW_QUALITY, SETTINGS_ROW_SETUP, SETTINGS_ROW_LANGUAGE, SETTINGS_ROW_COUNT
+};
+
+static BrowseScroll g_settings_anim;
+
+static int settings_row_section(int row)
+{
+    int section = 0;
+    while (section + 1 < SETTINGS_SECTION_COUNT && row >= SETTINGS_SECTION_FIRST[section + 1]) section++;
+    return section;
+}
+
+static const char *settings_section_label(int section)
+{
+    if (section == SETTINGS_SECTION_PLAYBACK) return tr(TR_PLAYBACK);
+    if (section == SETTINGS_SECTION_ACCOUNT) return tr(TR_SETTINGS_ACCOUNT);
+    return tr(TR_SETTINGS_GENERAL);
+}
+
+static int settings_row_kind(int row)
+{
+    switch (row) {
+    case SETTINGS_ROW_QUALITY:
+    case SETTINGS_ROW_PLAYBACK:
+    case SETTINGS_ROW_BUFFER:
+    case SETTINGS_ROW_AUDIO:
+    case SETTINGS_ROW_BOTTOM_DIM:
+        return SETTINGS_KIND_CYCLE;
+    case SETTINGS_ROW_CLEAR_LOGIN:
+    case SETTINGS_ROW_RESET_SERVER_USER:
+    case SETTINGS_ROW_RESET_DEFAULTS:
+        return SETTINGS_KIND_DANGER;
+    default:
+        return SETTINGS_KIND_OPEN;
+    }
+}
+
+/* List-space y of a row; each section's heading sits just above its first row. */
+static float settings_row_y(int row)
+{
+    int section = settings_row_section(row);
+    return (float)((section + 1) * SETTINGS_HEAD_H + section * SETTINGS_SECTION_GAP + row * SETTINGS_ROW_STEP);
+}
+
+static float settings_list_height(void)
+{
+    return settings_row_y(SETTINGS_ROW_COUNT - 1) + SETTINGS_ROW_H;
+}
+
+static float settings_scroll_target(void)
+{
+    float visible = SETTINGS_LIST_BOTTOM - SETTINGS_LIST_TOP;
+    float target = settings_row_y(g_settings_row) - (visible - SETTINGS_ROW_H) * 0.5f;
+    float max_scroll = settings_list_height() - visible;
+    if (target > max_scroll) target = max_scroll;
+    if (target < 0) target = 0;
+    return (float)(int)target;
+}
 
 static void format_bottom_dim_label(char *out, size_t outsz, int seconds)
 {
@@ -1109,10 +1071,10 @@ static void settings_value(int row, char *out, size_t outsz)
         format_bottom_dim_label(out, outsz, g_cfg.bottom_dim_seconds);
         break;
     case SETTINGS_ROW_SERVER:
-        clipped_name(g_cfg.server[0] ? g_cfg.server : tr(TR_NOT_SET), out, outsz, 25);
+        clipped_name(g_cfg.server[0] ? g_cfg.server : tr(TR_NOT_SET), out, outsz, 40);
         break;
     case SETTINGS_ROW_USERNAME:
-        clipped_name(g_cfg.username[0] ? g_cfg.username : tr(TR_NOT_SET), out, outsz, 20);
+        clipped_name(g_cfg.username[0] ? g_cfg.username : tr(TR_NOT_SET), out, outsz, 30);
         break;
     case SETTINGS_ROW_CLEAR_LOGIN:
         snprintf(out, outsz, "%s", (g_cfg.password[0] || g_cfg.token[0]) ? tr(TR_PASSWORD_TOKEN) : tr(TR_ALREADY_CLEAR));
@@ -1166,56 +1128,309 @@ static const char *settings_label(int row)
     }
 }
 
+static const char *settings_note(int row)
+{
+    switch (row) {
+    case SETTINGS_ROW_SETUP:
+        return tr(TR_SERVER_SETUP_NOTE);
+    case SETTINGS_ROW_BUFFER:
+        return tr(TR_BUFFER_NOTE);
+    case SETTINGS_ROW_AUDIO:
+        return tr(TR_AUDIO_240_NOTE);
+    case SETTINGS_ROW_MUSIC:
+        return tr(TR_MUSIC_SOUND_NOTE);
+    case SETTINGS_ROW_BOTTOM_DIM:
+        return tr(TR_BOTTOM_DIM_NOTE);
+    case SETTINGS_ROW_LANGUAGE:
+        return tr(TR_LANGUAGE_NOTE);
+    case SETTINGS_ROW_CLEAR_LOGIN:
+    case SETTINGS_ROW_RESET_SERVER_USER:
+    case SETTINGS_ROW_RESET_DEFAULTS:
+        return tr(TR_CONFIRM_AGAIN);
+    default:
+        return tr(TR_SETTINGS_HINT);
+    }
+}
+
+static void settings_draw_arrow(float cx, float cy, float size, bool right, u32 color)
+{
+    float half = size * 0.5f;
+    float dir = right ? 1.0f : -1.0f;
+    C2D_DrawTriangle(cx + dir * half, cy, color,
+                     cx - dir * half, cy - size * 0.6f, color,
+                     cx - dir * half, cy + size * 0.6f, color, 0);
+}
+
+static void settings_clip_rect(float x, float y, float w, float h, u32 color)
+{
+    if (y < SETTINGS_LIST_TOP) {
+        h -= SETTINGS_LIST_TOP - y;
+        y = SETTINGS_LIST_TOP;
+    }
+    if (y + h > SETTINGS_LIST_BOTTOM) h = SETTINGS_LIST_BOTTOM - y;
+    if (h > 0) C2D_DrawRectSolid(x, y, 0, w, h, color);
+}
+
+static bool settings_text_fits(float y, float h)
+{
+    return y >= SETTINGS_LIST_TOP && y + h <= SETTINGS_LIST_BOTTOM;
+}
+
+static bool settings_confirm_pending(int row)
+{
+    return g_settings_confirm_row == row && osGetTime() < g_settings_confirm_until_ms;
+}
+
+static void draw_settings_row(int row, float y)
+{
+    bool focused = row == g_settings_row;
+    bool pending = settings_confirm_pending(row);
+    int kind = settings_row_kind(row);
+    settings_clip_rect(10, y, 380, SETTINGS_ROW_H, focused ? COL_ROW_FOCUS : COL_ROW);
+    if (focused || pending) settings_clip_rect(10, y, 3, SETTINGS_ROW_H, pending ? COL_DANGER : COL_PRIMARY);
+    if (!settings_text_fits(y + 5, 17)) return;
+
+    browse_label(22, y + 6, 172, 0.5f, kind == SETTINGS_KIND_DANGER ? COL_DANGER_TEXT : COL_WHITE, settings_label(row));
+
+    char value[160];
+    settings_value(row, value, sizeof(value));
+    trim_text_to_width(value, sizeof(value), 0.5f, 166, true);
+    float value_w = text_width_for_scale(value, 0.5f);
+    float value_x = 364 - value_w;
+    u32 value_color = focused ? (kind == SETTINGS_KIND_CYCLE ? COL_WHITE : COL_PRIMARY) : COL_MUTED;
+    draw_text(value_x, y + 6, 0.5f, value_color, "%s", value);
+    if (kind == SETTINGS_KIND_CYCLE) {
+        if (focused) {
+            settings_draw_arrow(value_x - 10, y + SETTINGS_ROW_H * 0.5f, 8, false, COL_PRIMARY);
+            settings_draw_arrow(377, y + SETTINGS_ROW_H * 0.5f, 8, true, COL_PRIMARY);
+        }
+    }
+}
+
+/* Mirrors the browse tab strip; a title replaces the section tabs in sub-pages. */
+static void draw_settings_tabs(int focus_section, const char *title)
+{
+    C2D_DrawRectSolid(0, 0, 0, 400, 34, COL_BG);
+    C2D_DrawRectSolid(0, 33, 0, 400, 1, 0xFF404040);
+    float x = 14;
+    if (title) {
+        float width = text_width_for_scale(title, 0.5f) + 22;
+        if (width > 372) width = 372;
+        browse_label(x + 8, 8, width - 18, 0.5f, COL_PRIMARY, title);
+        C2D_DrawRectSolid(x + 6, 30, 0, width - 15, 3, COL_PRIMARY);
+        return;
+    }
+    for (int s = 0; s < SETTINGS_SECTION_COUNT; ++s) {
+        const char *label = settings_section_label(s);
+        float width = text_width_for_scale(label, 0.5f) + 22;
+        if (width < 62) width = 62;
+        if (x + width > 390) width = 390 - x;
+        browse_label(x + 8, 8, width - 16, 0.5f, s == focus_section ? COL_PRIMARY : COL_WHITE, label);
+        if (s == focus_section) C2D_DrawRectSolid(x + 6, 30, 0, width - 15, 3, COL_PRIMARY);
+        x += width;
+    }
+}
+
+static void draw_settings_hint(const char *hint)
+{
+    C2D_DrawRectSolid(0, 220, 0, 400, 20, COL_BG);
+    C2D_DrawRectSolid(0, 220, 0, 400, 1, 0xFF383030);
+    browse_label(10, 222, 380, 0.5f, COL_PRIMARY, hint);
+}
+
+static float language_cell_step(void)
+{
+    int rows = (LANG_COUNT + SETTINGS_LANG_COLUMNS - 1) / SETTINGS_LANG_COLUMNS;
+    float step = rows > 0 ? (float)(SETTINGS_LIST_BOTTOM - SETTINGS_LIST_TOP) / rows : 29;
+    return step > 29 ? 29 : step;
+}
+
+/* Every language is visible at once, so there is nothing to scroll and each
+ * system font (Korean/Chinese) is loaded once when the grid first appears. */
+static void draw_language_selector(void)
+{
+    C2D_DrawRectSolid(0, 0, 0, 400, 240, COL_BG);
+    int current = language_normalized(g_cfg.language);
+    float step = language_cell_step();
+    for (int idx = 0; idx < LANG_COUNT; ++idx) {
+        float x = 10 + (idx % SETTINGS_LANG_COLUMNS) * 128;
+        float y = 42 + (idx / SETTINGS_LANG_COLUMNS) * step;
+        float w = 124, h = step - 3;
+        bool focused = idx == g_language_select_row;
+        if (focused) C2D_DrawRectSolid(x - 2, y - 2, 0, w + 4, h + 4, COL_PRIMARY);
+        C2D_DrawRectSolid(x, y, 0, w, h, focused ? COL_ROW_FOCUS : COL_ROW);
+        if (idx == current) {
+            C2D_DrawCircleSolid(x + w - 13, y + h * 0.5f, 0, 5, COL_PRIMARY);
+            C2D_DrawCircleSolid(x + w - 13, y + h * 0.5f, 0, 2, focused ? COL_ROW_FOCUS : COL_ROW);
+        }
+        browse_label(x + 10, y + (h - 15) * 0.5f, w - 32, 0.5f,
+                     idx == current && !focused ? COL_PRIMARY : COL_WHITE, language_label(idx));
+    }
+    draw_settings_tabs(-1, tr(TR_LANGUAGE_SELECT_TITLE));
+    draw_settings_hint(tr(TR_LANGUAGE_GRID_HELP));
+}
+
 static void draw_settings(void)
 {
-    draw_header(tr(TR_SETTINGS));
-
-    if (g_settings_row < 0) {
-        g_settings_row = 0;
-    }
-    if (g_settings_row >= SETTINGS_ROW_COUNT) {
-        g_settings_row = SETTINGS_ROW_COUNT - 1;
-    }
-    if (g_settings_row < g_settings_scroll) {
-        g_settings_scroll = g_settings_row;
-    }
-    if (g_settings_row >= g_settings_scroll + 6) {
-        g_settings_scroll = g_settings_row - 5;
+    if (g_settings_row < 0) g_settings_row = 0;
+    if (g_settings_row >= SETTINGS_ROW_COUNT) g_settings_row = SETTINGS_ROW_COUNT - 1;
+    if (g_language_select_open) {
+        draw_language_selector();
+        return;
     }
 
-    C2D_DrawRectSolid(18, 43, 0, 364, 168, COL_PAPER);
-    for (int row = 0; row < 6 && g_settings_scroll + row < SETTINGS_ROW_COUNT; row++) {
-        int idx = g_settings_scroll + row;
-        bool selected = idx == g_settings_row;
-        float y = 49.0f + row * 27.0f;
-        u32 fill = selected ? COL_PRIMARY_DARK : ((idx & 1) ? COL_CARD_2 : COL_CARD);
-        C2D_DrawRectSolid(28, y - 3, 0, 344, 24, fill);
-        C2D_DrawRectSolid(28, y + 20, 0, 344, 1, selected ? COL_SECONDARY : 0x55000000);
-        char value[96];
-        settings_value(idx, value, sizeof(value));
-        browse_label(36, y + 2, 146, 0.45f, COL_WHITE, settings_label(idx));
-        browse_label(188, y + 2, 176, 0.45f, selected ? COL_WHITE : COL_MUTED, value);
+    browse_scroll_step(&g_settings_anim, settings_scroll_target(), osGetTime());
+    float scroll = g_settings_anim.value;
+    C2D_DrawRectSolid(0, 0, 0, 400, 240, COL_BG);
+
+    for (int s = 0; s < SETTINGS_SECTION_COUNT; ++s) {
+        float y = SETTINGS_LIST_TOP + settings_row_y(SETTINGS_SECTION_FIRST[s]) - SETTINGS_HEAD_H - scroll;
+        if (!settings_text_fits(y + 2, 17)) continue;
+        const char *label = settings_section_label(s);
+        browse_label(12, y + 3, 250, 0.5f, s == settings_row_section(g_settings_row) ? COL_PRIMARY : COL_MUTED, label);
+        float line_x = 12 + text_width_for_scale(label, 0.5f) + 10;
+        if (line_x < 380) C2D_DrawRectSolid(line_x, y + 12, 0, 390 - line_x, 1, 0xFF383030);
+    }
+    for (int row = 0; row < SETTINGS_ROW_COUNT; ++row) {
+        float y = SETTINGS_LIST_TOP + settings_row_y(row) - scroll;
+        if (y >= SETTINGS_LIST_BOTTOM || y + SETTINGS_ROW_H <= SETTINGS_LIST_TOP) continue;
+        draw_settings_row(row, y);
     }
 
-    draw_text(28, 217, 0.45f, COL_WHITE, "%s", tr(TR_SETTINGS_FOOTER));
+    float visible = SETTINGS_LIST_BOTTOM - SETTINGS_LIST_TOP;
+    float total = settings_list_height();
+    if (total > visible) {
+        float thumb = visible * visible / total;
+        float position = scroll / (total - visible);
+        if (position < 0) position = 0;
+        if (position > 1) position = 1;
+        C2D_DrawRectSolid(396, SETTINGS_LIST_TOP, 0, 3, visible, 0xFF383030);
+        C2D_DrawRectSolid(396, SETTINGS_LIST_TOP + position * (visible - thumb), 0, 3, thumb, COL_PRIMARY);
+    }
 
-    draw_language_selector();
+    draw_settings_tabs(settings_row_section(g_settings_row), NULL);
+    draw_settings_hint(tr(TR_SETTINGS_NAV_HINT));
+}
+
+static void settings_draw_button(float x, float y, float w, float h, u32 fill, u32 color, const char *label)
+{
+    C2D_DrawRectSolid(x, y, 0, w, h, fill);
+    char text[128];
+    copy_safe(text, sizeof(text), label);
+    trim_text_to_width(text, sizeof(text), 0.5f, w - 14, true);
+    draw_text_centered(x + w * 0.5f, y + 5, 0.5f, color, "%s", text);
+}
+
+/* Section buttons are sized to their labels so long names such as
+ * "Server & Account" fit; text shrinks a little only if all three cannot. */
+static float settings_menu_layout(float *xs, float *ws)
+{
+    const float gap = 6, avail = 300 - gap * (SETTINGS_SECTION_COUNT - 1);
+    float scale = 0.5f, text[SETTINGS_SECTION_COUNT], total = 0;
+    for (int pass = 0; pass < 3; ++pass) {
+        total = 0;
+        for (int i = 0; i < SETTINGS_SECTION_COUNT; ++i) {
+            text[i] = text_width_for_scale(settings_section_label(i), scale) + 12;
+            total += text[i];
+        }
+        if (total <= avail || scale <= 0.4f) break;
+        scale -= 0.05f;
+    }
+    float extra = (avail - total) / SETTINGS_SECTION_COUNT;
+    float x = 10;
+    for (int i = 0; i < SETTINGS_SECTION_COUNT; ++i) {
+        float w = extra >= 0 ? text[i] + extra : text[i] * avail / total;
+        xs[i] = x;
+        ws[i] = w;
+        x += w + gap;
+    }
+    return scale;
+}
+
+static void draw_settings_menu(int active)
+{
+    float xs[SETTINGS_SECTION_COUNT], ws[SETTINGS_SECTION_COUNT];
+    float scale = settings_menu_layout(xs, ws);
+    for (int i = 0; i < SETTINGS_SECTION_COUNT; ++i) {
+        bool on = i == active;
+        C2D_DrawRectSolid(xs[i], SETTINGS_MENU_TOP, 0, ws[i], 26, on ? 0xFF3A3024 : COL_PAPER);
+        if (on) C2D_DrawRectSolid(xs[i], SETTINGS_MENU_TOP + 23, 0, ws[i], 3, COL_PRIMARY);
+        char text[128];
+        copy_safe(text, sizeof(text), settings_section_label(i));
+        trim_text_to_width(text, sizeof(text), scale, ws[i] - 6, true);
+        draw_text_centered(xs[i] + ws[i] * 0.5f, SETTINGS_MENU_TOP + 4 + (0.5f - scale) * 15, scale,
+                           on ? COL_WHITE : COL_MUTED, "%s", text);
+    }
 }
 
 static void draw_settings_bottom(void)
 {
+    int row = g_settings_row;
+    int kind = settings_row_kind(row);
+    int section = settings_row_section(row);
     C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_BG);
-    draw_text_lines(12, 14, 0.5f, 296, COL_WHITE, tr(TR_SETTINGS_HELP_1), 2, 18);
-    draw_text_lines(12, 58, 0.5f, 296, COL_MUTED, tr(TR_SETTINGS_HELP_2), 3, 18);
-    const char *note = tr(TR_SETTINGS_HINT);
-    if (g_settings_row == SETTINGS_ROW_SETUP) note = tr(TR_SERVER_SETUP_NOTE);
-    else if (g_settings_row == SETTINGS_ROW_BUFFER) note = tr(TR_BUFFER_NOTE);
-    else if (g_settings_row == SETTINGS_ROW_AUDIO) note = tr(TR_AUDIO_240_NOTE);
-    else if (g_settings_row == SETTINGS_ROW_MUSIC) note = tr(TR_MUSIC_SOUND_NOTE);
-    else if (g_settings_row == SETTINGS_ROW_BOTTOM_DIM) note = tr(TR_BOTTOM_DIM_NOTE);
-    else if (g_settings_row == SETTINGS_ROW_LANGUAGE) note = tr(TR_LANGUAGE_NOTE);
-    draw_text_lines(12, 127, 0.5f, 296, COL_WHITE, note, 3, 18);
-    draw_text_lines(12, 193, 0.45f, 296, COL_MUTED, g_status, 2, 16);
+
+    char crumb[192];
+    snprintf(crumb, sizeof(crumb), "%s  /  %s", tr(TR_SETTINGS), settings_section_label(section));
+    browse_label(12, 8, 296, 0.45f, COL_MUTED, crumb);
+    browse_label(12, 23, 296, 0.6f, kind == SETTINGS_KIND_DANGER ? COL_DANGER_TEXT : COL_WHITE, settings_label(row));
+
+    C2D_DrawRectSolid(10, 50, 0, 300, 38, COL_ROW);
+    C2D_DrawRectSolid(10, 50, 0, 3, 38, kind == SETTINGS_KIND_DANGER ? COL_DANGER : COL_PRIMARY);
+    char value[160];
+    settings_value(row, value, sizeof(value));
+    if (kind == SETTINGS_KIND_CYCLE) {
+        trim_text_to_width(value, sizeof(value), 0.6f, 200, true);
+        draw_text_centered(160, 60, 0.6f, COL_WHITE, "%s", value);
+    } else {
+        browse_label(24, 60, 276, 0.55f, COL_PRIMARY, value);
+    }
+
+    draw_text_lines(12, 98, 0.5f, 296, COL_MUTED, settings_note(row), 4, 18);
+
+    if (kind == SETTINGS_KIND_DANGER) {
+        settings_draw_button(10, SETTINGS_ACTION_TOP, 300, 27, COL_DANGER_DARK, COL_WHITE, settings_label(row));
+    } else if (kind == SETTINGS_KIND_OPEN) {
+        settings_draw_button(10, SETTINGS_ACTION_TOP, 300, 27, COL_PRIMARY_DARK, COL_WHITE, tr(TR_OPEN));
+    }
+    draw_settings_menu(section);
+}
+
+static void draw_settings_bottom_popup(void)
+{
+    int row = g_settings_confirm_row >= 0 ? g_settings_confirm_row : g_settings_row;
+    C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_BG);
+    C2D_DrawRectSolid(10, 12, 0, 300, 158, COL_ROW);
+    C2D_DrawRectSolid(10, 12, 0, 3, 158, COL_DANGER);
+    browse_label(24, 22, 276, 0.6f, COL_DANGER_TEXT, settings_label(row));
+    draw_text_lines(24, 52, 0.5f, 276, COL_WHITE, g_settings_popup, 4, 18);
+    draw_text_lines(24, 130, 0.45f, 276, COL_MUTED, tr(TR_POPUP_RESET_HELP), 2, 15);
+
+    settings_draw_button(10, SETTINGS_ACTION_TOP, 145, 27, COL_BUTTON_ALT, COL_WHITE, tr(TR_BACK));
+    settings_draw_button(165, SETTINGS_ACTION_TOP, 145, 27, COL_DANGER_DARK, COL_WHITE, tr(TR_CONFIRM));
+}
+
+static void draw_language_bottom(void)
+{
+    int current = language_normalized(g_cfg.language);
+    C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_BG);
+    char crumb[192];
+    snprintf(crumb, sizeof(crumb), "%s  /  %s", tr(TR_SETTINGS), tr(TR_LANGUAGE));
+    browse_label(12, 8, 296, 0.45f, COL_MUTED, crumb);
+
+    C2D_DrawRectSolid(10, 40, 0, 300, 70, COL_ROW);
+    C2D_DrawRectSolid(10, 40, 0, 3, 70, COL_PRIMARY);
+    char name[96];
+    copy_safe(name, sizeof(name), language_label(g_language_select_row));
+    trim_text_to_width(name, sizeof(name), 0.85f, 200, true);
+    draw_text_centered(160, 61, 0.85f, COL_WHITE, "%s", name);
+
+    char line[160];
+    snprintf(line, sizeof(line), tr(TR_CURRENT_FMT), language_label(current));
+    draw_text_centered(160, 124, 0.5f, g_language_select_row == current ? COL_PRIMARY : COL_MUTED, "%s", line);
+
+    settings_draw_button(10, SETTINGS_ACTION_TOP, 145, 27, COL_BUTTON_ALT, COL_WHITE, tr(TR_BACK));
+    settings_draw_button(165, SETTINGS_ACTION_TOP, 145, 27, COL_PRIMARY_DARK, COL_WHITE, tr(TR_SELECT));
 }
 
 static void draw_detail(void)
@@ -1307,8 +1522,7 @@ static void render(void)
     if (settings_popup_visible()) {
         draw_settings_bottom_popup();
     } else if (language_select_visible()) {
-        draw_bottom_help(tr(TR_LANGUAGE_SELECT_HELP),
-                         "");
+        draw_language_bottom();
     } else if (g_view == VIEW_CONNECTING) {
         draw_connecting(true);
     } else if (g_view == VIEW_SETUP) {
@@ -1436,6 +1650,7 @@ static void open_settings(void)
 {
     g_settings_return_view = g_view;
     g_view = VIEW_SETTINGS;
+    g_settings_anim.ready = false;
     settings_cancel_confirm();
     set_status("%s", tr(TR_STATUS_SETTINGS_OPENED));
 }
@@ -1448,8 +1663,8 @@ static bool settings_confirm_action(int row, const char *message)
         return true;
     }
     g_settings_confirm_row = row;
-    g_settings_confirm_until_ms = now + 3000;
-    settings_show_popup(message, 3000);
+    g_settings_confirm_until_ms = now + SETTINGS_CONFIRM_MS;
+    settings_show_popup(message, SETTINGS_CONFIRM_MS);
     set_status("%s", message);
     return false;
 }
@@ -1548,22 +1763,36 @@ static void open_language_selector(void)
     int language = language_normalized(g_cfg.language);
     settings_cancel_confirm();
     g_language_select_row = language;
-    g_language_select_scroll = language >= LANGUAGE_SELECTOR_VISIBLE_ROWS ? language - LANGUAGE_SELECTOR_VISIBLE_ROWS + 1 : 0;
     g_language_select_open = true;
     set_status("%s", tr(TR_LANGUAGE_SELECT_TITLE));
 }
 
-static bool handle_language_selector(u32 down)
+static void language_selector_move(int dx, int dy, bool wrap)
+{
+    int cols = SETTINGS_LANG_COLUMNS;
+    int row = g_language_select_row;
+    if (dx) {
+        row += dx;
+        if (row < 0) row = wrap ? LANG_COUNT - 1 : 0;
+        if (row >= LANG_COUNT) row = wrap ? 0 : LANG_COUNT - 1;
+    }
+    if (dy) {
+        int col = row % cols;
+        row += dy * cols;
+        if (row < 0) row = wrap ? col + ((LANG_COUNT - 1 - col) / cols) * cols : col;
+        else if (row >= LANG_COUNT) row = wrap ? col : row - cols;
+    }
+    g_language_select_row = row;
+}
+
+static bool handle_language_selector(u32 down, u32 rep)
 {
     if (!g_language_select_open) {
         return false;
     }
-    if (down & KEY_DOWN) {
-        g_language_select_row = (g_language_select_row + 1) % LANG_COUNT;
-    }
-    if (down & KEY_UP) {
-        g_language_select_row = (g_language_select_row + LANG_COUNT - 1) % LANG_COUNT;
-    }
+    int dx = (rep & KEY_RIGHT) ? 1 : (rep & KEY_LEFT) ? -1 : 0;
+    int dy = (rep & KEY_DOWN) ? 1 : (rep & KEY_UP) ? -1 : 0;
+    if (dx || dy) language_selector_move(dx, dy, (down & rep) != 0);
     if (down & KEY_B) {
         g_language_select_open = false;
         set_status("%s", tr(TR_STATUS_PROMPT_CLOSED));
@@ -1572,6 +1801,18 @@ static bool handle_language_selector(u32 down)
     if (down & KEY_A) {
         set_language_setting(g_language_select_row);
         return true;
+    }
+    if (down & KEY_TOUCH) {
+        touchPosition p;
+        hidTouchRead(&p);
+        if (p.py >= SETTINGS_ACTION_TOP && p.py < SETTINGS_ACTION_BOTTOM) {
+            if (p.px >= 10 && p.px < 155) {
+                g_language_select_open = false;
+                set_status("%s", tr(TR_STATUS_PROMPT_CLOSED));
+            } else if (p.px >= 165 && p.px < 310) {
+                set_language_setting(g_language_select_row);
+            }
+        }
     }
     return true;
 }
@@ -1618,79 +1859,45 @@ static void settings_reset_defaults(void)
     set_status(tr(TR_STATUS_DEFAULTS_FMT), quality_label, g_cfg.stream_buffer_kb, g_cfg.audio_sample_rate);
 }
 
-static void handle_settings(u32 down)
+static void settings_change_row(int row, int dir)
 {
-    if (handle_language_selector(down)) {
+    switch (row) {
+    case SETTINGS_ROW_QUALITY:
+        change_quality(dir);
+        settings_cancel_confirm();
+        break;
+    case SETTINGS_ROW_PLAYBACK:
+        change_playback_mode(dir);
+        break;
+    case SETTINGS_ROW_BUFFER:
+        change_buffer_preference(dir);
+        break;
+    case SETTINGS_ROW_AUDIO:
+        change_audio_rate_setting(dir);
+        break;
+    case SETTINGS_ROW_BOTTOM_DIM:
+        change_bottom_dim_setting(dir);
+        break;
+    case SETTINGS_ROW_LANGUAGE:
+        open_language_selector();
+        break;
+    default:
+        break;
+    }
+}
+
+static void settings_activate_row(int row)
+{
+    if (settings_row_kind(row) == SETTINGS_KIND_CYCLE) {
+        settings_change_row(row, 1);
         return;
     }
-
-    if (down & KEY_DOWN) {
-        g_settings_row = (g_settings_row + 1) % SETTINGS_ROW_COUNT;
-        settings_cancel_confirm();
-    }
-    if (down & KEY_UP) {
-        g_settings_row = (g_settings_row + SETTINGS_ROW_COUNT - 1) % SETTINGS_ROW_COUNT;
-        settings_cancel_confirm();
-    }
-    if (down & KEY_B) {
-        if (settings_popup_visible()) {
-            settings_cancel_confirm();
-            set_status("%s", tr(TR_STATUS_PROMPT_CLOSED));
-            return;
-        }
-        settings_cancel_confirm();
-        g_view = (!g_cfg.token[0] || !g_cfg.user_id[0]) ? VIEW_SETUP : g_settings_return_view;
-        set_status("%s", tr(TR_STATUS_SETTINGS_CLOSED));
-        return;
-    }
-
-    int dir = 0;
-    if (down & KEY_DLEFT) {
-        dir = -1;
-    } else if (down & KEY_DRIGHT) {
-        dir = 1;
-    }
-    if (dir != 0) {
-        if (g_settings_row == SETTINGS_ROW_QUALITY) {
-            change_quality(dir);
-        } else if (g_settings_row == SETTINGS_ROW_PLAYBACK) {
-            change_playback_mode(dir);
-        } else if (g_settings_row == SETTINGS_ROW_BUFFER) {
-            change_buffer_preference(dir);
-        } else if (g_settings_row == SETTINGS_ROW_AUDIO) {
-            change_audio_rate_setting(dir);
-        } else if (g_settings_row == SETTINGS_ROW_BOTTOM_DIM) {
-            change_bottom_dim_setting(dir);
-        } else if (g_settings_row == SETTINGS_ROW_LANGUAGE) {
-            open_language_selector();
-        }
-    }
-
-    if (!(down & KEY_A)) {
-        return;
-    }
-
-    switch (g_settings_row) {
+    switch (row) {
     case SETTINGS_ROW_SETUP:
         open_server_setup();
         break;
-    case SETTINGS_ROW_QUALITY:
-        change_quality(1);
-        break;
-    case SETTINGS_ROW_PLAYBACK:
-        change_playback_mode(1);
-        break;
-    case SETTINGS_ROW_BUFFER:
-        change_buffer_preference(1);
-        break;
-    case SETTINGS_ROW_AUDIO:
-        change_audio_rate_setting(1);
-        break;
     case SETTINGS_ROW_MUSIC:
         open_music_settings();
-        break;
-    case SETTINGS_ROW_BOTTOM_DIM:
-        change_bottom_dim_setting(1);
         break;
     case SETTINGS_ROW_SERVER: {
         char old_server[sizeof(g_cfg.server)];
@@ -1723,17 +1930,17 @@ static void handle_settings(u32 down)
         break;
     }
     case SETTINGS_ROW_CLEAR_LOGIN:
-        if (settings_confirm_action(g_settings_row, tr(TR_CONFIRM_CLEAR_LOGIN))) {
+        if (settings_confirm_action(row, tr(TR_CONFIRM_CLEAR_LOGIN))) {
             settings_clear_saved_login();
         }
         break;
     case SETTINGS_ROW_RESET_SERVER_USER:
-        if (settings_confirm_action(g_settings_row, tr(TR_CONFIRM_RESET_SERVER))) {
+        if (settings_confirm_action(row, tr(TR_CONFIRM_RESET_SERVER))) {
             settings_reset_server_user();
         }
         break;
     case SETTINGS_ROW_RESET_DEFAULTS:
-        if (settings_confirm_action(g_settings_row, tr(TR_CONFIRM_RESET_DEFAULTS))) {
+        if (settings_confirm_action(row, tr(TR_CONFIRM_RESET_DEFAULTS))) {
             settings_reset_defaults();
         }
         break;
@@ -1742,6 +1949,92 @@ static void handle_settings(u32 down)
         break;
     default:
         break;
+    }
+}
+
+static void settings_handle_touch(bool popup)
+{
+    touchPosition p;
+    hidTouchRead(&p);
+    if (popup) {
+        if (p.py >= SETTINGS_ACTION_TOP && p.py < SETTINGS_ACTION_BOTTOM) {
+            if (p.px >= 10 && p.px < 155) {
+                settings_cancel_confirm();
+                set_status("%s", tr(TR_STATUS_PROMPT_CLOSED));
+            } else if (p.px >= 165 && p.px < 310) {
+                settings_activate_row(g_settings_confirm_row >= 0 ? g_settings_confirm_row : g_settings_row);
+            }
+        }
+        return;
+    }
+    if (p.py >= SETTINGS_MENU_TOP) {
+        float xs[SETTINGS_SECTION_COUNT], ws[SETTINGS_SECTION_COUNT];
+        settings_menu_layout(xs, ws);
+        for (int section = 0; section < SETTINGS_SECTION_COUNT; ++section) {
+            if (p.px >= xs[section] && p.px < xs[section] + ws[section]) {
+                g_settings_row = SETTINGS_SECTION_FIRST[section];
+                settings_cancel_confirm();
+            }
+        }
+        return;
+    }
+    bool cycle = settings_row_kind(g_settings_row) == SETTINGS_KIND_CYCLE;
+    if (!cycle && p.py >= SETTINGS_ACTION_TOP && p.py < SETTINGS_ACTION_BOTTOM) {
+        if (p.px >= 10 && p.px < 310) {
+            settings_activate_row(g_settings_row);
+        }
+    }
+}
+
+static void handle_settings(u32 down, u32 held)
+{
+    u32 rep = browse_repeat(down, held);
+    if (handle_language_selector(down, rep)) {
+        return;
+    }
+
+    bool popup = settings_popup_visible();
+    if (down & KEY_B) {
+        if (popup) {
+            settings_cancel_confirm();
+            set_status("%s", tr(TR_STATUS_PROMPT_CLOSED));
+            return;
+        }
+        settings_cancel_confirm();
+        g_view = (!g_cfg.token[0] || !g_cfg.user_id[0]) ? VIEW_SETUP : g_settings_return_view;
+        set_status("%s", tr(TR_STATUS_SETTINGS_CLOSED));
+        return;
+    }
+    if (down & KEY_TOUCH) {
+        settings_handle_touch(popup);
+        return;
+    }
+
+    int dy = (rep & KEY_DOWN) ? 1 : (rep & KEY_UP) ? -1 : 0;
+    if (dy) {
+        int row = g_settings_row + dy;
+        /* Wrap on a fresh press; a held key stops at the ends like the browse UI. */
+        if (down & (KEY_UP | KEY_DOWN)) row = (row + SETTINGS_ROW_COUNT) % SETTINGS_ROW_COUNT;
+        else row = clamp_int(row, 0, SETTINGS_ROW_COUNT - 1);
+        if (row != g_settings_row) {
+            g_settings_row = row;
+            settings_cancel_confirm();
+        }
+    }
+    if (down & (KEY_L | KEY_R)) {
+        int section = settings_row_section(g_settings_row) + ((down & KEY_R) ? 1 : -1);
+        section = (section + SETTINGS_SECTION_COUNT) % SETTINGS_SECTION_COUNT;
+        g_settings_row = SETTINGS_SECTION_FIRST[section];
+        settings_cancel_confirm();
+    }
+
+    int dir = (down & KEY_LEFT) ? -1 : (down & KEY_RIGHT) ? 1 : 0;
+    if (dir && (settings_row_kind(g_settings_row) == SETTINGS_KIND_CYCLE || g_settings_row == SETTINGS_ROW_LANGUAGE)) {
+        settings_change_row(g_settings_row, dir);
+    }
+
+    if (down & KEY_A) {
+        settings_activate_row(g_settings_row);
     }
 }
 
@@ -1814,8 +2107,7 @@ static void handle_input(u32 down, u32 held)
         return;
     }
     if (g_view == VIEW_SETTINGS) {
-        reset_nav_repeat();
-        handle_settings(down);
+        handle_settings(down, held);
         return;
     }
 

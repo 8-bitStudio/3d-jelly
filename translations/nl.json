@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "Voer een serveradres in met http:// of https://.",
     "TR_PREFIX_FAVORITE_FAILED": "Favorieten bijwerken mislukt",
     "TR_AUTO": "Auto",
-    "TR_QUICK_CONNECT": "Quick Connect"
+    "TR_QUICK_CONNECT": "Quick Connect",
+    "TR_SETTINGS_ACCOUNT": "Server & account",
+    "TR_SETTINGS_GENERAL": "Algemeen",
+    "TR_SETTINGS_NAV_HINT": "D-pad: Verplaats   L/R: Sectie   A: Wijzig   B: Terug",
+    "TR_LANGUAGE_GRID_HELP": "D-pad: Verplaats   A: Kies   B: Annuleer",
+    "TR_CURRENT_FMT": "Huidig: %s",
+    "TR_SELECT": "Kies",
+    "TR_BACK": "Terug",
+    "TR_CONFIRM": "Bevestig"
   }
 }

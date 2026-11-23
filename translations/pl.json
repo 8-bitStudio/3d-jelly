@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "Wpisz adres serwera z http:// lub https://.",
     "TR_PREFIX_FAVORITE_FAILED": "Nie udało się zaktualizować ulubionych",
     "TR_AUTO": "Auto",
-    "TR_QUICK_CONNECT": "Szybkie łączenie"
+    "TR_QUICK_CONNECT": "Szybkie łączenie",
+    "TR_SETTINGS_ACCOUNT": "Serwer i konto",
+    "TR_SETTINGS_GENERAL": "Ogólne",
+    "TR_SETTINGS_NAV_HINT": "Krzyżak: Ruch   L/R: Sekcja   A: Zmień   B: Wstecz",
+    "TR_LANGUAGE_GRID_HELP": "Krzyżak: Ruch   A: Wybierz   B: Anuluj",
+    "TR_CURRENT_FMT": "Obecny: %s",
+    "TR_SELECT": "Wybierz",
+    "TR_BACK": "Wstecz",
+    "TR_CONFIRM": "Potwierdź"
   }
 }

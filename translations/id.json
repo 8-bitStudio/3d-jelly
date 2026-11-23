@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "Masukkan alamat server dengan http:// atau https://.",
     "TR_PREFIX_FAVORITE_FAILED": "Tidak dapat memperbarui favorit",
     "TR_AUTO": "Otomatis",
-    "TR_QUICK_CONNECT": "Koneksi Cepat"
+    "TR_QUICK_CONNECT": "Koneksi Cepat",
+    "TR_SETTINGS_ACCOUNT": "Server & Akun",
+    "TR_SETTINGS_GENERAL": "Umum",
+    "TR_SETTINGS_NAV_HINT": "D-pad: Pindah   L/R: Bagian   A: Ubah   B: Kembali",
+    "TR_LANGUAGE_GRID_HELP": "D-pad: Pindah   A: Pilih   B: Batal",
+    "TR_CURRENT_FMT": "Saat ini: %s",
+    "TR_SELECT": "Pilih",
+    "TR_BACK": "Kembali",
+    "TR_CONFIRM": "Konfirmasi"
   }
 }

@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "Введите адрес сервера с http:// или https://.",
     "TR_PREFIX_FAVORITE_FAILED": "Не удалось обновить избранное",
     "TR_AUTO": "Авто",
-    "TR_QUICK_CONNECT": "Быстрое подключение"
+    "TR_QUICK_CONNECT": "Быстрое подключение",
+    "TR_SETTINGS_ACCOUNT": "Сервер и аккаунт",
+    "TR_SETTINGS_GENERAL": "Общие",
+    "TR_SETTINGS_NAV_HINT": "Крестовина: Выбор   L/R: Раздел   A: Изменить   B: Назад",
+    "TR_LANGUAGE_GRID_HELP": "Крестовина: Выбор   A: Выбрать   B: Отмена",
+    "TR_CURRENT_FMT": "Текущий: %s",
+    "TR_SELECT": "Выбрать",
+    "TR_BACK": "Назад",
+    "TR_CONFIRM": "Подтвердить"
   }
 }

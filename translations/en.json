@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "Enter an http:// or https:// server address.",
     "TR_PREFIX_FAVORITE_FAILED": "Could not update Favorites",
     "TR_AUTO": "Auto",
-    "TR_QUICK_CONNECT": "Quick Connect"
+    "TR_QUICK_CONNECT": "Quick Connect",
+    "TR_SETTINGS_ACCOUNT": "Server & Account",
+    "TR_SETTINGS_GENERAL": "General",
+    "TR_SETTINGS_NAV_HINT": "D-pad: Move   L/R: Section   A: Change   B: Back",
+    "TR_LANGUAGE_GRID_HELP": "D-pad: Move   A: Select   B: Cancel",
+    "TR_CURRENT_FMT": "Current: %s",
+    "TR_SELECT": "Select",
+    "TR_BACK": "Back",
+    "TR_CONFIRM": "Confirm"
   }
 }

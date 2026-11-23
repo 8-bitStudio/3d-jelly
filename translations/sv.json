@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "Ange en serveradress med http:// eller https://.",
     "TR_PREFIX_FAVORITE_FAILED": "Kunde inte uppdatera favoriter",
     "TR_AUTO": "Auto",
-    "TR_QUICK_CONNECT": "Snabbanslutning"
+    "TR_QUICK_CONNECT": "Snabbanslutning",
+    "TR_SETTINGS_ACCOUNT": "Server & konto",
+    "TR_SETTINGS_GENERAL": "Allmänt",
+    "TR_SETTINGS_NAV_HINT": "Styrkors: Flytta   L/R: Avsnitt   A: Ändra   B: Tillbaka",
+    "TR_LANGUAGE_GRID_HELP": "Styrkors: Flytta   A: Välj   B: Avbryt",
+    "TR_CURRENT_FMT": "Nuvarande: %s",
+    "TR_SELECT": "Välj",
+    "TR_BACK": "Tillbaka",
+    "TR_CONFIRM": "Bekräfta"
   }
 }

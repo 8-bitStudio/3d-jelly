@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "请输入以 http:// 或 https:// 开头的服务器地址。",
     "TR_PREFIX_FAVORITE_FAILED": "无法更新收藏",
     "TR_AUTO": "自动",
-    "TR_QUICK_CONNECT": "快速连接"
+    "TR_QUICK_CONNECT": "快速连接",
+    "TR_SETTINGS_ACCOUNT": "服务器和账户",
+    "TR_SETTINGS_GENERAL": "常规",
+    "TR_SETTINGS_NAV_HINT": "十字键：移动   L/R：分区   A：更改   B：返回",
+    "TR_LANGUAGE_GRID_HELP": "十字键：移动   A：选择   B：取消",
+    "TR_CURRENT_FMT": "当前：%s",
+    "TR_SELECT": "选择",
+    "TR_BACK": "返回",
+    "TR_CONFIRM": "确认"
   }
 }

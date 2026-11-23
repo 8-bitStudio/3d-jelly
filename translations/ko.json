@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "http:// 또는 https://로 시작하는 서버 주소를 입력하세요.",
     "TR_PREFIX_FAVORITE_FAILED": "즐겨찾기를 업데이트하지 못했습니다",
     "TR_AUTO": "자동",
-    "TR_QUICK_CONNECT": "퀵 커넥트"
+    "TR_QUICK_CONNECT": "퀵 커넥트",
+    "TR_SETTINGS_ACCOUNT": "서버 및 계정",
+    "TR_SETTINGS_GENERAL": "일반",
+    "TR_SETTINGS_NAV_HINT": "십자 버튼: 이동   L/R: 섹션   A: 변경   B: 뒤로",
+    "TR_LANGUAGE_GRID_HELP": "십자 버튼: 이동   A: 선택   B: 취소",
+    "TR_CURRENT_FMT": "현재: %s",
+    "TR_SELECT": "선택",
+    "TR_BACK": "뒤로",
+    "TR_CONFIRM": "확인"
   }
 }

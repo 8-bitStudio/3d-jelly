@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "請輸入以 http:// 或 https:// 開頭的伺服器位址。",
     "TR_PREFIX_FAVORITE_FAILED": "無法更新我的最愛",
     "TR_AUTO": "自動",
-    "TR_QUICK_CONNECT": "快速連線"
+    "TR_QUICK_CONNECT": "快速連線",
+    "TR_SETTINGS_ACCOUNT": "伺服器與帳戶",
+    "TR_SETTINGS_GENERAL": "一般",
+    "TR_SETTINGS_NAV_HINT": "十字鍵：移動   L/R：分區   A：變更   B：返回",
+    "TR_LANGUAGE_GRID_HELP": "十字鍵：移動   A：選擇   B：取消",
+    "TR_CURRENT_FMT": "目前：%s",
+    "TR_SELECT": "選擇",
+    "TR_BACK": "返回",
+    "TR_CONFIRM": "確認"
   }
 }

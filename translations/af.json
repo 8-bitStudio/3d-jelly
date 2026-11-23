@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "Voer 'n bedieneradres met http:// of https:// in.",
     "TR_PREFIX_FAVORITE_FAILED": "Kon nie gunstelinge bywerk nie",
     "TR_AUTO": "Outo",
-    "TR_QUICK_CONNECT": "Quick Connect"
+    "TR_QUICK_CONNECT": "Quick Connect",
+    "TR_SETTINGS_ACCOUNT": "Bediener & rekening",
+    "TR_SETTINGS_GENERAL": "Algemeen",
+    "TR_SETTINGS_NAV_HINT": "D-pad: Beweeg   L/R: Afdeling   A: Verander   B: Terug",
+    "TR_LANGUAGE_GRID_HELP": "D-pad: Beweeg   A: Kies   B: Kanselleer",
+    "TR_CURRENT_FMT": "Huidige: %s",
+    "TR_SELECT": "Kies",
+    "TR_BACK": "Terug",
+    "TR_CONFIRM": "Bevestig"
   }
 }

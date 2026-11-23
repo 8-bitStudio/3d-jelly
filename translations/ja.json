@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "http:// または https:// で始まるサーバーのアドレスを入力してください。",
     "TR_PREFIX_FAVORITE_FAILED": "お気に入りを更新できませんでした",
     "TR_AUTO": "自動",
-    "TR_QUICK_CONNECT": "クイックコネクト"
+    "TR_QUICK_CONNECT": "クイックコネクト",
+    "TR_SETTINGS_ACCOUNT": "サーバーとアカウント",
+    "TR_SETTINGS_GENERAL": "一般",
+    "TR_SETTINGS_NAV_HINT": "十字キー: 移動   L/R: セクション   A: 変更   B: 戻る",
+    "TR_LANGUAGE_GRID_HELP": "十字キー: 移動   A: 決定   B: キャンセル",
+    "TR_CURRENT_FMT": "現在: %s",
+    "TR_SELECT": "決定",
+    "TR_BACK": "戻る",
+    "TR_CONFIRM": "確認"
   }
 }

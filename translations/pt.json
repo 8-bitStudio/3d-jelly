@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "Digite um endereço de servidor com http:// ou https://.",
     "TR_PREFIX_FAVORITE_FAILED": "Não foi possível atualizar os favoritos",
     "TR_AUTO": "Auto",
-    "TR_QUICK_CONNECT": "Conexão rápida"
+    "TR_QUICK_CONNECT": "Conexão rápida",
+    "TR_SETTINGS_ACCOUNT": "Servidor e conta",
+    "TR_SETTINGS_GENERAL": "Geral",
+    "TR_SETTINGS_NAV_HINT": "Direcional: Mover   L/R: Seção   A: Alterar   B: Voltar",
+    "TR_LANGUAGE_GRID_HELP": "Direcional: Mover   A: Escolher   B: Cancelar",
+    "TR_CURRENT_FMT": "Atual: %s",
+    "TR_SELECT": "Escolher",
+    "TR_BACK": "Voltar",
+    "TR_CONFIRM": "Confirmar"
   }
 }

@@ -425,6 +425,14 @@
     "TR_SETUP_ENTER_HTTP_ADDRESS": "http:// veya https:// ile başlayan bir sunucu adresi girin.",
     "TR_PREFIX_FAVORITE_FAILED": "Favoriler güncellenemedi",
     "TR_AUTO": "Otomatik",
-    "TR_QUICK_CONNECT": "Hızlı Bağlan"
+    "TR_QUICK_CONNECT": "Hızlı Bağlan",
+    "TR_SETTINGS_ACCOUNT": "Sunucu ve hesap",
+    "TR_SETTINGS_GENERAL": "Genel",
+    "TR_SETTINGS_NAV_HINT": "Yön tuşu: Gezin   L/R: Bölüm   A: Değiştir   B: Geri",
+    "TR_LANGUAGE_GRID_HELP": "Yön tuşu: Gezin   A: Seç   B: İptal",
+    "TR_CURRENT_FMT": "Geçerli: %s",
+    "TR_SELECT": "Seç",
+    "TR_BACK": "Geri",
+    "TR_CONFIRM": "Onayla"
   }
 }
