@@ -48,6 +48,7 @@ typedef struct {
 static MusicIo g_music_io;
 static bool g_music_io_initialized;
 static void music_workers_stop(void);
+static void lyrics_shutdown(void);
 
 static u64 music_output_position(void)
 {
@@ -94,7 +95,10 @@ static void music_close_http(void)
     g_music.http = NULL; g_music.multi = NULL;
 }
 
-static void music_release(bool ended, bool reuse)
+/* seek: the same song restarts at another position, so it is not reported as
+ * stopped. reuse (seek/skip): the old transcode is stopped in the background;
+ * the UI thread never waits on the network. */
+static void music_release(bool ended, bool reuse, bool seek)
 {
     music_workers_stop();
     u64 position = music_position();
@@ -120,15 +124,20 @@ static void music_release(bool ended, bool reuse)
     g_music.completed_frames = 0;
     g_music.base_ticks = position;
     g_playback_ended_naturally = ended;
-    if (g_playback_report_active) report_playback_stopped(position);
-    if (g_play_session[0] && !app_system_closing()) stop_active_encoding();
+    if (g_playback_report_active && !seek) report_playback_stopped(position);
+    if (g_play_session[0] && !app_system_closing()) {
+        if (reuse) stop_active_encoding_async(); else stop_active_encoding();
+    }
     g_play_session[0] = g_play_media_source_id[0] = 0;
 }
 
 static void music_stop(void)
 {
     if (!g_music.active) return;
-    music_release(false, false);
+    music_release(false, false, false);
+    lyrics_shutdown();
+    /* Let any queued background requests finish before networking shuts down. */
+    if (!app_system_closing()) playback_report_worker_stop(true);
     if (g_music.volume_dirty && !app_system_closing()) save_config();
     g_music.active = false;
 }
@@ -136,7 +145,7 @@ static void music_stop(void)
 static void music_fail(const char *message)
 {
     copy_safe(g_music.error, sizeof(g_music.error), message);
-    music_release(false, false);
+    music_release(false, false, false);
     g_music.phase = MUSIC_ERROR;
     g_music.buffering = false;
 }
@@ -278,7 +287,7 @@ static bool music_init_dsp(void)
 static void music_skip(int direction, bool natural)
 {
     int index = g_music.index + direction;
-    music_release(natural, index < g_music.count);
+    music_release(natural, index < g_music.count, false);
     if (index < 0) index = 0;
     if (index >= g_music.count) { g_music.phase = MUSIC_ENDED; g_music.buffering = false; return; }
     g_music.index = index;
@@ -291,12 +300,15 @@ static void music_seek(u64 ticks)
 {
     if (g_current.runtime_ticks && ticks >= g_current.runtime_ticks)
         ticks = g_current.runtime_ticks > TICKS_PER_SECOND ? g_current.runtime_ticks - TICKS_PER_SECOND : 0;
-    music_release(false, true);
+    music_release(false, true, true);
     music_open(ticks);
 }
 
+#include "music_lyrics.inc"
+
 static void music_tick(void)
 {
+    lyrics_tick();
     if (!g_music.active || g_music.phase == MUSIC_ERROR || g_music.phase == MUSIC_ENDED) return;
     if (g_music.phase == MUSIC_INFO) {
         int running, remaining;
@@ -427,8 +439,16 @@ static void handle_music_settings(u32 down)
     }
 }
 
-static void handle_music_input(u32 down)
+static void handle_music_input(u32 down, u32 held)
 {
+    if (g_lyrics.open) {
+        if (down & KEY_B) { g_lyrics.open = false; return; }
+        lyrics_update(down, held);
+        if (!g_lyrics.open) return;
+        /* Up/Down and touch scroll the lyrics; the other buttons keep
+         * controlling playback underneath. */
+        down &= ~(u32)(KEY_UP | KEY_DOWN | KEY_TOUCH);
+    }
     if (down & KEY_SELECT) { open_music_settings(); return; }
     if (down & KEY_B) { View back = g_music.return_view; music_stop(); g_view = back; return; }
     if (down & KEY_A) music_toggle_pause();
@@ -459,7 +479,7 @@ static void handle_music_input(u32 down)
         } else if (p.py >= 182 && p.py < 209) {
             if (p.px < 110) toggle_favorite(&g_current);
             else if (p.px < 210) { g_music.muted = !g_music.muted; music_apply_volume(); }
-            else open_music_settings();
+            else lyrics_open();
         } else if (p.py >= 213) {
             View back = g_music.return_view; music_stop(); g_view = back;
         }

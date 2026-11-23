@@ -1803,7 +1803,7 @@ static void open_search_keyboard(bool capture_return)
 
 static void handle_input(u32 down, u32 held)
 {
-    if (g_view == VIEW_MUSIC) { handle_music_input(down); return; }
+    if (g_view == VIEW_MUSIC) { handle_music_input(down, held); return; }
     if (g_view == VIEW_MUSIC_SETTINGS) { handle_music_settings(down); return; }
     if (g_view == VIEW_SETUP || g_view == VIEW_CONNECTING) {
         reset_nav_repeat();

@@ -130,8 +130,46 @@ static void draw_music_top(void)
     }
 }
 
+static void draw_music_lyrics_bottom(void)
+{
+    C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_BG);
+    if (g_lyrics.state == LYRICS_READY && g_lyrics.laid_out && g_lyrics.row_count) {
+        float base = LYRICS_TOP + lyrics_pad_top() - g_lyrics.scroll;
+        char row_text[256];
+        /* Only rows on screen are parsed and drawn; rows fade near the edges. */
+        for (int r = lyrics_row_from_y(LYRICS_TOP - base); r < g_lyrics.row_count; ++r) {
+            const LyricRow *row = &g_lyrics.rows[r];
+            float y = base + row->y;
+            if (y >= LYRICS_BOTTOM) break;
+            if (!row->len) continue;
+            float edge = y - LYRICS_TOP, bottom_edge = LYRICS_BOTTOM - (y + LYRICS_ROW_H);
+            if (bottom_edge < edge) edge = bottom_edge;
+            if (edge <= 2) continue;
+            u32 alpha = edge >= 26 ? 255 : (u32)(edge * 255 / 26);
+            u32 color = !g_lyrics.synced ? 0xFFE6E6E6 : row->line == g_lyrics.current ? COL_WHITE :
+                (int)row->line < g_lyrics.current ? 0xFF808080 : 0xFFB0B0B0;
+            size_t len = row->len < sizeof(row_text) ? row->len : sizeof(row_text) - 1;
+            memcpy(row_text, g_lyrics.text + row->text, len);
+            row_text[len] = 0;
+            draw_text(160 - row->width / 2.0f, y, LYRICS_SCALE, (color & 0x00FFFFFF) | (alpha << 24), "%s", row_text);
+        }
+    } else {
+        const char *message = g_lyrics.state == LYRICS_NONE ? "No lyrics for this song" :
+            g_lyrics.state == LYRICS_READY ? "Preparing lyrics..." : "Loading lyrics...";
+        draw_text_centered(160, 118, 0.55f, COL_MUTED, "%s", message);
+    }
+    C2D_DrawRectSolid(0, 0, 0, 320, 26, 0xFF241B22);
+    browse_label(10, 5, 230, 0.5f, COL_WHITE, g_current.name);
+    draw_text(258, 5, 0.45f, COL_MUTED, "B: Back");
+    float ratio = g_current.runtime_ticks ? (double)music_position() / g_current.runtime_ticks : 0;
+    if (ratio > 1) ratio = 1;
+    C2D_DrawRectSolid(0, 26, 0, 320, 2, 0xFF403438);
+    C2D_DrawRectSolid(0, 26, 0, 320 * ratio, 2, COL_PRIMARY);
+}
+
 static void draw_music_bottom(void)
 {
+    if (g_lyrics.open) { draw_music_lyrics_bottom(); return; }
     C2D_DrawRectSolid(0, 0, 0, 320, 240, COL_BG);
     draw_text_lines(20, 10, 0.55f, 280, COL_WHITE, g_current.name, 2, 19);
     browse_label(20, 54, 280, 0.5f, COL_PRIMARY, music_status_label());
@@ -158,7 +196,7 @@ static void draw_music_bottom(void)
     C2D_DrawRectSolid(212, 182, 0, 98, 27, COL_PAPER);
     draw_text_centered(59, 187, 0.45f, g_current.is_favorite ? COL_SECONDARY : COL_WHITE, "%s", g_current.is_favorite ? "Unfavorite" : "Favorite");
     draw_text_centered(160, 187, 0.5f, COL_WHITE, "%s", g_music.muted ? "Unmute" : "Mute");
-    draw_text_centered(261, 187, 0.5f, COL_PRIMARY, "Sound");
+    draw_text_centered(261, 187, 0.5f, g_lyrics.state == LYRICS_NONE ? 0xFF6A6A6A : COL_PRIMARY, "Lyrics");
     C2D_DrawRectSolid(10, 213, 0, 300, 26, COL_PAPER);
     draw_text_centered(160, 217, 0.5f, COL_WHITE, "B: Stop and go back");
 }

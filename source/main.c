@@ -109,6 +109,7 @@
 #define PLAYBACK_REPORT_INTERVAL_MS 5000
 #define PLAYBACK_REPORT_QUEUE_COUNT 6
 #define PLAYBACK_REPORT_PATH_CAP 96
+#define PLAYBACK_REPORT_DELETE "!DELETE"
 #define PLAYBACK_REPORT_BODY_CAP 1024
 #define PLAYBACK_REPORT_STACK_SIZE (32 * 1024)
 #define REMOTE_MESSAGE_OSD_MS 5000
@@ -415,7 +416,7 @@ static void browse_shutdown(void);
 static bool music_start(const MediaItem *item);
 static void music_stop(void);
 static void music_tick(void);
-static void handle_music_input(u32 down);
+static void handle_music_input(u32 down, u32 held);
 
 static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 360, 480};
 static const int QUALITY_LEVELS_OLD3DS[] = {144, 240};
@@ -476,7 +477,7 @@ int main(void)
          * Buttons redraw immediately; audio workers run independently. */
         if (g_music.active && (g_view == VIEW_MUSIC || g_view == VIEW_MUSIC_SETTINGS)) {
             u64 now = osGetTime();
-            if (!down && now < music_draw_at) { gspWaitForVBlank(); continue; }
+            if (!down && now < music_draw_at && !lyrics_needs_frame()) { gspWaitForVBlank(); continue; }
             bool still = g_view == VIEW_MUSIC_SETTINGS || (g_music.paused && !g_music.buffering) ||
                 g_music.phase == MUSIC_ENDED || g_music.phase == MUSIC_ERROR;
             music_draw_at = now + (still ? 250 : 50);

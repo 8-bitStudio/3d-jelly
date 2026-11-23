@@ -932,8 +932,10 @@ static bool send_playback_report(const char *path, const char *body)
     headers = curl_slist_append(headers, "Content-Type: application/json");
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+    if (body) {
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+    } else curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, playback_discard_response);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1500L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 3000L);
@@ -970,7 +972,10 @@ static void playback_report_worker_main(void *arg)
         g_playback_report_queue_count--;
         LightLock_Unlock(&g_playback_report_lock);
 
-        if (msg.path[0] && msg.body[0]) {
+        if (!strcmp(msg.path, PLAYBACK_REPORT_DELETE) && msg.body[0]) {
+            /* msg.body holds the path; reports' path field is too short for it. */
+            send_playback_report(msg.body, NULL);
+        } else if (msg.path[0] && msg.body[0]) {
             if (!send_playback_report(msg.path, msg.body) && strstr(msg.path, "/Stopped"))
                 send_playback_report(msg.path, msg.body);
         }
@@ -1191,6 +1196,19 @@ static bool report_playback_stopped(u64 position_ticks)
     bool queued = queue_playback_report("/Sessions/Playing/Stopped", body);
     playback_report_worker_stop(true);
     return queued;
+}
+
+/* Same request as stop_active_encoding, sent by the report worker so a music
+ * seek or skip never waits on it. Safe because the restarted stream always
+ * gets a new PlaySessionId from PlaybackInfo. */
+static void stop_active_encoding_async(void)
+{
+    if (!g_cfg.device_id[0] || !g_play_session[0]) return;
+    char device[160], session[160], path[PLAYBACK_REPORT_BODY_CAP];
+    url_encode(g_cfg.device_id, device, sizeof(device));
+    url_encode(g_play_session, session, sizeof(session));
+    snprintf(path, sizeof(path), "/Videos/ActiveEncodings?DeviceId=%s&PlaySessionId=%s", device, session);
+    queue_playback_report(PLAYBACK_REPORT_DELETE, path);
 }
 
 static void stop_active_encoding(void)
